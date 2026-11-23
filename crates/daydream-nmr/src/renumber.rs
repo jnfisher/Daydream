@@ -88,7 +88,7 @@ pub enum Renumber {
         #[serde(default)]
         map: Option<i64>,
         moves: Vec<Move>,
-        /// Users' references follow too (see [`users_plan`]); NMR leaves users alone.
+        /// Users' references follow too (items, spells, class, race, rooms); NMR leaves users alone.
         #[serde(default)]
         users: bool,
     },
