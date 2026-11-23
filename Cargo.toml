@@ -2,11 +2,13 @@
 resolver = "3"
 members = [
     "bin/daydream",
+    "crates/daydream-nmr",
     "crates/daydream-server",
     "crates/daydream-store",
     "crates/daydream-types",
     "crates/daydream-wcc",
 ]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,6 +22,7 @@ repository = "https://github.com/jnfisher/Daydream"
 unsafe_code = "forbid"
 
 [workspace.dependencies]
+daydream-nmr = { path = "crates/daydream-nmr" }
 daydream-server = { path = "crates/daydream-server" }
 daydream-store = { path = "crates/daydream-store" }
 daydream-types = { path = "crates/daydream-types" }
@@ -27,6 +30,8 @@ daydream-wcc = { path = "crates/daydream-wcc" }
 anyhow = "1.0.104"
 axum = "0.8.9"
 bitflags = { version = "2.13.2", features = ["serde"] }
+# young (0.2): pinned exactly; used only to read .mdb files
+datacraft-jet = "=0.2.0"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 jiff = "0.2.38"
 miniz_oxide = "0.9.1"
@@ -55,3 +60,7 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# datacraft-jet 0.2.0 with fixed Jet 4 text decoding (see vendor/datacraft-jet/PATCHES.md)
+[patch.crates-io]
+datacraft-jet = { path = "vendor/datacraft-jet" }

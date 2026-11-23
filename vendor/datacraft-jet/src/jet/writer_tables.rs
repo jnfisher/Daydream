@@ -1,0 +1,413 @@
+//! Table creation and row insertion (step 10.2, item H9) — the write
+//! half of the Jet4 writer, split from the allocation core in `writer.rs`.
+//!
+//! Catalog recipe (verified against both fixture writers, see
+//! `docs/FORMAT-JET.md` "Catalog insert recipe"): a new table is an
+//! MSysObjects row `Id = tdef page, ParentId = 0x0F000001 ("Tables"
+//! container), Type = 1, Flags = 0, Owner = e5 a3` with NULL `LvProp`
+//! (Access accepts NULL LvProp on catalog rows — system rows carry it).
+//!
+//! Page economics: the table's usage page carries two rows — used map
+//! (row 0) and free map (row 1). Free-map polarity: bit set = page has
+//! room (observed bracket on the fixture: 75 bytes free → unmarked,
+//! 966 → marked); the writer marks conservatively at ≥ 512 bytes.
+
+use crate::error::StorageError;
+use crate::jet::data_page::DataPage;
+use crate::jet::encode::{build_table_def, encode_row, encode_tdef, pack_map_dword};
+use crate::jet::page::{PAGE_TYPE_DATA, PAGE_TYPE_TDEF};
+use crate::jet::tdef::JetTableDef;
+use crate::jet::usage_map::UsageMap;
+use crate::jet::writer::Jet4Writer;
+use crate::types::StorageValue;
+
+use super::tdef::JetColumn;
+
+/// `MSysObjects.ParentId` of the "Tables" container (fixture: 0x0F000001).
+const TABLES_CONTAINER_ID: i64 = 0x0F00_0001;
+/// Owner bytes of user-created table rows (fixture: both writers agree).
+const USER_TABLE_OWNER: [u8; 2] = [0xE5, 0xA3];
+/// Owner bytes of system table rows (`MSysRelationships` etc.).
+const SYSTEM_TABLE_OWNER: [u8; 2] = [0xE4, 0xA1];
+/// Catalog `Flags` of a system table (fixture: `MSysRelationships`).
+const SYSTEM_TABLE_FLAGS: i64 = 0x8000_0000;
+/// Free-space reserve: pages below this are unmarked in the free map.
+const FREE_MAP_RESERVE: usize = 512;
+/// Bitmap bytes of a fresh table's usage maps (512-page window, the engine's
+/// own policy).
+const USAGE_WINDOW_BYTES: usize = 64;
+/// `MSysObjects` TDEF page (format constant, see `catalog.rs`).
+const CATALOG_TDEF: u32 = 2;
+
+impl Jet4Writer {
+    /// Reads the table's free map (`free_pages` dword): bit set = page has
+    /// room for another row.
+    pub fn table_free_map(
+        &self,
+        tdef_page: u32,
+    ) -> Result<(super::usage_map::MapRef, UsageMap), StorageError> {
+        self.ensure_plausible_tdef(tdef_page)?;
+        let page = self.header.page_slice(&self.file, tdef_page)?;
+        let at = 8 + 51; // TDEF block offset of free_pages
+        let raw = page.get(at..at + 4).ok_or_else(|| StorageError::Corrupt {
+            context: "usage map".into(),
+            detail: format!("TDEF page {tdef_page} is truncated before free_pages"),
+        })?;
+        let (_, map_ref) = super::usage_map::MapRef::split_tdef_u32(u32::from_le_bytes([
+            raw[0], raw[1], raw[2], raw[3],
+        ]))?;
+        let map = self.map_row(map_ref)?;
+        Ok((map_ref, map))
+    }
+
+    /// Creates a table: dedicated usage page, TDEF page, catalog row.
+    /// Returns the new table's TDEF page number (its identity at every
+    /// boundary — the catalog `Id`).
+    pub fn create_table(&mut self, name: &str, columns: &[JetColumn]) -> Result<u32, StorageError> {
+        self.create_table_with(name, columns, 0, USER_TABLE_OWNER)
+    }
+
+    /// Creates a system table (catalog flags `0x80000000`, system owner) —
+    /// used for the lazily created `MSysRelationships` table (step 32.3,
+    /// item M16).
+    pub fn create_system_table(
+        &mut self,
+        name: &str,
+        columns: &[JetColumn],
+    ) -> Result<u32, StorageError> {
+        self.create_table_with(name, columns, SYSTEM_TABLE_FLAGS, SYSTEM_TABLE_OWNER)
+    }
+
+    fn create_table_with(
+        &mut self,
+        name: &str,
+        columns: &[JetColumn],
+        flags: i64,
+        owner: [u8; 2],
+    ) -> Result<u32, StorageError> {
+        // 1. TDEF page first, then its usage page. The engine's own writer
+        // allocates in this order, and it refuses a table whose usage page
+        // precedes the definition (acceptance finding, 2026-11-07): the DAO
+        // catalog enumeration answers 3049 otherwise.
+        let tdef_page = self.append_page()?;
+        let usage_page = self.append_page()?;
+
+        // 2. Usage page (owner 0) with empty used/free rows.
+        // The engine writes a 64-byte bitmap (512-page window) even for a
+        // fresh table; a shorter map makes the DAO catalog enumeration answer
+        // 3049 (acceptance finding, 2026-11-07).
+        let empty = UsageMap {
+            start_page: 0,
+            bitmap: vec![0u8; USAGE_WINDOW_BYTES],
+        }
+        .encode_row();
+        self.write_fresh_data_page(usage_page, 0, &[empty.clone(), empty])?;
+        let def = build_table_def(
+            0x4E,
+            0,
+            columns,
+            pack_map_dword(0x00, usage_page, 0),
+            pack_map_dword(0x00, usage_page, 1),
+        );
+        self.write_fresh_tdef_page(tdef_page, &encode_tdef(&def))?;
+
+        // 3. Catalog row (append into MSysObjects). The timestamp is the
+        // writer's catalog date — construction time by default, pinned by
+        // the deterministic template materializer (phase 29, step 29.2).
+        // The row's Owner is the database's own owner SID when the file
+        // exposes one (the engine's writer does the same).
+        let acl = self.object_acl()?;
+        let owner = acl.as_ref().map_or(owner, |acl| {
+            let bytes = &acl.owner_sid;
+            if bytes.len() == 2 {
+                [bytes[0], bytes[1]]
+            } else {
+                owner
+            }
+        });
+        let catalog_def = JetTableDef::decode(&self.file, CATALOG_TDEF)?;
+        let values = Self::catalog_row(
+            &catalog_def,
+            tdef_page,
+            name,
+            self.catalog_date,
+            flags,
+            owner,
+        );
+        self.insert_row(CATALOG_TDEF, &values)?;
+
+        // 4. The object's access-control entries (the engine refuses to read
+        // a catalogued table without them).
+        if let Some(acl) = acl {
+            self.grant_object_acl(tdef_page, &acl)?;
+        }
+        Ok(tdef_page)
+    }
+
+    /// MSysObjects column values for a new user table, driven by the
+    /// catalog's actual definition (column-name keyed — robust against
+    /// catalogs with more or fewer columns; unknown columns stay NULL).
+    fn catalog_row(
+        def: &JetTableDef,
+        tdef_page: u32,
+        name: &str,
+        now: f64,
+        flags: i64,
+        owner: [u8; 2],
+    ) -> Vec<StorageValue> {
+        def.columns
+            .iter()
+            .map(|col| match col.name.as_str() {
+                "Id" => StorageValue::Int(i64::from(tdef_page)),
+                "ParentId" => StorageValue::Int(TABLES_CONTAINER_ID),
+                "Name" => StorageValue::Text(name.to_owned()),
+                "Type" => StorageValue::Int(1),
+                "DateCreate" | "DateUpdate" => StorageValue::DateTime(now),
+                "Owner" => StorageValue::Binary(owner.to_vec()),
+                "Flags" => StorageValue::Int(flags),
+                _ => StorageValue::Null, // LvProp etc. (see module docs)
+            })
+            .collect()
+    }
+
+    /// Appends one row to the table rooted at `tdef_page`, reusing a page
+    /// with room (free map) or allocating a fresh one.
+    pub fn insert_row(
+        &mut self,
+        tdef_page: u32,
+        values: &[StorageValue],
+    ) -> Result<(), StorageError> {
+        let def = JetTableDef::decode(&self.file, tdef_page)?;
+        // Engine-assigned AutoNumber values (step 24.1, item M8): Null on an
+        // AUTONUMBER column takes the table's next counter value. The seed
+        // dword is the last assigned value (engine semantics, observed
+        // 2026-11-07 via the DAO oracle): the next value is seed + 1, and
+        // the assigned value becomes the new seed.
+        let mut values = values.to_vec();
+        let mut assigned = false;
+        let mut explicit_autonumber: Option<i32> = None;
+        for (column, value) in def.columns.iter().zip(values.iter_mut()) {
+            if column.flags & crate::jet::tdef::flags::AUTONUMBER == 0 {
+                continue;
+            }
+            match value {
+                StorageValue::Null => {
+                    let next = i64::from(def.autonumber) + 1;
+                    let assigned_value =
+                        i32::try_from(next).map_err(|_| StorageError::Corrupt {
+                            context: "row insert".into(),
+                            detail: format!(
+                                "table {tdef_page} autonumber seed {:#010x} exceeds LongInteger",
+                                def.autonumber
+                            ),
+                        })?;
+                    *value = StorageValue::Int(i64::from(assigned_value));
+                    assigned = true;
+                }
+                // A verbatim restore/recovery write (step 28.1, U14) carries
+                // the row's original engine-assigned value; the seed must
+                // advance past it or a recovered file re-assigns the same id.
+                StorageValue::Int(v) => {
+                    if let Ok(v) = i32::try_from(*v) {
+                        explicit_autonumber = Some(v);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let row = encode_row(&values, &def)?;
+        let (_, free) = self.table_free_map(tdef_page)?;
+        let target = free
+            .marked_pages()
+            .find(|&page| self.page_has_room(page, row.len()))
+            .map_or_else(|| self.allocate_data_page(tdef_page), Ok)?;
+        let row_slot = self.append_row_to_page(target, &row)?;
+        self.bump_num_rows(tdef_page)?;
+        if assigned {
+            self.bump_autonumber(tdef_page)?;
+        } else if let Some(value) = explicit_autonumber {
+            self.advance_autonumber_to(tdef_page, value)?;
+        }
+        self.update_free_bit(tdef_page, target)?;
+        // Indexed tables (the catalog, MSysRelationships) resolve through
+        // physical B-trees: the row is invisible until its leaf entry exists
+        // (step 49.2, item M63).
+        self.maintain_indexes(tdef_page, &def, &values, target, row_slot)?;
+        Ok(())
+    }
+
+    /// Whether `page` can hold one more row of `row_len` bytes. The offset
+    /// table is sorted by descending offset — the physically lowest row is
+    /// the table's LAST entry.
+    fn page_has_room(&self, page_no: u32, row_len: usize) -> bool {
+        let Ok(page) = self.header.page_slice(&self.file, page_no) else {
+            return false;
+        };
+        let Ok(decoded) = DataPage::decode(page) else {
+            return false;
+        };
+        let lowest = decoded
+            .records
+            .last()
+            .map_or(self.header.page_size, |r| r.0);
+        lowest >= 14 + 2 * (decoded.records.len() + 1) + row_len
+    }
+
+    /// Allocates a fresh data page for the table (owned, empty, free).
+    fn allocate_data_page(&mut self, tdef_page: u32) -> Result<u32, StorageError> {
+        let page_no = self.allocate_page(tdef_page)?;
+        self.write_fresh_data_page(page_no, tdef_page, &[])?;
+        Ok(page_no)
+    }
+
+    /// Appends raw row bytes to a data page: the row lands between the
+    /// offset table and the physically lowest row; its offset extends the
+    /// table (which is sorted by descending offset). Returns the row slot
+    /// index the row occupies on the page.
+    fn append_row_to_page(&mut self, page_no: u32, row: &[u8]) -> Result<usize, StorageError> {
+        let base = self.header.page_offset(page_no)? as usize;
+        let page_size = self.header.page_size;
+        let decoded = DataPage::decode(&self.file[base..base + page_size])?;
+        let count = decoded.records.len();
+        let lowest = decoded.records.last().map_or(page_size, |r| r.0);
+        let floor = 14 + 2 * (count + 1);
+        let start = lowest - row.len();
+        if start < floor {
+            return Err(StorageError::Corrupt {
+                context: "row insert".into(),
+                detail: format!("page {page_no} cannot hold {} more bytes", row.len()),
+            });
+        }
+        self.file[base + start..base + start + row.len()].copy_from_slice(row);
+        self.file[base + 14 + count * 2..base + 16 + count * 2]
+            .copy_from_slice(&(start as u16).to_le_bytes());
+        self.file[base + 12..base + 14].copy_from_slice(&((count + 1) as u16).to_le_bytes());
+        let free = start - floor;
+        self.file[base + 2..base + 4].copy_from_slice(&(free as u16).to_le_bytes());
+        Ok(count)
+    }
+
+    /// `num_rows += 1` in the TDEF block head (in place, same size).
+    fn bump_num_rows(&mut self, tdef_page: u32) -> Result<(), StorageError> {
+        self.adjust_num_rows(tdef_page, 1)
+    }
+
+    /// Stores the table's last assigned AutoNumber value (`+12` in the TDEF
+    /// head) after an engine-assigned insert (step 24.1, item M8; the seed
+    /// semantics follow the 2026-11-07 DAO observation — the engine reads
+    /// the dword as "last assigned" and takes seed + 1).
+    fn bump_autonumber(&mut self, tdef_page: u32) -> Result<(), StorageError> {
+        let base = self.header.page_offset(tdef_page)? as usize;
+        let at = base + 8 + 12;
+        let current = u32::from_le_bytes([
+            self.file[at],
+            self.file[at + 1],
+            self.file[at + 2],
+            self.file[at + 3],
+        ]);
+        let next = current.saturating_add(1);
+        self.file[at..at + 4].copy_from_slice(&next.to_le_bytes());
+        Ok(())
+    }
+
+    /// Raises the table's AutoNumber seed to `value` when it is higher than
+    /// the current seed (a verbatim restore/recovery write makes that value
+    /// the last assigned one — the engine's observable rule). Never rewinds.
+    fn advance_autonumber_to(&mut self, tdef_page: u32, value: i32) -> Result<(), StorageError> {
+        let Ok(candidate) = u32::try_from(value) else {
+            return Ok(()); // a non-positive id never advances the seed
+        };
+        let base = self.header.page_offset(tdef_page)? as usize;
+        let at = base + 8 + 12;
+        let current = u32::from_le_bytes([
+            self.file[at],
+            self.file[at + 1],
+            self.file[at + 2],
+            self.file[at + 3],
+        ]);
+        if candidate > current {
+            self.file[at..at + 4].copy_from_slice(&candidate.to_le_bytes());
+        }
+        Ok(())
+    }
+
+    /// Applies a signed delta to `num_rows` in the TDEF block head
+    /// (saturating at zero); inserts bump, deletes decrement.
+    pub(crate) fn adjust_num_rows(
+        &mut self,
+        tdef_page: u32,
+        delta: i64,
+    ) -> Result<(), StorageError> {
+        let base = self.header.page_offset(tdef_page)? as usize;
+        let at = base + 8 + 8; // page header + block offset of num_rows
+        let rows = u32::from_le_bytes([
+            self.file[at],
+            self.file[at + 1],
+            self.file[at + 2],
+            self.file[at + 3],
+        ]);
+        let updated = if delta >= 0 {
+            rows.saturating_add(delta as u32)
+        } else {
+            rows.saturating_sub(delta.unsigned_abs() as u32)
+        };
+        self.file[at..at + 4].copy_from_slice(&updated.to_le_bytes());
+        Ok(())
+    }
+
+    /// Marks `page_no` in the free map while it holds ≥ `FREE_MAP_RESERVE`
+    /// bytes, clears the bit below (the hint must never over-promise).
+    pub(crate) fn update_free_bit(
+        &mut self,
+        tdef_page: u32,
+        page_no: u32,
+    ) -> Result<(), StorageError> {
+        let base = self.header.page_offset(page_no)? as usize;
+        let free_space = u16::from_le_bytes([self.file[base + 2], self.file[base + 3]]) as usize;
+        let (map_ref, mut map) = self.table_free_map(tdef_page)?;
+        if free_space >= FREE_MAP_RESERVE {
+            map.set(page_no)?;
+        } else {
+            map.clear(page_no)?;
+        }
+        self.rewrite_map_row(map_ref, &map)?;
+        Ok(())
+    }
+
+    /// Writes a fresh data page (empty or with pre-encoded rows).
+    fn write_fresh_data_page(
+        &mut self,
+        page_no: u32,
+        owner: u32,
+        rows: &[Vec<u8>],
+    ) -> Result<(), StorageError> {
+        let base = self.header.page_offset(page_no)? as usize;
+        self.file[base] = PAGE_TYPE_DATA;
+        self.file[base + 1] = 0x01;
+        self.file[base + 4..base + 8].copy_from_slice(&owner.to_le_bytes());
+        self.file[base + 12..base + 14].copy_from_slice(&(rows.len() as u16).to_le_bytes());
+        let mut end = self.header.page_size;
+        for (i, row) in rows.iter().enumerate() {
+            let start = end - row.len();
+            self.file[base + start..base + start + row.len()].copy_from_slice(row);
+            self.file[base + 14 + i * 2..base + 16 + i * 2]
+                .copy_from_slice(&(start as u16).to_le_bytes());
+            end = start;
+        }
+        let free = end - (14 + 2 * rows.len());
+        self.file[base + 2..base + 4].copy_from_slice(&(free as u16).to_le_bytes());
+        Ok(())
+    }
+
+    /// Writes a TDEF page around a pre-encoded block.
+    fn write_fresh_tdef_page(&mut self, page_no: u32, block: &[u8]) -> Result<(), StorageError> {
+        let base = self.header.page_offset(page_no)? as usize;
+        self.file[base] = PAGE_TYPE_TDEF;
+        self.file[base + 1] = 0x01;
+        let free = self.header.page_size as u32 - 8 - block.len() as u32;
+        self.file[base + 2..base + 4].copy_from_slice(&(free as u16).to_le_bytes());
+        self.file[base + 4..base + 8].copy_from_slice(&0u32.to_le_bytes()); // no chain
+        self.file[base + 8..base + 8 + block.len()].copy_from_slice(block);
+        Ok(())
+    }
+}
