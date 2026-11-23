@@ -433,6 +433,7 @@ dependencies = [
  "daydream-store",
  "daydream-types",
  "daydream-wcc",
+ "jiff",
  "serde",
  "serde_json",
  "tempfile",
