@@ -1,0 +1,6 @@
+# The same toolchain as silvermere, whose code daydream-wcc is copied from. Bump
+# deliberately, together with `rust-version` in Cargo.toml; never nightly.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

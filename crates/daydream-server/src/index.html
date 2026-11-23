@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daydream</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 0 auto; max-width: 56rem; padding: 1rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #8884; }
+  code { font-size: .9em; }
+</style>
+</head>
+<body>
+<h1>Daydream</h1>
+<p>The editors arrive in milestone M2. Until then this page lists the realm's files, and the
+API serves every record decoded: <code>/api/realm</code>,
+<code>/api/files/WCCITEMS/records</code>, <code>/api/files/WCCITEMS/records/1</code>.</p>
+<table id="files"><thead><tr><th>File</th><th>Table</th><th>Records</th><th>Length</th></tr></thead><tbody></tbody></table>
+<script>
+fetch('/api/realm').then(r => r.json()).then(realm => {
+  const body = document.querySelector('#files tbody');
+  for (const f of realm.files) {
+    const tr = document.createElement('tr');
+    const link = document.createElement('a');
+    link.href = '/api/files/' + encodeURIComponent(f.stem) + '/records';
+    link.textContent = f.stem;
+    const cells = [link, f.table ?? '', f.records, f.record_length];
+    for (const c of cells) {
+      const td = document.createElement('td');
+      if (c instanceof Node) td.append(c); else td.textContent = c;
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+[package]
+name = "daydream-wcc"
+description = "MajorMUD 1.11p WCC data: the Btrieve reader and the record decoders/encoders (copied from silvermere-import)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+# one test binary for all of tests/ (tests/all.rs), not one per file
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+daydream-types.workspace = true
+jiff.workspace = true
+miniz_oxide.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

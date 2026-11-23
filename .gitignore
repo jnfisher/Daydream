@@ -1,0 +1,6 @@
+/target
+# realms converted while trying things out
+*.db
+*.db-wal
+*.db-shm
+.DS_Store

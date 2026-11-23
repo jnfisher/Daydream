@@ -1,0 +1,24 @@
+[package]
+name = "daydream-server"
+description = "The Daydream HTTP server: a realm's records for the web UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+daydream-store.workspace = true
+daydream-wcc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tower.workspace = true
