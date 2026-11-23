@@ -125,7 +125,28 @@ The path back to WCC exists from M1 through NMR's `.mdb` format, so no milestone
 | M2 Core editors | Item, monster, spell, class, race and shop editors with NMR's labels; messages, textblocks and actions with ANSI preview | NMR users review the core editors |
 | M3 World tools | Rooms and map, Quest Organizer, Universal Modifier, Mass Room Editor; bulk presets and reports | Bulk edits match NMR on the same realm |
 | M4 Players and MME export | Users, banks and gangs, including Revive Character; MME export with NMR's reachability walk and room exclusions | MME export matches NMR's, value by value |
-| M5 Direct WCC write | Btrieve writer or `WCCUPDA2.DAT` compiler, no `WBTRV32.DLL` needed; silvermere adapter writing straight into its database while it is stopped | Byte-identical round trip on real realms |
+| M5 Direct WCC write | Write a realm's `WCC*.DAT` files straight from the store, adds, deletes and renumbers included, with no `WBTRV32.DLL` or NMR needed; silvermere adapter writing straight into its database while it is stopped | Real Btrieve (Pervasive's engine, as NMR and Worldgroup run it) reads every written file back key by key exactly as Daydream wrote it; unchanged files stay byte for byte as they were |
+| M6 MCP server | Daydream as an MCP server, so AI agents can read a realm and create content (items, monsters, rooms, text blocks, quests) through the same checks and previews the editors use | An agent builds a small area end to end; every write is previewed, validated and undoable, and lands exactly as the same edit made in the editors |
+
+### M5: writing WCC files directly
+
+The M1 spike (`docs/dat-writer.md`) edits existing records in place, which keeps every index valid because no key changes. M5 covers the rest: new records, deleted records and renumbered ones, which change the index trees.
+
+- **Rebuild a changed file, don't patch its trees.** A file whose keys changed is written anew from its records: data pages, then each key's B-tree built bottom up from the sorted keys, then the FCR (and on v6 files the PAT and both FCR copies). The page size, keys, ACS and flags come from the original file, so the new file is the same kind of file. Building from sorted keys is simpler and safer than inserting into Btrieve's live trees, and BUTIL's own clone and load work the same way. The realm is stopped while Daydream writes, so a whole-file rewrite costs nothing extra.
+- **Touch only what changed.** A file whose records did not change is not written. A file whose changes leave every key alone keeps the in-place update from the spike, so its bytes change only where its records did.
+- **Order of work.** (1) v5 fixed-length files, which most WCC files are; (2) v6 files (two FCRs, the PAT, usage counts); (3) variable-length files (`WCCTEXT`'s fragment pages); (4) `daydream write-dat` on the command line and a "Write to WCC files" button in the browser, writing to a copy of the realm's folder or over it with a backup.
+- **Proof.** The Windows CI job already runs Pervasive's 6.15 engine. Each rebuilt file is read back through it, key by key, and must return the records Daydream wrote in the order Daydream's index walk gives. Daydream's own index checker runs on every file in the Linux job. Real NMR opening the written realm is the last check.
+- **`WCCUPDA2.DAT`.** Compiling the update file is not needed once the files are written directly; it stays out of scope unless a sysop needs a live realm updated at its next start.
+
+### M6: an MCP server for AI agents
+
+Daydream will speak the Model Context Protocol, so an AI agent (Claude Code, Claude Desktop or any MCP client) can build content in a realm: a new area with its rooms, monsters, items, shops and text blocks, or a quest line.
+
+- **Same path as the editors.** Every tool calls the library calls the web UI uses. Writes go through the strict import, references are checked (an exit to a missing room, a drop of a missing item), and nothing bypasses the write lock.
+- **Preview, then apply.** Each write tool returns a preview of every change (the Universal Modifier's format) and a token; a second call applies it. An applied change is recorded with what it replaced, so it can be undone.
+- **Tools, not raw records.** Agents get NMR-level tools: find a free record number, create or update a record by NMR's field names, dig rooms on the map, place monsters and items, write a text block with its commands checked, run NMR's fixes and lists, and read the map. Resources describe the tables, their columns and choice lists, so an agent writes valid values.
+- **Local and opt-in.** `daydream mcp REALM` runs over stdio for a local agent; the server can also offer it over HTTP on localhost. Player tables (users, bank books, gangs) are off unless asked for. The MME export rule is unchanged: MCP gives an agent nothing the editors do not.
+- **Gate.** An agent builds a small area end to end; the result passes Daydream's checks, opens in the editors and the map, and round-trips through the WCC writer.
 
 First pieces of work, in order:
 
@@ -140,6 +161,8 @@ First pieces of work, in order:
 | --- | --- |
 | Which MajorMUD versions at launch? | Only 1.11p |
 | Write `WCC*.DAT` directly, or is an NMR-compatible `.mdb` enough? | Aim for direct `.DAT` writes: spike a writer early, keep the `.mdb` path as the fallback |
+| How does M5 add, delete and renumber records? | Rebuild a changed file from its records, keeping its page size, keys and flags; patch in place when no key changes; leave unchanged files alone |
+| Should AI agents be able to create content? | Yes, through an MCP server (M6), after M5, using the editors' own checks and previews |
 | Does the MME export format change? | No: exactly as MME reads it today |
 | How are silvermere realms edited? | Straight into its database file while the server is stopped |
 | Can Daydream write a realm's `.db` files while MBBSEmu has them open? | Working assumption: stop the realm first, until tested |
