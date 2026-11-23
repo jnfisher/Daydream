@@ -119,3 +119,9 @@ pre.errors { background: var(--bg); border: 1px solid var(--line); padding: .5re
 .tool .fix-inputs select, .tool .fix-inputs input.number { width: auto; }
 .tool .fix-inputs input.number { width: 6rem; }
 .tool .fix-inputs input[type=date] { width: auto; }
+#lists { overflow: auto; padding: 1rem; }
+#lists[hidden] { display: none; }
+.tool table.list { margin-top: .5rem; max-height: 32rem; display: block; overflow: auto; }
+.tool table.list td { vertical-align: top; }
+.tool table.list tr.over td { color: var(--danger); }
+.tool table.list a { color: var(--accent); }

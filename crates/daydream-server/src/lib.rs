@@ -3,8 +3,8 @@
 //! It runs on the sysop's own machine and opens in the browser. `/` is the web UI (built
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
-//! in [`tools`], and the routes below serve each file's records decoded (every member by
-//! name, `unk_*` spans included), read only.
+//! in [`tools`] and its lists in [`reports`], and the routes below serve each file's records
+//! decoded (every member by name, `unk_*` spans included), read only.
 //!
 //! | Route | Answer |
 //! |---|---|
@@ -31,6 +31,7 @@ use daydream_wcc::decode::base64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod reports;
 pub mod tables;
 pub mod tools;
 
@@ -75,6 +76,11 @@ pub fn router(realm_dir: &Path) -> Router {
         .route("/api/tools/delete", post(tools::delete))
         .route("/api/tools/modify", post(tools::modify))
         .route("/api/tools/preset", post(tools::preset))
+        .route("/api/reports/limited-items", get(reports::limited_items))
+        .route("/api/reports/find-item", get(reports::find_item))
+        .route("/api/reports/control-rooms", get(reports::control_rooms))
+        .route("/api/reports/monster-groups", get(reports::monster_groups))
+        .route("/api/reports/npc-rooms", get(reports::npc_rooms))
         .route(
             "/api/tools/merge-users",
             post(tools::merge_users).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),
