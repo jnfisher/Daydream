@@ -8,6 +8,7 @@
 //! | `POST /api/tools/merge-users?dry_run=` | body: a user file (`.DAT` or `.db`); what was copied |
 //! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify) and `dry_run`; every change, then the write's report |
 //! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
+//! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) and `dry_run`; as `modify` |
 //! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
 //!
 //! `options` is JSON: `tables` (names, or absent for all), `ranges` (`[{table, map?, from,
@@ -264,6 +265,25 @@ pub(crate) async fn preset(
 ) -> Result<Json<Value>, ApiError> {
     run_plan(s, body.dry_run, move |realm, layout| {
         daydream_nmr::presets::plan(realm, &body.preset, layout).map_err(|e| bad(e.to_string()))
+    })
+    .await
+}
+
+/// The body of a Map Editor dig.
+#[derive(Debug, Deserialize)]
+pub struct DigJson {
+    #[serde(flatten)]
+    dig: daydream_nmr::map::Dig,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+pub(crate) async fn dig(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<DigJson>,
+) -> Result<Json<Value>, ApiError> {
+    run_plan(s, body.dry_run, move |realm, layout| {
+        daydream_nmr::map::dig(realm, layout, &body.dig).map_err(|e| bad(e.to_string()))
     })
     .await
 }

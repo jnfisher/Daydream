@@ -590,3 +590,16 @@ async fn the_record_number_changer_previews_and_refuses() {
     assert_eq!(body["dry_run"], true);
     assert!(body["tables"].is_array(), "{body}");
 }
+
+#[tokio::test]
+async fn a_dig_from_a_missing_room_is_refused() {
+    let dir = realm();
+    let (status, body) = send(
+        dir.path(),
+        "POST",
+        "/api/map/dig",
+        serde_json::json!({"map": 1, "room": 1, "dir": 0, "to_map": 1, "to_room": 2, "dry_run": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}

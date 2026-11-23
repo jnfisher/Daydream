@@ -66,13 +66,35 @@ function joined(nodes: Node[]): Node[] {
   return nodes.flatMap((n, i) => (i ? [document.createTextNode(', '), n] : [n]));
 }
 
+/** A table as CSV, each cell's text quoted where it needs it. */
+export function toCsv(table: HTMLTableElement): string {
+  const quote = (t: string) => (/[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t);
+  return [...table.rows].map((row) => [...row.cells].map((c) => quote((c.textContent ?? '').trim())).join(',')).join('\r\n') + '\r\n';
+}
+
+function csvButton(title: string, table: HTMLTableElement): HTMLElement {
+  const b = h('button', { type: 'button', class: 'csv' }, 'Download CSV');
+  b.addEventListener('click', () => {
+    const url = URL.createObjectURL(new Blob([toCsv(table)], { type: 'text/csv' }));
+    const a = h('a', { href: url, download: `${title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}.csv` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+  return h('div', { class: 'toolbar' }, b);
+}
+
 function card(title: string, hint: string, controls: (Node | string)[], build: () => Promise<HTMLElement>): HTMLElement {
   const out = h('div', { class: 'tool-result' });
   const go = h('button', { type: 'button', class: 'primary' }, 'Build List');
   go.addEventListener('click', async () => {
     out.replaceChildren(h('p', {}, 'Building…'));
     try {
-      out.replaceChildren(await build());
+      const built = await build();
+      out.replaceChildren(built);
+      const table = built.querySelector('table') ?? (built.tagName === 'TABLE' ? built : null);
+      if (table) out.prepend(csvButton(title, table as HTMLTableElement));
     } catch (e) {
       out.replaceChildren(h('p', { class: 'error' }, e instanceof Error ? e.message : String(e)));
     }

@@ -84,6 +84,7 @@ pub fn router(realm_dir: &Path) -> Router {
         .route("/api/reports/npc-rooms", get(reports::npc_rooms))
         .route("/api/reports/room-indexes", get(reports::room_indexes))
         .route("/api/map", get(reports::map))
+        .route("/api/map/dig", post(tools::dig))
         .route("/api/quests", get(reports::quests))
         .route(
             "/api/tools/merge-users",

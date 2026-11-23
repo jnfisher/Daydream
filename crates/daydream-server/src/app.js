@@ -1125,13 +1125,32 @@ function grid(head, rows, rowClass) {
 function joined(nodes) {
   return nodes.flatMap((n, i) => i ? [document.createTextNode(", "), n] : [n]);
 }
+function toCsv(table) {
+  const quote = (t2) => /[",\n\r]/.test(t2) ? `"${t2.replace(/"/g, '""')}"` : t2;
+  return [...table.rows].map((row) => [...row.cells].map((c) => quote((c.textContent ?? "").trim())).join(",")).join("\r\n") + "\r\n";
+}
+function csvButton(title, table) {
+  const b = h2("button", { type: "button", class: "csv" }, "Download CSV");
+  b.addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([toCsv(table)], { type: "text/csv" }));
+    const a = h2("a", { href: url, download: `${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")}.csv` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+  return h2("div", { class: "toolbar" }, b);
+}
 function card(title, hint, controls, build) {
   const out = h2("div", { class: "tool-result" });
   const go = h2("button", { type: "button", class: "primary" }, "Build List");
   go.addEventListener("click", async () => {
     out.replaceChildren(h2("p", {}, "Building\u2026"));
     try {
-      out.replaceChildren(await build());
+      const built = await build();
+      out.replaceChildren(built);
+      const table = built.querySelector("table") ?? (built.tagName === "TABLE" ? built : null);
+      if (table) out.prepend(csvButton(title, table));
     } catch (e) {
       out.replaceChildren(h2("p", { class: "error" }, e instanceof Error ? e.message : String(e)));
     }
@@ -1345,6 +1364,7 @@ function mapPage() {
   hidden.checked = true;
   const draw = h3("button", { type: "button", class: "primary" }, "Map");
   const note = h3("span", { class: "note" });
+  const flash = h3("p", { class: "note map-flash" });
   const bar = h3(
     "div",
     { class: "toolbar" },
@@ -1374,9 +1394,11 @@ function mapPage() {
   el.append(
     h3("h2", {}, "Map"),
     bar,
+    flash,
     h3("div", { class: "map-body" }, board, h3("div", { class: "map-aside" }, side, legend))
   );
   let data = null;
+  let lastLay = null;
   const go = (map, room) => {
     location.hash = `#/map/${map}/${room}`;
   };
@@ -1412,6 +1434,87 @@ function mapPage() {
     if (r.death) extras.push(`Death room ${r.death}`);
     if (r.exit_room) extras.push(`Exit room ${r.exit_room}`);
     if (extras.length) side.append(h3("p", { class: "note" }, extras.join(" \xB7 ")));
+    side.append(builder(map, r));
+  }
+  function builder(map, r) {
+    const panel = h3("details", { class: "map-build" }, h3("summary", {}, "Build (Map Editor)"));
+    const form = h3("div", { class: "map-build-form" });
+    const pad = h3("div", { class: "map-pad" });
+    const order = [5, 0, 4, 3, -1, 2, 7, 1, 6, 8, 9];
+    for (const d of order) {
+      if (d < 0) {
+        pad.append(h3("span", {}, String(r.room)));
+        continue;
+      }
+      const e = r.exits.find((x) => x.dir === d);
+      const b = h3("button", { type: "button", title: e ? `Go ${EXITS[d]} to ${e.to}` : `No exit ${EXITS[d]}: make or join a room` }, EXITS[d]);
+      if (e) b.classList.add("has-exit");
+      b.addEventListener("click", () => {
+        if (e) {
+          go(e.kind === 8 ? e.para1 : map, e.to);
+          return;
+        }
+        ask(d);
+      });
+      pad.append(b);
+    }
+    panel.append(pad, form);
+    function ask(d) {
+      const rooms = data?.rooms ?? [];
+      const next = rooms.reduce((m, x) => Math.max(m, x.room), 0) + 1;
+      let near = "";
+      if (lastLay && d < 8) {
+        const cell = lastLay.at.get(r.room);
+        if (cell !== void 0) {
+          const [dr, dc] = STEP[d];
+          const there = lastLay.cells.get(cell + dr * SIZE + dc);
+          if (there !== void 0) near = String(there);
+        }
+      }
+      const existing = h3("input", { type: "checkbox" });
+      const toMap = h3("input", { type: "text", inputmode: "numeric", class: "num", value: String(map), "aria-label": "Map" });
+      const toRoom = h3("input", { type: "text", inputmode: "numeric", class: "num", value: String(next), "aria-label": "Room" });
+      existing.addEventListener("change", () => {
+        toRoom.value = existing.checked ? near : String(next);
+      });
+      const replace = h3("input", { type: "checkbox" });
+      const make = h3("button", { type: "button", class: "primary" }, "Create");
+      const result = h3("div");
+      make.addEventListener("click", async () => {
+        const body = {
+          map,
+          room: r.room,
+          dir: d,
+          to_map: Number(toMap.value),
+          to_room: Number(toRoom.value),
+          existing: existing.checked,
+          replace_back: replace.checked
+        };
+        result.replaceChildren(h3("p", {}, "Writing\u2026"));
+        flash.textContent = "";
+        try {
+          const res = await fetch("/api/map/dig", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+          const out = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(out?.error ?? res.statusText);
+          if (out.notes?.length) alertNote(out.notes.join(" "));
+          await show2(true);
+          if (body.to_map === map) go(map, body.to_room);
+        } catch (e) {
+          result.replaceChildren(h3("p", { class: "error" }, e.message));
+        }
+      });
+      form.replaceChildren(
+        h3("p", {}, `No exit ${EXITS[d]} from room ${r.room}. Make a new room there, or join an existing one; an exit is made each way.`),
+        h3("div", { class: "fix-inputs" }, h3("label", {}, existing, " Existing room"), h3("label", {}, "Map ", toMap), h3("label", {}, "Room ", toRoom)),
+        h3("div", {}, h3("label", {}, replace, " Replace its exit back if in use")),
+        h3("div", { class: "toolbar" }, make),
+        result
+      );
+    }
+    return panel;
+  }
+  function alertNote(text) {
+    flash.textContent = text;
   }
   function render(map, start) {
     if (!data) return;
@@ -1419,6 +1522,7 @@ function mapPage() {
     if (!rooms.has(start) && data.rooms.length) start = data.rooms[0].room;
     roomBox.value = String(start);
     const lay = layOut(rooms, start, hidden.checked);
+    lastLay = lay;
     const px = SIZE * CELL;
     const s = svg("svg", { viewBox: `0 0 ${px} ${px}`, width: px, height: px, class: "map-svg" });
     const centreOf = (cell) => [

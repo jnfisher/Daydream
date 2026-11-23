@@ -268,3 +268,123 @@ fn a_map_view_has_its_rooms_exits_and_the_maps() {
     assert_eq!(exits, [(0, 2, 0, 0), (6, 9, 8, 3)]);
     assert!(map_view(&realm, Dos, 7).unwrap().rooms.is_empty());
 }
+
+#[test]
+fn the_map_editor_digs_new_rooms_and_joins_old_ones() {
+    use daydream_nmr::map::{Dig, dig};
+    use daydream_nmr::modify::apply;
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let rows = [
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(1)),
+            ("Name", t("Hall")),
+            ("Light", l(5)),
+            ("Gold", l(9)),
+            ("Room Item 0", l(7)),
+            ("Exit 1", l(2)),
+        ],
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(2)),
+            ("Name", t("Yard")),
+            ("Exit 0", l(1)),
+        ],
+        vec![
+            ("Map Number", l(2)),
+            ("Room Number", l(5)),
+            ("Name", t("Far")),
+            ("Exit 3", l(9)),
+        ],
+    ];
+    let refs: Vec<&[(&str, Value)]> = rows.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Rooms", &refs);
+    let get = |map: i64, room: i64, col: &str| -> i64 {
+        let view =
+            daydream_nmr::export_table(&realm, daydream_nmr::schema::table("Rooms").unwrap(), Dos)
+                .unwrap();
+        let (m, r, c) = (
+            view.position("Map Number").unwrap(),
+            view.position("Room Number").unwrap(),
+            view.position(col).unwrap(),
+        );
+        let row = view
+            .rows
+            .iter()
+            .find(|row| {
+                daydream_nmr::schema::number(&row[m]).unwrap() as i64 == map
+                    && daydream_nmr::schema::number(&row[r]).unwrap() as i64 == room
+            })
+            .unwrap();
+        match &row[c] {
+            Value::Text(s) => s.len() as i64,
+            v => daydream_nmr::schema::number(v).unwrap() as i64,
+        }
+    };
+    let d = |dir, to_map, to_room, existing, replace_back| Dig {
+        map: 1,
+        room: 1,
+        dir,
+        to_map,
+        to_room,
+        existing,
+        replace_back,
+    };
+
+    // east from the hall: a new room 3, a copy of the hall without its gold and items
+    let plan = dig(&realm, Dos, &d(2, 1, 3, false, false)).unwrap();
+    apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(get(1, 1, "Exit 2"), 3);
+    assert_eq!(get(1, 3, "Exit 3"), 1);
+    assert_eq!(get(1, 3, "Light"), 5);
+    assert_eq!(get(1, 3, "Gold"), 0);
+    assert_eq!(get(1, 3, "Room Item 0"), 0);
+    assert_eq!(get(1, 3, "Exit 1"), 0);
+    // south already leads to room 2; a new room onto an existing number is refused
+    assert!(dig(&realm, Dos, &d(1, 1, 9, false, false)).is_err());
+    assert!(dig(&realm, Dos, &d(4, 1, 2, false, false)).is_err());
+    // NE to the existing room 2/5, on another map: map change exits both ways
+    let plan = dig(&realm, Dos, &d(4, 2, 5, true, false)).unwrap();
+    apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(
+        (
+            get(1, 1, "Exit 4"),
+            get(1, 1, "Type 4"),
+            get(1, 1, "Para1 4")
+        ),
+        (5, 8, 2)
+    );
+    assert_eq!(
+        (
+            get(2, 5, "Exit 7"),
+            get(2, 5, "Type 7"),
+            get(2, 5, "Para1 7")
+        ),
+        (1, 8, 1)
+    );
+    // the existing room's way back in use: left, with a note, unless replaced
+    let plan = dig(&realm, Dos, &d(2, 2, 5, true, false));
+    assert!(plan.is_err(), "east is taken by room 3");
+    let plan = dig(&realm, Dos, &d(5, 2, 5, true, false)).unwrap();
+    assert_eq!(plan.notes.len(), 0);
+    let mut moved = Dig {
+        map: 1,
+        room: 2,
+        dir: 2,
+        to_map: 2,
+        to_room: 5,
+        existing: true,
+        replace_back: false,
+    };
+    let plan = dig(&realm, Dos, &moved).unwrap();
+    assert_eq!(plan.notes.len(), 1, "{plan:?}");
+    apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(get(2, 5, "Exit 3"), 9);
+    moved.dir = 6;
+    moved.replace_back = true;
+    let plan = dig(&realm, Dos, &moved).unwrap();
+    apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(get(2, 5, "Exit 5"), 2);
+}

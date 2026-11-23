@@ -100,3 +100,201 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
         rooms: out,
     })
 }
+
+/// The exit back: N for S, E for W, NE for SW, U for D, and so on.
+pub const OPPOSITE: [usize; 10] = [1, 0, 3, 2, 7, 6, 5, 4, 9, 8];
+
+/// NMR's Map Editor's move into a direction with no exit: a new room, or an existing one,
+/// joined to the room by an exit each way (a map change exit when the maps differ).
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Dig {
+    pub map: i64,
+    pub room: i64,
+    /// 0 to 9, as [`DIRECTIONS`].
+    pub dir: usize,
+    pub to_map: i64,
+    pub to_room: i64,
+    /// Join an existing room (else a new one is made).
+    #[serde(default)]
+    pub existing: bool,
+    /// When joining an existing room whose exit back is in use: replace it (NMR asks).
+    #[serde(default)]
+    pub replace_back: bool,
+}
+
+/// Why a dig cannot be done.
+#[derive(Debug, thiserror::Error)]
+pub enum DigError {
+    #[error("{0}")]
+    Bad(String),
+    #[error(transparent)]
+    Report(#[from] ReportError),
+}
+
+/// Plans a dig (nothing is written; [`crate::modify::apply`] writes it). A new room is a copy
+/// of the room it is dug from, as NMR's, without its exits, items, coins and permanent NPC.
+pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::Plan, DigError> {
+    use crate::modify::{Change, Plan};
+    use crate::schema::Value;
+    let bad = |m: String| DigError::Bad(m);
+    if d.dir > 9 {
+        return Err(bad("directions run from 0 to 9".into()));
+    }
+    if d.to_map <= 0 || d.to_room <= 0 {
+        return Err(bad("give the room to join, map and room above 0".into()));
+    }
+    if (d.map, d.room) == (d.to_map, d.to_room) {
+        return Err(bad("a room cannot lead to itself here".into()));
+    }
+    let rows = Rows::load(realm, "Rooms", layout)?;
+    let (mapn, roomn, name) = (
+        rows.at("Map Number")?,
+        rows.at("Room Number")?,
+        rows.at("Name")?,
+    );
+    let exits = rows.family("Exit", 10, "")?;
+    let kinds = rows.family("Type", 10, "")?;
+    let paras: Vec<Vec<usize>> = (1..=4)
+        .map(|p| rows.family(&format!("Para{p}"), 10, ""))
+        .collect::<Result<_, _>>()?;
+    let find = |m: i64, r: i64| {
+        rows.0
+            .rows
+            .iter()
+            .position(|row| n(&row[mapn]) == m && n(&row[roomn]) == r)
+    };
+    let here = find(d.map, d.room)
+        .ok_or_else(|| bad(format!("room {}/{} is not in the realm", d.map, d.room)))?;
+    let there = find(d.to_map, d.to_room);
+    let current = &rows.0.rows[here];
+    if n(&current[exits[d.dir]]) != 0 {
+        let to = n(&current[exits[d.dir]]);
+        let kind = n(&current[kinds[d.dir]]);
+        let map = if kind == 8 {
+            n(&current[paras[0][d.dir]])
+        } else {
+            d.map
+        };
+        if find(map, to).is_some() {
+            return Err(bad(format!(
+                "room {}/{} already has an exit {} (to {map}/{to})",
+                d.map, d.room, DIRECTIONS[d.dir]
+            )));
+        }
+    }
+    match (d.existing, there) {
+        (false, Some(_)) => {
+            return Err(bad(format!(
+                "room {}/{} already exists: join it as an existing room",
+                d.to_map, d.to_room
+            )));
+        }
+        (true, None) => {
+            return Err(bad(format!(
+                "room {}/{} is not in the realm",
+                d.to_map, d.to_room
+            )));
+        }
+        _ => {}
+    }
+    let like = |v: &Value, x: i64| crate::modify::cell(v, x as f64);
+    // an exit from `row` in `dir` to `to` on `to_map`
+    let set_exit = |row: &mut Vec<Value>, dir: usize, from_map: i64, to_map: i64, to: i64| {
+        row[exits[dir]] = like(&row[exits[dir]], to);
+        if from_map == to_map {
+            row[kinds[dir]] = like(&row[kinds[dir]], 0);
+        } else {
+            row[kinds[dir]] = like(&row[kinds[dir]], 8);
+            row[paras[0][dir]] = like(&row[paras[0][dir]], to_map);
+        }
+    };
+    let back = OPPOSITE[d.dir];
+    let mut notes = Vec::new();
+    let mut new_current = current.clone();
+    set_exit(&mut new_current, d.dir, d.map, d.to_map, d.to_room);
+    let target = match there {
+        Some(i) => {
+            let mut row = rows.0.rows[i].clone();
+            if n(&row[exits[back]]) != 0 && !d.replace_back {
+                notes.push(format!(
+                    "Room {}/{}'s exit {} is in use (to {}): it is left, so there is no way back.",
+                    d.to_map,
+                    d.to_room,
+                    DIRECTIONS[back],
+                    n(&row[exits[back]])
+                ));
+            } else {
+                set_exit(&mut row, back, d.to_map, d.map, d.room);
+            }
+            row
+        }
+        None => {
+            let mut row = current.clone();
+            row[mapn] = like(&row[mapn], d.to_map);
+            row[roomn] = like(&row[roomn], d.to_room);
+            let mut clear: Vec<usize> = Vec::new();
+            for c in [
+                "Perm NPC",
+                "Runic",
+                "Platinum",
+                "Gold",
+                "Silver",
+                "Copper",
+                "InvisRunic",
+                "InvisPlatinum",
+                "InvisGold",
+                "InvisSilver",
+                "InvisCopper",
+            ] {
+                clear.push(rows.at(c)?);
+            }
+            for (stem, count) in [("Room Item", 17), ("Hidden Item", 15)] {
+                for x in 0..count {
+                    for suffix in ["", " QTY", " USES"] {
+                        clear.push(rows.at(&format!("{stem} {x}{suffix}"))?);
+                    }
+                }
+            }
+            clear.extend(rows.family("Placed Item", 10, "")?);
+            clear.extend(&exits);
+            clear.extend(&kinds);
+            paras.iter().for_each(|p| clear.extend(p));
+            for c in clear {
+                row[c] = like(&row[c], 0);
+            }
+            set_exit(&mut row, back, d.to_map, d.map, d.room);
+            row
+        }
+    };
+    let mut plan = Plan {
+        table: "Rooms".into(),
+        notes,
+        ..Plan::default()
+    };
+    let key = |row: &[Value]| vec![row[mapn].clone(), row[roomn].clone()];
+    let mut diff = |before: Option<&Vec<Value>>, after: &Vec<Value>| {
+        for (i, b) in after.iter().enumerate() {
+            let a = before.map(|r| &r[i]);
+            if a != Some(b) && (a.is_some() || i == name) {
+                plan.changes.push(Change {
+                    key: key(after),
+                    column: if a.is_some() {
+                        rows.0.columns[i].clone()
+                    } else {
+                        "(new room)".into()
+                    },
+                    before: a.cloned().unwrap_or(Value::Null),
+                    after: b.clone(),
+                });
+            }
+        }
+    };
+    diff(Some(current), &new_current);
+    diff(there.map(|i| &rows.0.rows[i]), &target);
+    plan.rows = Some(crate::data::NmrRows {
+        name: rows.0.name.clone(),
+        columns: rows.0.columns.clone(),
+        rows: vec![new_current, target],
+    });
+    Ok(plan)
+}

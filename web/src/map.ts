@@ -179,6 +179,8 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
   hidden.checked = true;
   const draw = h('button', { type: 'button', class: 'primary' }, 'Map');
   const note = h('span', { class: 'note' });
+  // what the last build left to look at; kept across redraws
+  const flash = h('p', { class: 'note map-flash' });
   const bar = h(
     'div',
     { class: 'toolbar' },
@@ -208,10 +210,12 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
   el.append(
     h('h2', {}, 'Map'),
     bar,
+    flash,
     h('div', { class: 'map-body' }, board, h('div', { class: 'map-aside' }, side, legend)),
   );
 
   let data: MapAnswer | null = null;
+  let lastLay: Layout | null = null;
   const go = (map: number, room: number) => {
     location.hash = `#/map/${map}/${room}`;
   };
@@ -248,6 +252,94 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
     if (r.death) extras.push(`Death room ${r.death}`);
     if (r.exit_room) extras.push(`Exit room ${r.exit_room}`);
     if (extras.length) side.append(h('p', { class: 'note' }, extras.join(' · ')));
+    side.append(builder(map, r));
+  }
+
+  // NMR's Map Editor: a move where there is no exit makes a new room, or joins an
+  // existing one, with an exit each way
+  function builder(map: number, r: Room): HTMLElement {
+    const panel = h('details', { class: 'map-build' }, h('summary', {}, 'Build (Map Editor)'));
+    const form = h('div', { class: 'map-build-form' });
+    const pad = h('div', { class: 'map-pad' });
+    // keypad order: NW N NE / W . E / SW S SE, then U D
+    const order = [5, 0, 4, 3, -1, 2, 7, 1, 6, 8, 9];
+    for (const d of order) {
+      if (d < 0) {
+        pad.append(h('span', {}, String(r.room)));
+        continue;
+      }
+      const e = r.exits.find((x) => x.dir === d);
+      const b = h('button', { type: 'button', title: e ? `Go ${DIRS[d]} to ${e.to}` : `No exit ${DIRS[d]}: make or join a room` }, DIRS[d]!);
+      if (e) b.classList.add('has-exit');
+      b.addEventListener('click', () => {
+        if (e) {
+          go(e.kind === 8 ? e.para1 : map, e.to);
+          return;
+        }
+        ask(d);
+      });
+      pad.append(b);
+    }
+    panel.append(pad, form);
+
+    function ask(d: number) {
+      const rooms = data?.rooms ?? [];
+      const next = rooms.reduce((m, x) => Math.max(m, x.room), 0) + 1;
+      // the room already drawn in that direction, as NMR offers it
+      let near = '';
+      if (lastLay && d < 8) {
+        const cell = lastLay.at.get(r.room);
+        if (cell !== undefined) {
+          const [dr, dc] = STEP[d]!;
+          const there = lastLay.cells.get(cell + dr * SIZE + dc);
+          if (there !== undefined) near = String(there);
+        }
+      }
+      const existing = h('input', { type: 'checkbox' });
+      const toMap = h('input', { type: 'text', inputmode: 'numeric', class: 'num', value: String(map), 'aria-label': 'Map' });
+      const toRoom = h('input', { type: 'text', inputmode: 'numeric', class: 'num', value: String(next), 'aria-label': 'Room' });
+      existing.addEventListener('change', () => {
+        toRoom.value = existing.checked ? near : String(next);
+      });
+      const replace = h('input', { type: 'checkbox' });
+      const make = h('button', { type: 'button', class: 'primary' }, 'Create');
+      const result = h('div');
+      make.addEventListener('click', async () => {
+        const body = {
+          map,
+          room: r.room,
+          dir: d,
+          to_map: Number(toMap.value),
+          to_room: Number(toRoom.value),
+          existing: existing.checked,
+          replace_back: replace.checked,
+        };
+        result.replaceChildren(h('p', {}, 'Writing…'));
+        flash.textContent = '';
+        try {
+          const res = await fetch('/api/map/dig', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+          const out = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(out?.error ?? res.statusText);
+          if (out.notes?.length) alertNote(out.notes.join(' '));
+          await show(true);
+          if (body.to_map === map) go(map, body.to_room);
+        } catch (e) {
+          result.replaceChildren(h('p', { class: 'error' }, (e as Error).message));
+        }
+      });
+      form.replaceChildren(
+        h('p', {}, `No exit ${DIRS[d]} from room ${r.room}. Make a new room there, or join an existing one; an exit is made each way.`),
+        h('div', { class: 'fix-inputs' }, h('label', {}, existing, ' Existing room'), h('label', {}, 'Map ', toMap), h('label', {}, 'Room ', toRoom)),
+        h('div', {}, h('label', {}, replace, ' Replace its exit back if in use')),
+        h('div', { class: 'toolbar' }, make),
+        result,
+      );
+    }
+    return panel;
+  }
+
+  function alertNote(text: string) {
+    flash.textContent = text;
   }
 
   function render(map: number, start: number) {
@@ -256,6 +348,7 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
     if (!rooms.has(start) && data.rooms.length) start = data.rooms[0].room;
     roomBox.value = String(start);
     const lay = layOut(rooms, start, hidden.checked);
+    lastLay = lay;
     const px = SIZE * CELL;
     const s = svg('svg', { viewBox: `0 0 ${px} ${px}`, width: px, height: px, class: 'map-svg' }) as SVGSVGElement;
     const centreOf = (cell: number): [number, number] => [
