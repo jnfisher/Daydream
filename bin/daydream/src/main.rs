@@ -74,6 +74,49 @@ enum Command {
         #[arg(long, default_value = "")]
         custom: String,
     },
+    /// Export REALM for MMUD Explorer, as NMR's Export to MMUD Explorer does: the same
+    /// tables and values, and only what NMR's export shows players.
+    MmeExport {
+        /// The realm directory.
+        realm: PathBuf,
+        /// The file to write: a `.mdb`, or with `--plan` or `--json` that format.
+        out: PathBuf,
+        /// Write the plan `write-mdb.ps1` reads instead of the `.mdb`.
+        #[arg(long, conflicts_with = "json")]
+        plan: bool,
+        /// Write the tables as JSON instead of the `.mdb`.
+        #[arg(long)]
+        json: bool,
+        /// Not NMR's "Legit" export: allows a custom name, an update URL and the sysop's
+        /// own room exclusions.
+        #[arg(long)]
+        not_legit: bool,
+        /// "Custom" name for the Info row.
+        #[arg(long, requires = "not_legit")]
+        custom: Option<String>,
+        /// "Update URL" for the Info row.
+        #[arg(long, requires = "not_legit")]
+        update_url: Option<String>,
+        /// "Dat File Version" for the Info row (NMR's default when left out).
+        #[arg(long)]
+        dat_version: Option<String>,
+        /// "Disable Kai".
+        #[arg(long)]
+        disable_kai: bool,
+        /// Leave out NMR's default room exclusions (sysop and test rooms).
+        #[arg(long)]
+        no_default_excludes: bool,
+        /// "Exclude rooms": leave these rooms out, `MAP:FROM-TO`. Give it once per range.
+        #[arg(long = "exclude", value_parser = parse_numbers, requires = "not_legit")]
+        exclude: Vec<daydream_nmr::Range>,
+        /// "Hide excluded rooms": keep the excluded rooms, their details blanked, instead
+        /// of leaving them out.
+        #[arg(long)]
+        hide_excluded: bool,
+        /// "No rooms": write no rooms at all.
+        #[arg(long, requires = "not_legit")]
+        no_rooms: bool,
+    },
     /// Import a Nightmare Redux `.mdb` export (or a JSON export) into REALM. Stop the realm
     /// first.
     NmrImport {
@@ -200,6 +243,53 @@ fn main() -> anyhow::Result<()> {
             keep_runtime,
             custom,
         } => nmr_export(&realm, &out, plan, json, keep_runtime, custom),
+        Command::MmeExport {
+            realm,
+            out,
+            plan,
+            json,
+            not_legit,
+            custom,
+            update_url,
+            dat_version,
+            disable_kai,
+            no_default_excludes,
+            exclude,
+            hide_excluded,
+            no_rooms,
+        } => {
+            let mut opts = daydream_nmr::mme::MmeOptions {
+                legit: !not_legit,
+                disable_kai,
+                exclude_default: !no_default_excludes,
+                exclude_rooms: !exclude.is_empty() || no_rooms,
+                excluded: exclude
+                    .iter()
+                    .map(|r| {
+                        Ok(daydream_nmr::mme::Excluded {
+                            map: r.map.ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "--exclude {}-{}: give the map, MAP:FROM-TO",
+                                    r.from,
+                                    r.to
+                                )
+                            })?,
+                            from: r.from,
+                            to: r.to,
+                        })
+                    })
+                    .collect::<anyhow::Result<_>>()?,
+                hide_excluded,
+                no_rooms,
+                custom: custom.unwrap_or_default(),
+                update_url: update_url.unwrap_or_default(),
+                ..Default::default()
+            };
+            if let Some(v) = dat_version {
+                opts.dat_version = v;
+            }
+            mme_export(&realm, &out, plan, json, opts)
+        }
         Command::NmrImport {
             realm,
             file,
@@ -343,6 +433,32 @@ fn nmr_export(
         daydream_nmr::jet::write_plan(&data, out)?;
     } else {
         daydream_nmr::jet::write_mdb(&data, out)?;
+    }
+    for t in &data.tables {
+        println!("{}: {} rows", t.name, t.rows.len());
+    }
+    Ok(())
+}
+
+fn mme_export(
+    realm: &Path,
+    out: &Path,
+    plan: bool,
+    json: bool,
+    mut opts: daydream_nmr::mme::MmeOptions,
+) -> anyhow::Result<()> {
+    let realm = Realm::open(realm)?;
+    // VB's Date and Time in the US format NMR's users mostly have
+    let now = jiff::Zoned::now();
+    opts.date = now.strftime("%-m/%-d/%Y").to_string();
+    opts.time = now.strftime("%-I:%M:%S %p").to_string();
+    let data = daydream_nmr::mme::export(&realm, daydream_nmr::layout_of_realm(&realm), &opts)?;
+    if json {
+        std::fs::write(out, serde_json::to_vec(&data)?)?;
+    } else if plan {
+        std::fs::write(out, daydream_nmr::mme::plan(&data))?;
+    } else {
+        daydream_nmr::jet::write_plan_mdb(&daydream_nmr::mme::plan(&data), out)?;
     }
     for t in &data.tables {
         println!("{}: {} rows", t.name, t.rows.len());

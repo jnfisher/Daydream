@@ -27,6 +27,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use daydream_store::{Realm, RealmFile, StoreError, WbtrvDb};
+use daydream_types::records::LayoutSet;
 use daydream_wcc::decode::base64;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -164,21 +165,22 @@ async fn realm(State(s): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> 
     .await
 }
 
-fn open_file(realm_dir: &Path, stem: &str) -> Result<(RealmFile, WbtrvDb), ApiError> {
+/// A realm file, opened to read, and the layouts of the realm's records.
+fn open_file(realm_dir: &Path, stem: &str) -> Result<(RealmFile, WbtrvDb, LayoutSet), ApiError> {
     let realm = Realm::open(realm_dir)?;
     let file = realm
         .file(stem)
         .cloned()
         .ok_or_else(|| not_found(format!("file {stem}")))?;
     let db = WbtrvDb::open_read_only(&file.path)?;
-    Ok((file, db))
+    Ok((file, db, daydream_nmr::layout_of_realm(&realm)))
 }
 
-fn to_json(file: &RealmFile, id: i64, data: &[u8]) -> Result<Value, ApiError> {
+fn to_json(file: &RealmFile, layout: LayoutSet, id: i64, data: &[u8]) -> Result<Value, ApiError> {
     match file.table {
         Some(table) => {
             let ordinal = u32::try_from(id).unwrap_or(u32::MAX);
-            let fields = table.to_json(ordinal, data).map_err(|e| {
+            let fields = table.to_json_as(ordinal, data, layout).map_err(|e| {
                 ApiError(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("{} record {id}: {e}", file.stem),
@@ -204,7 +206,7 @@ async fn records(
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (file, db) = open_file(&s.realm_dir, &stem)?;
+        let (file, db, layout) = open_file(&s.realm_dir, &stem)?;
         let limit = q.limit.unwrap_or(100).clamp(1, MAX_PAGE);
         let page = db.page(q.after, limit)?;
         let next = if page.len() as i64 == limit {
@@ -214,7 +216,7 @@ async fn records(
         };
         let records = page
             .iter()
-            .map(|(id, data)| to_json(&file, *id, data))
+            .map(|(id, data)| to_json(&file, layout, *id, data))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Json(json!({
             "stem": file.stem,
@@ -231,11 +233,11 @@ async fn record(
     UrlPath((stem, id)): UrlPath<(String, i64)>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (file, db) = open_file(&s.realm_dir, &stem)?;
+        let (file, db, layout) = open_file(&s.realm_dir, &stem)?;
         let data = db
             .get(id)?
             .ok_or_else(|| not_found(format!("{} record {id}", file.stem)))?;
-        Ok(Json(to_json(&file, id, &data)?))
+        Ok(Json(to_json(&file, layout, id, &data)?))
     })
     .await
 }

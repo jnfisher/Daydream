@@ -216,13 +216,21 @@ export function recordNumberChanger(
   };
   kind.addEventListener('change', showForm);
 
+  // NMR leaves users alone; here they can follow
+  const users = h('input', { type: 'checkbox' });
+  const usersBox = h(
+    'label',
+    { title: "Items and keys they carry, wear or wield; spells in their spellbook or on them; their class and race; where they stand and their trail" },
+    users,
+    " Users follow too (NMR's changer leaves users alone)",
+  );
   const request = (): object => {
     if (kind.value === 'map') {
-      const body: Record<string, unknown> = { kind: 'map', from: int(mapFrom), to: int(mapTo) };
+      const body: Record<string, unknown> = { kind: 'map', from: int(mapFrom), to: int(mapTo), users: users.checked };
       for (const [k, c] of boxes) body[k] = c.checked;
       return body;
     }
-    return { kind: 'records', table: kind.value, map: kind.value === 'rooms' ? int(map) : undefined, moves };
+    return { kind: 'records', table: kind.value, map: kind.value === 'rooms' ? int(map) : undefined, moves, users: users.checked };
   };
   const run = async (dryRun: boolean) => {
     if (!dryRun && !confirm('Change the record numbers, and everything that names them? Preview first to see the changes.')) return;
@@ -258,6 +266,7 @@ export function recordNumberChanger(
     h('div', { class: 'toolbar' }, h('label', {}, 'Records: ', kind)),
     recordsForm,
     mapForm,
+    h('div', {}, usersBox),
     h('div', { class: 'toolbar' }, preview, go),
     out,
   );

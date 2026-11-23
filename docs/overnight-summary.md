@@ -19,7 +19,9 @@ revisited. Pull requests merged once CI was green.
   Map Editor, the Quest Organizer, the Monster Group/Index Changer and the Record Number
   Changer.
 - **M4: the player editors are in** (Users with Revive, Paste Stats and NMR's character
-  export/import; Bank Books; Gangs). The MME export, M4's other half, is next.
+  export/import; Bank Books; Gangs). **The MME export's library is done** (#17): every
+  table and column of NMR's export, checked against NMR's own export of the stock world.
+  It is on the command line (`daydream mme-export`), not yet in the web UI.
 
 ## Pull requests
 
@@ -36,7 +38,8 @@ revisited. Pull requests merged once CI was green.
 | #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | merged (squash e839b9d) |
 | #14 | M3: the Record Number Changer | merged (squash 8725f04) |
 | #15 | M3: the Map Editor (digging rooms) and CSV downloads of lists | merged (squash 508365a) |
-| #16 | M4: Users, Bank Books and Gangs editors, Revive Character, character paste/export/import | open |
+| #16 | M4: Users, Bank Books and Gangs editors, Revive Character, character paste/export/import | merged (squash e4be5ba) |
+| #17 | M4: the MME export, parts 1 to 4 (tables, walk, lairs, attack simulation) | open, CI green; merging it was refused by my permissions, so it waits for John |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -92,6 +95,44 @@ revisited. Pull requests merged once CI was green.
   output) and **Export / Import** (NMR's `Key:value` character text, with its import boxes,
   so a character moves between NMR and Daydream). Tried in Chromium: a user exported and
   imported into another matches it field for field, except the boxes left unticked.
+
+- **The MME export, part 1** (#17). `daydream_nmr::mme` builds MMUD Explorer's `.mdb` as
+  NMR's exporter does: the same tables and columns, every record's own values, the rooms
+  with their exits written as MME shows them ("1/1381 (Door)", "Action#2 ..."), lair
+  monster lists, and NMR's room exclusions (its default list of sysop and test rooms, a
+  sysop's own list, "hide excluded rooms", "legit"). It is checked against **NMR's own MME
+  export of the stock world** (the data file MME ships, pinned by sha256): on the 1.11p
+  realm here, all 26,694 rooms, 1,950 items, 1,101 monsters, 1,379 spells, 178 shops and
+  the classes and races match value for value, except two item weights where that realm
+  differs from the one NMR exported.
+- **The MME export, parts 2 to 4** (added to #17, since #17 could not be merged first).
+  - **NMR's walk of the world**: what is in the game and where it comes from (`In Game`,
+    `Obtained From`, `References`, `Learned From`, `Casted By`, `Summoned By`,
+    `Assigned To`, `TBInfo`). It follows rooms, shops, monster drops and text block
+    commands (`giveitem`, `learnspell`, `checkitem`, random items, class restrictions) as
+    NMR's `LocateRecords` does, down to VB's string and Currency rules. Matches NMR's
+    export exactly.
+  - **The lairs**: the Lairs table, each lair's average walk between its rooms, AvgLairExp
+    and ScriptValue. Matches NMR's export exactly.
+  - **The monster attack simulation**: AvgDmg, AvgDmgPhys, AvgDmgSpell and AttTrue%. NMR's
+    is random and stops when its average settles, so its own numbers move from one export to
+    the next. Daydream's uses VB's own generator with a fixed seed; on the 1.11p realm here all but 3
+    of 1,101 AvgDmg values are within 5% of NMR's, and none is more than 6% off.
+  - **On the command line as `daydream mme-export`** (added to #17), with NMR's options:
+    Legit by default, `--not-legit` for a custom name, an update URL, the sysop's own
+    exclusions and no rooms. The Windows job writes the stock world's export through Jet
+    and reads it back; that test caught two bugs on its first runs (the wrong table plan,
+    and empty room names written as Null where MME's file holds empty texts), both fixed.
+    Not in the web UI yet: writing the `.mdb` needs Windows' Jet.
+
+- **NMR's last user tools** (added to #17). The user editor gains **Paste Items** (NMR's
+  Paste Items/Keys/Worn/$$: an inventory capture read as NMR reads it, items matched by
+  name, keys to the key list, worn items and the weapon by their "(Place)", coins, with
+  NMR's Clear First or Add and its question when two items share a name), **Paste Spells**
+  (a spellbook capture) and **Copy User** (onto a new BBS name with a new first name, or
+  over an existing user, which keeps its own first name). Tried in Chromium on the 1.11p
+  realm. The rows API takes `?columns=` so the editor reads every item's name, type and
+  uses in one call.
 
 ## Decisions taken
 
@@ -186,23 +227,41 @@ revisited. Pull requests merged once CI was green.
     sets the gang from the "Import Character Name" box (a slip); here "Import Gang Name"
     does.
 
+22. **The simulated columns are tested within a tolerance, not exactly.** Each value must
+    be within 3 points or 25% of NMR's, and no more than 6% of a column may be over 10%
+    off. A tighter test would test NMR's dice, not the formula; the share rule catches a
+    sim that drifts as a whole. Measured worst cases are in `tests/mme.rs`.
+23. **The simulation is seeded, so an export is the same every time.** NMR's numbers vary
+    from one export to the next; a fixed seed makes Daydream's reproducible and diffable.
+24. **Paste Items and Paste Spells follow NMR's reading exactly, quirks included.** For
+    example, a list that runs onto the next line without a full stop joins the two names,
+    and the Wealth line's total sets copper only when it is the capture's last line. So a
+    capture fills the same lists in both.
+
+25. **The MME export went on the command line once it matched NMR's in every column.** It
+    writes exactly what NMR's export writes, so it reveals nothing NMR's would not; that
+    was the condition for exposing it. Worth your review against the MME privacy rule
+    before it merges.
+
 ## Known gaps
 
-- The read-only per-file API (`/api/files/...`) decodes records in the DOS layout only, so on
-  a Worldgroup realm it errors (`1072 bytes, expected 1061`). The editors do not use it; it
-  will learn the realm's layout.
+- Fixed (#17): the read-only per-file API (`/api/files/...`) decoded records in the DOS
+  layout only, so on a Worldgroup realm it errored (`1072 bytes, expected 1061`). It now
+  decodes in the realm's own layouts.
 - Found and fixed on the way: `daydream nmr-export` and `nmr-import` used the DOS layouts
   even on a Worldgroup realm. They now use the realm's own (#8).
-- Users' inventories are not renumbered by the Record Number Changer, as in NMR (users are
-  not among NMR's tables). Worth adding if renumbering items on a live realm matters.
-- NMR's Paste Items (reading an inventory capture) and Copy User are not in. Insert on a
-  user copies it to a new BBS name.
+- Added (#17): the Record Number Changer can move users' references too, which NMR's never
+  does: items they carry, wear or wield, spells in their book or on them, class, race, and
+  where they stand and their trail (Change Map Number too). It is a box, off by default, so
+  the changer does what NMR's does unless asked.
 - The Tools page (#9) imports with Daydream's strict rules only; NMR mode stays a
   command-line and CI option.
 
 ## Needs John
 
-- Nothing blocking. Worth a look when convenient:
+- **Merge #17** (MME export library, CI green). My attempt to merge it was refused by the
+  session's permission check, so it is waiting on you.
+- Worth a look when convenient:
   - The item editor's layout against NMR's.
   - **No Limited Items keeps item 1749 ("yellow bone portal"), as NMR does.** In the 1.11p
     data there are two yellow bone portals, 1749 and 1807, and only 1807 is placed in the

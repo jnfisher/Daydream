@@ -11,7 +11,32 @@ use tower::ServiceExt;
 /// A realm with two races (numbers 1 and 2) and wbtrv32's MBBSEMU test file.
 fn realm() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let keys = vec![Key {
+    let mut db = WbtrvDb::create(&dir.path().join("WCCRACE.db"), meta(126), number_key()).unwrap();
+    for (n, name) in [(1u16, "Human"), (2, "Dwarf")] {
+        let mut r = vec![0u8; 126];
+        r[0..2].copy_from_slice(&n.to_le_bytes());
+        r[2..2 + name.len()].copy_from_slice(name.as_bytes());
+        db.insert(&r).unwrap();
+    }
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../daydream-wcc/tests/fixtures/btrieve/MBBSEMU.DAT");
+    WbtrvDb::convert(&fixture, &dir.path().join("MBBSEMU.db")).unwrap();
+    dir
+}
+
+fn meta(record_length: usize) -> Metadata {
+    Metadata {
+        record_length,
+        physical_record_length: record_length + 4,
+        page_length: 1024,
+        variable_length_records: false,
+        version: 4,
+    }
+}
+
+/// The record number, a 2-byte key at the start, as the WCC files' first key.
+fn number_key() -> Vec<Key> {
+    vec![Key {
         segments: vec![Segment {
             number: 0,
             index: 0,
@@ -24,25 +49,7 @@ fn realm() -> tempfile::TempDir {
         }],
         acs_name: None,
         acs: None,
-    }];
-    let meta = Metadata {
-        record_length: 126,
-        physical_record_length: 130,
-        page_length: 1024,
-        variable_length_records: false,
-        version: 4,
-    };
-    let mut db = WbtrvDb::create(&dir.path().join("WCCRACE.db"), meta, keys).unwrap();
-    for (n, name) in [(1u16, "Human"), (2, "Dwarf")] {
-        let mut r = vec![0u8; 126];
-        r[0..2].copy_from_slice(&n.to_le_bytes());
-        r[2..2 + name.len()].copy_from_slice(name.as_bytes());
-        db.insert(&r).unwrap();
-    }
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../daydream-wcc/tests/fixtures/btrieve/MBBSEMU.DAT");
-    WbtrvDb::convert(&fixture, &dir.path().join("MBBSEMU.db")).unwrap();
-    dir
+    }]
 }
 
 async fn get(dir: &std::path::Path, uri: &str) -> (StatusCode, Value) {
@@ -93,6 +100,24 @@ async fn records_come_back_decoded_and_paged() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["_id"], 2);
     assert_eq!(body["number"], 2);
+}
+
+#[tokio::test]
+async fn a_worldgroup_realms_records_decode_in_its_layouts() {
+    // WCCCLAS2: 156 bytes, its 4-byte `titles` aligned to 0x64 (the DOS record is 153)
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = WbtrvDb::create(&dir.path().join("WCCCLAS2.db"), meta(156), number_key()).unwrap();
+    let mut r = vec![0u8; 156];
+    r[0..2].copy_from_slice(&3u16.to_le_bytes());
+    r[2..9].copy_from_slice(b"Mystic\0");
+    r[0x64..0x68].copy_from_slice(&7u32.to_le_bytes());
+    db.insert(&r).unwrap();
+    drop(db);
+    let (status, body) = get(dir.path(), "/api/files/WCCCLAS2/records/1").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["number"], 3);
+    assert_eq!(body["name"], "Mystic");
+    assert_eq!(body["titles"], 7);
 }
 
 #[tokio::test]
@@ -173,6 +198,14 @@ async fn rows_list_their_keys_and_titles() {
         body["rows"],
         serde_json::json!([[[1], "Human"], [[2], "Dwarf"]])
     );
+    let (status, body) = get(dir.path(), "/api/tables/races/rows?columns=Name,Number").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["rows"][1],
+        serde_json::json!([[2], "Dwarf", ["Dwarf", 2]])
+    );
+    let (status, _) = get(dir.path(), "/api/tables/races/rows?columns=Nope").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = get(
         dir.path(),
         &format!("/api/tables/Races/row?key={}", key(serde_json::json!([2]))),

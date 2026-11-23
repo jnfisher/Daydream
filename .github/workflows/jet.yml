@@ -107,6 +107,18 @@ jobs:
         shell: pwsh
         run: reg import "_nmr\WBTRV32 - Registry Settings.reg"
 
+      - name: MME reference cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/daydream/mme
+          key: mme-${{ hashFiles('tools/mme/reference.sh') }}
+
+      - name: MME reference (NMR's own MME export of the stock world)
+        shell: bash
+        run: |
+          file="$(tools/mme/reference.sh | sed 's/^DAYDREAM_MME_REFERENCE=//')"
+          echo "DAYDREAM_MME_REFERENCE=$(cygpath -w "$file")" >> "$GITHUB_ENV"
+
       - name: test (through Jet)
         run: cargo test -p daydream-nmr --locked --test all -- --nocapture --skip windows_nmr
 

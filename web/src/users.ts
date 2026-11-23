@@ -230,3 +230,235 @@ export function importUser(text: string, o: ImportOptions): Record<string, strin
   }
   return out;
 }
+
+// ---- NMR's Paste Items/Keys/Worn/$$ and Paste Spellbook (frmUser's PasteItems and
+// PasteSpells): a capture of the game's inventory or spellbook, read into the user's lists.
+
+/** The characters NMR keeps from an inventory capture (`TestPasteChar`). */
+const PASTE_CHAR = /[a-z()\-_,: '".`0-9]/i;
+
+/** Where NMR puts an item named with its place: worn slots 0 to 14 (a second ring in 10),
+ *  and 15 for the weapon. */
+const EQUIP: Record<string, number> = {
+  HEAD: 0, EARS: 1, NECK: 2, BACK: 3, TORSO: 4, ARMS: 5, WRIST: 6, WAIST: 7,
+  HANDS: 8, FINGER: 9, LEGS: 11, FEET: 12, WORN: 13, 'OFF-HAND': 14,
+  WEAPONHAND: 15, TWOHANDED: 15,
+};
+
+const COINS: [string, string][] = [
+  ['platinumpieces', 'Platinum'],
+  ['goldcrowns', 'Gold'],
+  ['silvernobles', 'Silver'],
+  ['copperfarthings', 'Copper'],
+];
+
+export interface PastedInventory {
+  /** Item names as NMR compares them (spaces dropped), each with the amount before it
+   *  ('' for none), in the capture's order. */
+  items: { name: string; amount: string }[];
+  /** The 16 places' item names ('' for none). */
+  equipped: string[];
+  /** Coin columns and their amounts. */
+  coins: Record<string, string>;
+}
+
+/** Reads an inventory capture as NMR's PasteItems does, character by character: spaces
+ *  dropped, a name ends at `,` or `.` (or at "is equipped with:", "are carrying",
+ *  "following keys:" or "wealth:"), and `name (Place)` puts it in that place. */
+export function parseInventory(text: string): PastedInventory {
+  const out: PastedInventory = { items: [], equipped: Array(16).fill(''), coins: {} };
+  let t = '';
+  let amount = '';
+  let paren = -1;
+  const store = () => {
+    const rest = t.slice(amount.length);
+    const coin = COINS.find(([c]) => c === rest);
+    if (coin) out.coins[coin[1]] = amount;
+    else if (rest.startsWith('runiccoin')) out.coins['Runic'] = amount;
+    else if (amount !== '' && t !== '') out.items.push({ name: rest, amount });
+    else out.items.push({ name: t, amount: '' });
+    clear();
+  };
+  const clear = () => {
+    t = '';
+    amount = '';
+    paren = -1;
+  };
+  for (let p = 0; p < text.length; p++) {
+    const c = text[p]!;
+    if (!PASTE_CHAR.test(c)) continue;
+    t = (t + c).replace(/ /g, '');
+    const marker = ['isequippedwith:', 'arecarrying', 'followingkeys:', 'wealth:'].find((m) => t.toLowerCase().includes(m));
+    if (marker) {
+      t = t.slice(0, t.length - marker.length);
+      store();
+      continue;
+    }
+    // an amount comes before the name, not within it
+    if (/[0-9]/.test(c) && t.length === amount.length + 1) amount += c;
+    if (c === ',' || c === '.') {
+      t = t.slice(0, -1);
+      store();
+      continue;
+    }
+    if (c === '(') paren = t.length;
+    else if (c === ')') {
+      if (paren >= 0) {
+        const place = EQUIP[t.slice(paren, t.length - 1).toUpperCase()];
+        const name = t.slice(0, paren - 1);
+        if (place === 9 && out.equipped[9] !== '') out.equipped[10] = name;
+        else if (place !== undefined) out.equipped[place] = name;
+      }
+      clear();
+      continue;
+    }
+    if (p === text.length - 1) store();
+  }
+  return out;
+}
+
+/** An item or spell as the paste matches it: its number, name, and for items type and uses. */
+export interface Named {
+  number: number;
+  name: string;
+  type?: number;
+  uses?: number;
+}
+
+/** Names the paste matched to more than one record: NMR asks which; the first is taken
+ *  until another is chosen. */
+export interface Ambiguous {
+  name: string;
+  numbers: number[];
+}
+
+const num = (v: Values, c: string) => Number(v[c] ?? 0) || 0;
+
+/** NMR's PasteItems after the reading: with `clear`, items, keys and worn items are
+ *  cleared first (NMR's Clear buttons: item uses -1, key uses -2); else what is found is
+ *  added, and the worn list is cleared only when the paste names a place. Items are
+ *  matched by name (spaces dropped, case kept) in `items`' order, the first of a name
+ *  winning; a worn item or weapon is also put in the inventory. Answers the columns to
+ *  set and the names more than one item has. */
+export function placeInventory(p: PastedInventory, items: Named[], current: Values, clear: boolean): { values: Record<string, string>; ambiguous: Ambiguous[] } {
+  const item = range(100).map((i) => num(current, `Item ${i}`));
+  const itemUses = range(100).map((i) => num(current, `Item ${i} Uses`));
+  const key = range(50).map((i) => num(current, `Key ${i}`));
+  const keyUses = range(50).map((i) => num(current, `Key ${i} Uses`));
+  let worn = range(20).map((i) => num(current, `Worn ${i}`));
+  let weapon = num(current, 'Weapon');
+  const equipped = [...p.equipped];
+  if (clear) {
+    item.fill(0), itemUses.fill(-1), key.fill(0), keyUses.fill(-2);
+    worn = worn.map(() => 0);
+    weapon = 0;
+  } else if (equipped.some((e) => e !== '')) {
+    worn = worn.map(() => 0);
+    weapon = 0;
+  }
+  const names = p.items.map((i) => i.name);
+  const found: [string, number[]][] = names.map(() => ['', []]);
+  let curItem = 0;
+  let curKey = 0;
+  let curWorn = 0;
+  const addItem = (it: Named) => {
+    while (curItem < 100 && item[curItem] !== 0) curItem++;
+    if (curItem >= 100) return;
+    item[curItem] = it.number;
+    if ((it.uses ?? 0) > 0) itemUses[curItem] = it.uses!;
+    curItem++;
+  };
+  for (const it of items) {
+    const name = it.name.split('\0')[0]!.replace(/ /g, '');
+    if (name === '') continue;
+    equipped.forEach((e, x) => {
+      if (e !== name) return;
+      if (x === 15) weapon = it.number;
+      else if (curWorn < 20) worn[curWorn++] = it.number;
+      addItem(it);
+      equipped[x] = '';
+    });
+    names.forEach((n, x) => {
+      if (n !== name) return;
+      const times = Math.max(1, Math.trunc(Number(p.items[x]!.amount) || 0));
+      for (let y = 0; y < times; y++) {
+        if (it.type === 7) {
+          while (curKey < 50 && key[curKey] !== 0) curKey++;
+          if (curKey < 50) {
+            key[curKey] = it.number;
+            keyUses[curKey] = it.uses ?? 0;
+            curKey++;
+          }
+        } else addItem(it);
+      }
+      found[x] = [name, [it.number]];
+      names[x] = '';
+    });
+    const dup = found.find(([n, nums]) => n === name && nums[0] !== it.number);
+    if (dup) dup[1].push(it.number);
+  }
+  const values: Record<string, string> = {};
+  range(100).forEach((i) => ((values[`Item ${i}`] = String(item[i])), (values[`Item ${i} Uses`] = String(itemUses[i]))));
+  range(50).forEach((i) => ((values[`Key ${i}`] = String(key[i])), (values[`Key ${i} Uses`] = String(keyUses[i]))));
+  range(20).forEach((i) => (values[`Worn ${i}`] = String(worn[i])));
+  values['Weapon'] = String(weapon);
+  // NMR's CheckWornItems: a worn item or weapon not in the inventory comes off
+  const has = (n: number) => item.includes(n);
+  range(20).forEach((i) => worn[i]! > 0 && !has(worn[i]!) && (values[`Worn ${i}`] = '0'));
+  if (weapon > 0 && !has(weapon)) values['Weapon'] = '0';
+  Object.assign(values, p.coins);
+  const ambiguous = found.filter(([, nums]) => nums.length > 1).map(([name, numbers]) => ({ name, numbers }));
+  return { values, ambiguous };
+}
+
+/** NMR's choice between items of one name: every slot holding `from` (inventory, keys, worn,
+ *  weapon) takes `to`, with `to`'s uses. */
+export function chooseItem(values: Record<string, string>, from: number, to: Named) {
+  for (const i of range(100)) if (values[`Item ${i}`] === String(from)) (values[`Item ${i}`] = String(to.number)), (values[`Item ${i} Uses`] = String(to.uses ?? 0));
+  for (const i of range(50)) if (values[`Key ${i}`] === String(from)) (values[`Key ${i}`] = String(to.number)), (values[`Key ${i} Uses`] = String(to.uses ?? 0));
+  for (const i of range(20)) if (values[`Worn ${i}`] === String(from)) values[`Worn ${i}`] = String(to.number);
+  if (values['Weapon'] === String(from)) values['Weapon'] = String(to.number);
+}
+
+/** Reads a spellbook capture as NMR's PasteSpells does: each line past its first 17
+ *  characters is a spell's name (what follows a header line's header counts as a line). */
+export function parseSpellbook(text: string): string[] {
+  const out: string[] = [];
+  for (let line of text.split(/\r|\n/)) {
+    // a header starts the line over
+    for (const h of ['you have the following spells:', 'level mana short spell name']) {
+      const at = line.toLowerCase().lastIndexOf(h);
+      if (at >= 0) line = line.slice(at + h.length);
+    }
+    if (line.length > 17) out.push(line.slice(17));
+  }
+  return out;
+}
+
+/** NMR's PasteSpells after the reading: with `clear` the spellbook is emptied first; each
+ *  name takes the first empty slot, the first spell of that name (in `spells`' order)
+ *  winning. */
+export function placeSpells(names: string[], spells: Named[], current: Values, clear: boolean): { values: Record<string, string>; ambiguous: Ambiguous[] } {
+  const book = range(100).map((i) => (clear ? 0 : num(current, `Spellbook ${i}`)));
+  const want = [...names];
+  const found: [string, number[]][] = want.map(() => ['', []]);
+  let cur = 0;
+  for (const s of spells) {
+    const name = s.name.split('\0')[0]!;
+    if (name === '') continue;
+    want.forEach((n, x) => {
+      if (n !== name) return;
+      while (cur < 100 && book[cur] !== 0) cur++;
+      if (cur >= 100) return;
+      book[cur++] = s.number;
+      found[x] = [name, [s.number]];
+      want[x] = '';
+    });
+    const dup = found.find(([n, nums]) => n === name && nums[0] !== s.number);
+    if (dup) dup[1].push(s.number);
+  }
+  const values: Record<string, string> = {};
+  range(100).forEach((i) => (values[`Spellbook ${i}`] = String(book[i])));
+  const ambiguous = found.filter(([, nums]) => nums.length > 1).map(([name, numbers]) => ({ name, numbers }));
+  return { values, ambiguous };
+}

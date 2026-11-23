@@ -44,6 +44,16 @@ shop stock, monster kills) unless given `--keep-runtime`. Writing the `.mdb` nee
 because NMR's import seeks through the file's Jet indexes, which only Jet itself writes; NMR
 runs only on Windows, so the machine that imports the file can always write it.
 
+For MMUD Explorer, `mme-export` writes the `.mdb` MME reads, as NMR's Export to MMUD Explorer
+does: the same tables and values (checked against NMR's own export of the stock world), the
+same rooms left out, and nothing players could not learn from NMR's. It writes NMR's "Legit"
+export unless given `--not-legit`, which allows `--custom`, `--update-url`, `--exclude
+MAP:FROM-TO` and `--no-rooms`.
+
+```sh
+cargo run -p daydream -- mme-export ./realm data.mdb      # on Windows; or --plan as above
+```
+
 `convert` only reads the source files. It writes one `.db` per Btrieve file, in the format of
 wbtrv32 (the `WBTRV32.DLL` replacement MBBSEmu uses), so MBBSEmu and legacy NMR can open the
 same files.
@@ -52,7 +62,7 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `delete`, `merge-users` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users` |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |

@@ -20,6 +20,9 @@
 //!   NMR splits the overflow into a new part.
 //! - A spell's ScatterItems room is listed, not changed: NMR asks each time, as it cannot
 //!   tell which map the spell is for.
+//!
+//! And one addition: asked to (`users`), users' references follow too, which NMR's changer
+//! never touches (`users_plan`, `users_map_plan`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -85,6 +88,9 @@ pub enum Renumber {
         #[serde(default)]
         map: Option<i64>,
         moves: Vec<Move>,
+        /// Users' references follow too (items, spells, class, race, rooms); NMR leaves users alone.
+        #[serde(default)]
+        users: bool,
     },
     /// Every room of map `from` moves to map `to`, with NMR's four boxes.
     Map {
@@ -102,6 +108,9 @@ pub enum Renumber {
         /// Spells' Teleport Map (141) abilities follow.
         #[serde(default = "yes")]
         spells: bool,
+        /// Users on the map, and their trails, follow; NMR leaves users alone.
+        #[serde(default)]
+        users: bool,
     },
 }
 
@@ -374,7 +383,23 @@ fn teleports(data: &mut String, map: i64, moves: &dyn Fn(i64) -> Option<i64>) {
 /// renumbered table last. Nothing is written.
 pub fn plan(realm: &Realm, run: &Renumber, layout: LayoutSet) -> Result<Vec<Plan>, RenumberError> {
     match run {
-        Renumber::Records { table, map, moves } => records(realm, *table, *map, moves, layout),
+        Renumber::Records {
+            table,
+            map,
+            moves,
+            users,
+        } => {
+            let mut plans = records(realm, *table, *map, moves, layout)?;
+            if *users {
+                let m: Moves = moves.iter().map(|x| (x.from, x.to)).collect();
+                let p = users_plan(realm, layout, *table, *map, &m)?;
+                // before the renumbering's own plan, which carries the notes
+                if !p.changes.is_empty() {
+                    plans.insert(plans.len().saturating_sub(1), p);
+                }
+            }
+            Ok(plans)
+        }
         Renumber::Map {
             from,
             to,
@@ -382,14 +407,103 @@ pub fn plan(realm: &Realm, run: &Renumber, layout: LayoutSet) -> Result<Vec<Plan
             normal,
             textblocks,
             spells,
-        } => change_map(
-            realm,
-            *from,
-            *to,
-            [*exits, *normal, *textblocks, *spells],
-            layout,
-        ),
+            users,
+        } => {
+            let mut plans = change_map(
+                realm,
+                *from,
+                *to,
+                [*exits, *normal, *textblocks, *spells],
+                layout,
+            )?;
+            if *users {
+                let p = users_map_plan(realm, layout, *from, *to)?;
+                if !p.changes.is_empty() {
+                    plans.insert(0, p);
+                }
+            }
+            Ok(plans)
+        }
     }
+}
+
+/// Users' references to moved records (Daydream's, not NMR's): items in the inventory,
+/// key ring, worn slots and weapon hand; spells in the spellbook and cast on them; their
+/// class and race; for rooms, where they stand and their trail on the rooms' map.
+fn users_plan(
+    realm: &Realm,
+    layout: LayoutSet,
+    kind: Kind,
+    map: Option<i64>,
+    m: &Moves,
+) -> Result<Plan, RenumberError> {
+    scan(realm, "Users", layout, |t| {
+        let edit: Edit<'_> = match kind {
+            Kind::Items => {
+                let mut cols = t.family("Item", 100)?;
+                cols.extend(t.family("Key", 50)?);
+                cols.extend(t.family("Worn", 20)?);
+                cols.push(t.at("Weapon")?);
+                Box::new(move |row: &mut Vec<Value>| cols.iter().for_each(|&c| remap(row, c, m)))
+            }
+            Kind::Spells => {
+                let mut cols = t.family("Spellbook", 100)?;
+                cols.extend(t.family("Spell Cast", 10)?);
+                Box::new(move |row: &mut Vec<Value>| cols.iter().for_each(|&c| remap(row, c, m)))
+            }
+            Kind::Classes | Kind::Races => {
+                let c = t.at(if kind == Kind::Classes {
+                    "Class"
+                } else {
+                    "Race"
+                })?;
+                Box::new(move |row: &mut Vec<Value>| remap(row, c, m))
+            }
+            Kind::Rooms => {
+                let map = map.ok_or_else(|| bad("give the map whose rooms move"))?;
+                let mut pairs = vec![(t.at("Map Number")?, t.at("Room Number")?)];
+                for i in 0..20 {
+                    pairs.push((
+                        t.at(&format!("Trail {i} Map"))?,
+                        t.at(&format!("Trail {i} Room"))?,
+                    ));
+                }
+                Box::new(move |row: &mut Vec<Value>| {
+                    for &(mc, rc) in &pairs {
+                        if num(&row[mc]) as i64 == map {
+                            remap(row, rc, m);
+                        }
+                    }
+                })
+            }
+            Kind::Messages | Kind::Monsters | Kind::Shops | Kind::Textblocks => {
+                Box::new(|_: &mut Vec<Value>| {})
+            }
+        };
+        Ok(edit)
+    })
+}
+
+/// Users on map `from`, and trail steps on it, move to map `to`.
+fn users_map_plan(
+    realm: &Realm,
+    layout: LayoutSet,
+    from: i64,
+    to: i64,
+) -> Result<Plan, RenumberError> {
+    scan(realm, "Users", layout, |t| {
+        let mut maps = vec![t.at("Map Number")?];
+        for i in 0..20 {
+            maps.push(t.at(&format!("Trail {i} Map"))?);
+        }
+        Ok(Box::new(move |row: &mut Vec<Value>| {
+            for &c in &maps {
+                if num(&row[c]) as i64 == from {
+                    row[c] = cell(&row[c], to as f64);
+                }
+            }
+        }))
+    })
 }
 
 /// Writes the plans, in order.
