@@ -17,7 +17,16 @@
 #   DAYDREAM_RESET_REALM  1: move the realm aside and convert the stock world again
 #   DAYDREAM_NEW_TOKEN    1: make a new access token (every browser and connector then needs it)
 #
-#   funnel.sh off         stop the funnel and the service (the realm and token stay)
+#   DAYDREAM_UPDATE_EVERY how often `auto-update on` checks (default 15min, systemd time span)
+#
+#   funnel.sh                 set up, or redo the whole setup
+#   funnel.sh update          pull DAYDREAM_REF; when it moved, rebuild and restart (quick no-op
+#                             otherwise). Keeps the realm, token, port and funnel.
+#   funnel.sh auto-update on  run `update` on a timer (systemd user timer); `off` stops it
+#   funnel.sh off             stop the funnel, the service and auto-update (realm and token stay)
+#
+# Setup installs this script as ~/.local/bin/daydream-funnel, so later it is just
+# `daydream-funnel update`.
 set -euo pipefail
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -51,13 +60,118 @@ ts_funnel() {
     fi
 }
 
-if [ "${1:-}" = off ]; then
-    say "Stopping the funnel on $FPORT and the service"
+export PATH="$HOME/.cargo/bin:$PATH"
+SELF=$HOME/.local/bin/daydream-funnel
+
+# Fetch DAYDREAM_REF into the checkout and check it out.
+fetch_source() {
+    mkdir -p "$DD_HOME"
+    [ -d "$SRC/.git" ] || git clone --quiet "$REPO" "$SRC"
+    git -C "$SRC" fetch --quiet origin "$REF"
+    git -C "$SRC" checkout --quiet --detach FETCH_HEAD
+    git -C "$SRC" log -1 --format='    %h %s'
+}
+
+# Build and install the binary (and this script). Sets BIN_CHANGED=1 when the binary differs.
+build_install() {
+    (cd "$SRC" && cargo build --release --locked -p daydream)
+    mkdir -p "$(dirname "$BIN")"
+    BIN_CHANGED=0
+    cmp -s "$SRC/target/release/daydream" "$BIN" || BIN_CHANGED=1
+    "$SRC/target/release/daydream" new-token >/dev/null 2>&1 ||
+        die "$REF has no access token (\`daydream new-token\`), so it cannot go on the internet"
+    install -m 755 "$SRC/target/release/daydream" "$BIN.new" && mv -f "$BIN.new" "$BIN"
+    # A copy then a rename, so a running daydream-funnel keeps reading its own file.
+    local script="$SRC/tools/deploy/funnel.sh"
+    [ -f "$script" ] || script=$(readlink -f "$0")
+    if [ "$script" != "$(readlink -f "$SELF" 2>/dev/null)" ]; then
+        install -m 755 "$script" "$SELF.new" && mv -f "$SELF.new" "$SELF"
+    fi
+}
+
+wait_healthy() {
+    for _ in $(seq 1 30); do
+        curl -fsS "http://$LISTEN/api/health" >/dev/null 2>&1 && break
+        sleep 1
+    done
+    curl -fsS "http://$LISTEN/api/health" >/dev/null || die "daydream is not answering; journalctl --user -u daydream"
+    echo "    daydream answers on $LISTEN"
+}
+
+case "${1:-}" in
+"" | setup) ;;
+update)
+    [ -f "$UNIT_DIR/daydream.service" ] && [ -f "$CONF/env" ] ||
+        die "nothing to update yet: run funnel.sh once to set it up"
+    before=$(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo none)
+    say "Update: $REPO at $REF"
+    fetch_source
+    after=$(git -C "$SRC" rev-parse HEAD)
+    if [ "$before" = "$after" ] && [ -x "$BIN" ] && [ "${DAYDREAM_FORCE:-0}" != 1 ]; then
+        echo "    already up to date (DAYDREAM_FORCE=1 rebuilds anyway)"
+        exit 0
+    fi
+    [ "$before" = none ] || git -C "$SRC" log --oneline --no-decorate "$before..$after" 2>/dev/null | head -n 20 | sed 's/^/    /'
+    say "Build"
+    build_install
+    if [ "$BIN_CHANGED" = 1 ] || ! systemctl --user is-active --quiet daydream; then
+        systemctl --user restart daydream
+        wait_healthy
+    else
+        echo "    the binary did not change; daydream keeps running"
+    fi
+    exit 0
+    ;;
+auto-update)
+    case "${2:-}" in
+    on)
+        [ -x "$SELF" ] || die "run funnel.sh once to set it up first"
+        mkdir -p "$UNIT_DIR"
+        cat > "$UNIT_DIR/daydream-update.service" <<UNIT
+# Written by Daydream's tools/deploy/funnel.sh.
+[Unit]
+Description=Update Daydream from $REPO ($REF)
+
+[Service]
+Type=oneshot
+Environment=PATH=$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=$SELF update
+UNIT
+        cat > "$UNIT_DIR/daydream-update.timer" <<UNIT
+# Written by Daydream's tools/deploy/funnel.sh.
+[Unit]
+Description=Update Daydream every ${DAYDREAM_UPDATE_EVERY:-15min}
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=${DAYDREAM_UPDATE_EVERY:-15min}
+
+[Install]
+WantedBy=timers.target
+UNIT
+        systemctl --user daemon-reload
+        systemctl --user enable --now --quiet daydream-update.timer
+        echo "auto-update on: every ${DAYDREAM_UPDATE_EVERY:-15min} from $REF"
+        echo "  last runs: journalctl --user -u daydream-update    next: systemctl --user list-timers daydream-update"
+        ;;
+    off)
+        systemctl --user disable --now --quiet daydream-update.timer 2>/dev/null || true
+        echo "auto-update off"
+        ;;
+    *) die "auto-update on, or auto-update off" ;;
+    esac
+    exit 0
+    ;;
+off)
+    say "Stopping the funnel on $FPORT, the service and auto-update"
     ts_funnel --https="$FPORT" off || true
+    systemctl --user disable --now --quiet daydream-update.timer 2>/dev/null || true
     systemctl --user disable --now daydream 2>/dev/null || true
     echo "    stopped; the realm ($REALM) and the token ($CONF/env) are kept"
     exit 0
-fi
+    ;;
+*) die "unknown command ${1}: funnel.sh [update | auto-update on|off | off]" ;;
+esac
 
 say "Checks"
 for cmd in git curl cc tailscale systemctl; do
@@ -78,25 +192,25 @@ if printf '%s\n' "$serve_now" | grep -qF "$mine" && ! printf '%s' "$serve_now" |
 Pick another DAYDREAM_FUNNEL_PORT: 443, 8443 or 10000"
 fi
 
+# Remember the settings this setup ran with, for `update`, `off` and the timer.
+mkdir -p "$CONF"; chmod 700 "$CONF"
+touch "$CONF/deploy.env"
+for kv in "DAYDREAM_REF=$REF" "DAYDREAM_FUNNEL_PORT=$FPORT"; do
+    sed -i "/^${kv%%=*}=/d" "$CONF/deploy.env"
+    printf '%s\n' "$kv" >> "$CONF/deploy.env"
+done
+
 say "Rust"
-export PATH="$HOME/.cargo/bin:$PATH"
 if ! command -v rustup >/dev/null; then
     echo "    installing rustup for $USER (~/.cargo; the repository pins the toolchain)"
     curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
 fi
 
 say "Source: $REPO at $REF"
-mkdir -p "$DD_HOME"
-[ -d "$SRC/.git" ] || git clone --quiet "$REPO" "$SRC"
-git -C "$SRC" fetch --quiet origin "$REF"
-git -C "$SRC" checkout --quiet --detach FETCH_HEAD
-git -C "$SRC" log -1 --format='    %h %s'
+fetch_source
 
 say "Build"
-(cd "$SRC" && cargo build --release --locked -p daydream)
-mkdir -p "$(dirname "$BIN")"
-install -m 755 "$SRC/target/release/daydream" "$BIN"
-"$BIN" new-token >/dev/null 2>&1 || die "$REF has no access token (\`daydream new-token\`), so it cannot go on the internet"
+build_install
 
 say "The realm: the stock 1.11p world"
 if [ "${DAYDREAM_RESET_REALM:-0}" = 1 ] && [ -d "$REALM" ]; then
@@ -140,12 +254,7 @@ UNIT
 systemctl --user daemon-reload
 systemctl --user enable --quiet daydream
 systemctl --user restart daydream
-for _ in $(seq 1 30); do
-    curl -fsS "http://$LISTEN/api/health" >/dev/null 2>&1 && break
-    sleep 1
-done
-curl -fsS "http://$LISTEN/api/health" >/dev/null || die "daydream is not answering; journalctl --user -u daydream"
-echo "    daydream answers on $LISTEN"
+wait_healthy
 if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != yes ]; then
     echo "    keeping it running after you log out and across reboots needs lingering:"
     sudo loginctl enable-linger "$USER" || echo "    run: sudo loginctl enable-linger $USER"
@@ -169,6 +278,6 @@ Daydream is up.
              $URL/mcp/<token>   for connectors that take only a URL
   The token: grep DAYDREAM_TOKEN $CONF/env   (a password for the realm)
   Logs:      journalctl --user -u daydream
-  Update:    bash $SRC/tools/deploy/funnel.sh   (DAYDREAM_REF=... for another branch)
-  Stop:      bash $SRC/tools/deploy/funnel.sh off
+  Update:    daydream-funnel update   (or: daydream-funnel auto-update on)
+  Stop:      daydream-funnel off
 DONE

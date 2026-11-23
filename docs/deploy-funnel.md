@@ -66,18 +66,43 @@ grep DAYDREAM_TOKEN ~/.config/daydream/env
   `https://<machine>.<tailnet>.ts.net/mcp/<token>` with no authentication. The URL is the
   secret.
 
-## Updating, resetting, rotating, stopping
+## Updating
 
-Each reruns the same script; settings can also live in `~/.config/daydream/deploy.env`.
+Setup installs the script as `~/.local/bin/daydream-funnel` and remembers its settings
+(branch, Funnel port) in `~/.config/daydream/deploy.env`, so updating is one command:
 
 ```sh
-S=~/.local/share/daydream/src/tools/deploy/funnel.sh
-bash $S                                # pull and rebuild main
-DAYDREAM_REF=some-branch bash $S       # try another branch
-DAYDREAM_RESET_REALM=1 bash $S         # back to the stock world (the old realm is moved aside)
-DAYDREAM_NEW_TOKEN=1 bash $S           # new token: every browser and connector needs it again
-bash $S off                            # stop the funnel and the service
+daydream-funnel update
 ```
+
+It fetches the branch and, when it moved, lists the new commits, rebuilds, and restarts
+Daydream (a few seconds of downtime). When nothing changed it says so and stops. The realm,
+the token, the port and the funnel are left alone, so browsers and connectors keep working.
+A build that fails leaves the running Daydream as it was.
+
+To follow `main` without thinking about it:
+
+```sh
+daydream-funnel auto-update on     # checks every 15 minutes (DAYDREAM_UPDATE_EVERY=1h for hourly)
+daydream-funnel auto-update off
+journalctl --user -u daydream-update    # what the last runs did
+```
+
+`~/.local/bin` is on the `PATH` of most distributions once it exists (log in again after the
+first setup); otherwise run `~/.local/bin/daydream-funnel`.
+
+## Other branches, resetting, rotating, stopping
+
+```sh
+DAYDREAM_REF=some-branch bash funnel.sh   # build a branch (remembered for later updates);
+                                          # DAYDREAM_REF=main bash funnel.sh goes back
+DAYDREAM_RESET_REALM=1 bash funnel.sh     # back to the stock world (the old realm is moved aside)
+DAYDREAM_NEW_TOKEN=1 bash funnel.sh       # new token: every browser and connector needs it again
+daydream-funnel off                       # stop the funnel, the service and auto-update
+```
+
+Here `funnel.sh` is `daydream-funnel` or any copy of the script. A commit given as
+`DAYDREAM_REF` must be the full hash.
 
 Logs: `journalctl --user -u daydream`. Status: `systemctl --user status daydream` and
 `tailscale funnel status`.
