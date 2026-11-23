@@ -54,6 +54,10 @@ MAP:FROM-TO` and `--no-rooms`.
 cargo run -p daydream -- mme-export ./realm data.mdb      # on Windows; or --plan as above
 ```
 
+In the browser the same export is the Tools page's **Export to MMUD Explorer** card, laid out
+as NMR's form (its config `.ini` files load and save there too). On Windows it downloads the
+`.mdb`; elsewhere it downloads the plan and `write-mdb.ps1` to run on a Windows machine.
+
 `convert` only reads the source files. It writes one `.db` per Btrieve file, in the format of
 wbtrv32 (the `WBTRV32.DLL` replacement MBBSEmu uses), so MBBSEmu and legacy NMR can open the
 same files.

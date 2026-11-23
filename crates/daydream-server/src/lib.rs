@@ -3,7 +3,8 @@
 //! It runs on the sysop's own machine and opens in the browser. `/` is the web UI (built
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
-//! in [`tools`] and its lists in [`reports`], and the routes below serve each file's records
+//! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], and the
+//! routes below serve each file's records
 //! decoded (every member by name, `unk_*` spans included), read only.
 //!
 //! | Route | Answer |
@@ -32,6 +33,7 @@ use daydream_wcc::decode::base64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod mme;
 pub mod reports;
 pub mod tables;
 pub mod tools;
@@ -87,6 +89,9 @@ pub fn router(realm_dir: &Path) -> Router {
         .route("/api/map", get(reports::map))
         .route("/api/map/dig", post(tools::dig))
         .route("/api/quests", get(reports::quests))
+        .route("/api/mme", get(mme::info))
+        .route("/api/mme/export", post(mme::export))
+        .route("/api/mme/write-mdb.ps1", get(mme::script))
         .route(
             "/api/tools/merge-users",
             post(tools::merge_users).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),

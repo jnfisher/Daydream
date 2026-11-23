@@ -1,10 +1,12 @@
-// NMR's database tools: the Database Importer, the Database Deleter and Merge Users, laid
-// out as NMR's forms lay them out, over the server's /api/tools routes.
+// NMR's database tools: the Database Importer, the Database Deleter, Merge Users and the
+// Export to MMUD Explorer (mme.ts), laid out as NMR's forms lay them out, over the server's
+// /api/tools and /api/mme routes.
 
 import { ABILITIES } from './abilities';
 import { toShown, toWire } from './ansi';
 import { api, type Report, type TableInfo } from './api';
 import { massRoomEditor } from './massroom';
+import { mmeExport } from './mme';
 import { indexChanger } from './indexchanger';
 import { recordNumberChanger } from './renumber';
 
@@ -662,7 +664,7 @@ function fixesCard(changed: () => void): HTMLElement {
 
 /** The tools page; `changed` runs after a write, so the editors reload what they show. */
 export function toolsPage(changed: () => void): HTMLElement {
-  const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers());
+  const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers(), mmeExport(failure));
   api
     .tables()
     .then((tables) => {
