@@ -1,10 +1,11 @@
 //! Which WCC file holds which record type, and decoding a record of any of them by name.
 //!
-//! Daydream supports MajorMUD 1.11p (the DOS build's byte-packed layouts) at launch, so every
-//! table here uses [`LayoutSet::Dos`]. A realm's files are named by their stem: `WCCITEMS`
-//! is `WCCITEMS.DAT` on a running realm, `WCCITEMS.VIR` in the virgin set and `WCCITEMS.db`
-//! once wbtrv32 (or Daydream) has converted it.
+//! A table's records decode in the DOS build's byte-packed layouts ([`Table::to_json`]) or a
+//! given [`LayoutSet`]'s ([`Table::to_json_as`]). A realm's files are named by their stem:
+//! `WCCITEMS` is `WCCITEMS.DAT` on a running realm, `WCCITEMS.VIR` in the virgin set and
+//! `WCCITEMS.db` once wbtrv32 (or Daydream) has converted it.
 
+use daydream_types::records::LayoutSet;
 use serde_json::{Map, Value};
 
 use crate::decode::{
@@ -244,9 +245,19 @@ impl Table {
     /// Record `id`'s bytes as the JSON object [`crate::json`] writes: `_id`, `_raw_len` and
     /// every member by name, `unk_*` spans included.
     pub fn to_json(self, id: u32, raw: &[u8]) -> Result<Map<String, Value>, DecodeError> {
+        self.to_json_as(id, raw, LayoutSet::Dos)
+    }
+
+    /// [`Table::to_json`] for a record in `set`'s layout.
+    pub fn to_json_as(
+        self,
+        id: u32,
+        raw: &[u8],
+        set: LayoutSet,
+    ) -> Result<Map<String, Value>, DecodeError> {
         macro_rules! json {
             ($r:ty) => {
-                <$r>::decode(raw)?.export(id)
+                <$r>::decode_as(raw, set)?.export(id)
             };
         }
         Ok(match self {
@@ -259,7 +270,7 @@ impl Table {
             Self::Races => json!(RaceRecord),
             Self::Shops => json!(ShopRecord),
             Self::Messages => json!(MudmsgRecord),
-            Self::TextBlocks => decode::decode_textblk(raw)?.export(id),
+            Self::TextBlocks => decode::decode_textblk_as(raw, set)?.export(id),
             Self::Actions => json!(ActionRecord),
             Self::Gangs => json!(GangRecord),
             Self::BankBooks => json!(BankbookRecord),

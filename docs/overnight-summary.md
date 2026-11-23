@@ -223,9 +223,9 @@ revisited. Pull requests merged once CI was green.
 
 ## Known gaps
 
-- The read-only per-file API (`/api/files/...`) decodes records in the DOS layout only, so on
-  a Worldgroup realm it errors (`1072 bytes, expected 1061`). The editors do not use it; it
-  will learn the realm's layout.
+- Fixed (#17): the read-only per-file API (`/api/files/...`) decoded records in the DOS
+  layout only, so on a Worldgroup realm it errored (`1072 bytes, expected 1061`). It now
+  decodes in the realm's own layouts.
 - Found and fixed on the way: `daydream nmr-export` and `nmr-import` used the DOS layouts
   even on a Worldgroup realm. They now use the realm's own (#8).
 - Users' inventories are not renumbered by the Record Number Changer, as in NMR (users are
