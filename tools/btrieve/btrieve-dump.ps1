@@ -7,7 +7,8 @@
 # All the files go through one engine start. For each file, OUTDIR\<file name> gets
 # key<N>.bin for every key: each record as a 4-byte little-endian length and its bytes, in
 # the order Btrieve's Get First / Get Next return them; and stat.txt with the record count
-# and key count from Btrieve's Stat. ENGINEDIR holds WBTRV32.DLL and W32MKDE.EXE. The
+# and key count from Btrieve's Stat; or error.txt with the Btrieve status a file failed
+# on. ENGINEDIR holds WBTRV32.DLL and W32MKDE.EXE. The
 # engine caches pages until it exits, so give it files it has not read before. It is 32-bit,
 # so this re-runs itself under the 32-bit Windows PowerShell when started from a 64-bit one.
 param(
@@ -95,7 +96,14 @@ try {
         $f = (Resolve-Path $f).Path
         $dir = Join-Path $Out (Split-Path $f -Leaf)
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
-        $result = [Btrieve]::Dump($f, $dir)
+        try {
+            $result = [Btrieve]::Dump($f, $dir)
+        } catch {
+            # one bad file must not hide the others: the test reports error.txt
+            $result = $_.Exception.InnerException.Message
+            if (-not $result) { $result = $_.Exception.Message }
+            Set-Content -Path (Join-Path $dir 'error.txt') -Value $result
+        }
         Write-Output "$f`: $result"
     }
 } finally {

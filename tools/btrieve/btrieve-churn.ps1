@@ -7,7 +7,8 @@
 # For each file: every record is read in physical order (Step First / Step Next) with its
 # position; every other record is then found again by its position (Get Direct) and
 # deleted; and the deleted records are inserted again, last first. The file ends up with
-# the same records, its pages split, merged and reused by Btrieve itself. ENGINEDIR holds
+# the same records, its pages split, merged and reused by Btrieve itself. A file Btrieve
+# fails on gets <file>.error.txt with the status, and the others go on. ENGINEDIR holds
 # WBTRV32.DLL and W32MKDE.EXE. The engine is 32-bit, so this re-runs itself under the
 # 32-bit Windows PowerShell when started from a 64-bit one.
 param(
@@ -102,7 +103,14 @@ public static class BtrieveChurn {
 try {
     foreach ($f in $Files) {
         $f = (Resolve-Path $f).Path
-        $result = [BtrieveChurn]::Churn($f)
+        try {
+            $result = [BtrieveChurn]::Churn($f)
+        } catch {
+            # one bad file must not hide the others: the test reports <file>.error.txt
+            $result = $_.Exception.InnerException.Message
+            if (-not $result) { $result = $_.Exception.Message }
+            Set-Content -Path "$f.error.txt" -Value $result
+        }
         Write-Output "$f`: $result"
     }
 } finally {

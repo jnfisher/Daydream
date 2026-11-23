@@ -121,6 +121,9 @@ fn script(name: &str, args: &[&Path], files: &[PathBuf]) {
 fn compare(path: &Path, out: &Path) -> Vec<String> {
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
     let out = out.join(&name);
+    if let Ok(error) = std::fs::read_to_string(out.join("error.txt")) {
+        return vec![format!("{name}: Btrieve failed: {}", error.trim())];
+    }
     let mut problems = Vec::new();
     let mut file = open(path);
     let mut payloads = std::collections::HashMap::new();
@@ -224,6 +227,22 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
                 std::fs::write(&rebuilt, &bytes).unwrap();
                 list.push(rebuilt);
             }
+            // the first records alone, to place a failure on the file's size: the 4096-byte
+            // page files cross into a second page table at about 2,040 records
+            if stem.eq_ignore_ascii_case("WCCMP001") {
+                let all = payloads(&copy);
+                for n in [1000, 2000, 2030, 2060, 4000, 10_000] {
+                    let bytes = build(&open(&copy), &all[..n], 0x6B04_459B).unwrap();
+                    let part = tmp.path().join(format!("MP{n}.DAT"));
+                    std::fs::write(&part, &bytes).unwrap();
+                    let h = OpenOptions::new().open_bytes("part", bytes).unwrap().header;
+                    println!(
+                        "MP{n}: page length {}, {} pages",
+                        h.page_length, h.page_count
+                    );
+                    files.push(part);
+                }
+            }
         }
         files.push(copy);
     }
@@ -241,6 +260,11 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
                 .to_string_lossy()
                 .replace("_C.DAT", "_R.DAT"),
         );
+        let error = PathBuf::from(format!("{}.error.txt", f.display()));
+        if let Ok(error) = std::fs::read_to_string(&error) {
+            problems.push(format!("{}: Btrieve failed: {}", f.display(), error.trim()));
+            continue;
+        }
         let (mut before, mut after) = (payloads(&rebuilt), payloads(f));
         before.sort();
         after.sort();
