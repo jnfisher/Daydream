@@ -186,3 +186,5 @@ pre.errors { background: var(--bg); border: 1px solid var(--line); padding: .5re
 .index-changer input.number { width: 6rem; }
 select.change-list { width: 100%; font: 13px/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace; }
 .tool-result + h3, .tool > div > h3 { margin-top: .75rem; }
+.index-changer[hidden], .renumber-map[hidden], .fix-inputs label[hidden] { display: none; }
+.renumber-map > div { margin: .25rem 0; }

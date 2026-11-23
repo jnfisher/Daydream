@@ -27,7 +27,8 @@ revisited. Pull requests merged once CI was green.
 | #10 | M3: the Universal Modifier, with a preview | merged (squash f4eb920) |
 | #11 | M3: NMR's one-click fixes (limited items, exp, uses, kill times, drop %) | merged (squash c2536d0) |
 | #12 | M3: NMR's lists, the Mass Room Editor, and the rest of its fixes | merged (squash 0f7b6dc) |
-| #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | open |
+| #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | merged (squash e839b9d) |
+| #14 | M3: the Record Number Changer | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -63,6 +64,12 @@ revisited. Pull requests merged once CI was green.
   The Tools page gains NMR's Monster Group/Index Changer: a change list of group/index moves,
   run over the monsters and the rooms whose index ranges hold them, with the rooms' index
   runs listed to pick from.
+- **The Record Number Changer** (#14), NMR's last database tool: records of one table move
+  to new numbers, and every place that names them follows (other tables' fields, room exits
+  by type, abilities, spells' ranged abilities, text block commands such as `checkitem`,
+  `text`, `teleport`). Change Map Number moves a whole map. Previews first, like the rest.
+  Tried on the 1.11p realm: item 1276 (crane totem) to 9000 changes the item, its monster
+  drop and text block 2903's `checkitem`/`takeitem`.
 
 ## Decisions taken
 
@@ -137,6 +144,15 @@ revisited. Pull requests merged once CI was green.
     as stubs that open the other map; hidden exits are followed unless unticked, as NMR's
     option. NMR's map editing (frmMapEditor) and favourites are not in yet.
 
+19. **The Record Number Changer refuses what NMR lets go wrong.** New numbers must be free
+    and each number moves once; NMR logs a taken number and goes on, which leaves the
+    references moved and the record not, and its loops can move a value twice. Also: a map
+    change exit into the renumbered map moves on its room (NMR's test reads the map there),
+    a map change onto its own map keeps its type, rooms' Command Text follows a text block
+    move (NMR misses it), a text block that would outgrow its record is listed and left (NMR
+    splits it into a new part), and a ScatterItems spell is listed, not changed (NMR asks).
+    All are in `renumber.rs`'s header.
+
 ## Known gaps
 
 - The read-only per-file API (`/api/files/...`) decodes records in the DOS layout only, so on
@@ -144,6 +160,8 @@ revisited. Pull requests merged once CI was green.
   will learn the realm's layout.
 - Found and fixed on the way: `daydream nmr-export` and `nmr-import` used the DOS layouts
   even on a Worldgroup realm. They now use the realm's own (#8).
+- Users' inventories are not renumbered by the Record Number Changer, as in NMR (users are
+  not among NMR's tables). Worth adding if renumbering items on a live realm matters.
 - The Tools page (#9) imports with Daydream's strict rules only; NMR mode stays a
   command-line and CI option.
 

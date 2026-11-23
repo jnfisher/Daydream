@@ -142,12 +142,16 @@ pub struct Plan {
     /// The keys of records to delete.
     #[serde(skip)]
     pub(crate) deletes: Vec<Vec<Value>>,
+    /// How many of the deletes are records moved to a new key (their new rows are in
+    /// `rows`), so a move counts as one record.
+    #[serde(skip)]
+    pub(crate) moved: usize,
 }
 
 impl Plan {
     /// How many records change, are added or go.
     pub fn records(&self) -> usize {
-        self.rows.as_ref().map_or(0, |r| r.rows.len()) + self.deletes.len()
+        self.rows.as_ref().map_or(0, |r| r.rows.len()) + self.deletes.len() - self.moved
     }
 }
 
