@@ -36,7 +36,7 @@ pub fn stem(table: Table) -> &'static str {
 
 /// An empty `.db` for every NMR table (no Btrieve keys: the tests match by NMR's index).
 pub fn empty_realm(dir: &Path) {
-    for t in TABLES {
+    for t in TABLES.iter().chain(daydream_nmr::players::TABLES) {
         let Some(table) = t.table else { continue };
         let layout = layout_of(table, LayoutSet::Dos);
         let variable = table.is_variable_length();

@@ -414,6 +414,122 @@ export const LAYOUTS: Record<string, Layout> = {
       ],
     },
   ],
+
+  // frmUser: NMR's tabs, the Misc tab's spells cast on a tab of their own
+  Users: [
+    {
+      title: 'Stats',
+      fields: [
+        f('BBS Name'), f('First Name'), f('Last Name'), f('Title'),
+        f('Race', 'Race', { ref: 'Races' }), f('Class', 'Class', { ref: 'Classes' }), f('Level'),
+        f('Exp Billions', 'Exp (billions)'), f('Exp'), f('Lives'), f('CP'), f('Total CP'),
+        f('Max HP'), f('HP', 'Current HP'), f('Max Mana'), f('Mana', 'Current Mana'),
+        f('HP Bonus'), f('Mana Bonus'), f('Max MR', 'Max M.R.'), f('MR', 'M.R.'),
+        f('Max Energy'), f('Energy'), f('Max Weight', 'Max Enc.'), f('Weight', 'Current Enc.'),
+      ],
+      matrix: {
+        headers: ['Base', 'Current'],
+        rows: ['INT', 'WIL', 'STR', 'HEA', 'AGL', 'CHM'].map((s) => ({ label: s, cols: [`Base ${s}`, s] })),
+      },
+    },
+    {
+      title: 'Inven.',
+      fields: [f('Weapon', 'Weapon (readied)', { ref: 'Items' })],
+      grid: {
+        columns: [
+          { template: 'Item #', label: 'Item', pick: { ref: 'Items' } },
+          { template: 'Item # Uses', label: 'Uses' },
+        ],
+        from: 0,
+        to: 99,
+      },
+    },
+    {
+      title: 'Keys',
+      grid: {
+        columns: [
+          { template: 'Key #', label: 'Key', pick: { ref: 'Items' } },
+          { template: 'Key # Uses', label: 'Uses' },
+        ],
+        from: 0,
+        to: 49,
+      },
+    },
+    {
+      title: 'Spellbk.',
+      grid: { columns: [{ template: 'Spellbook #', label: 'Spell', pick: { ref: 'Spells' } }], from: 0, to: 99 },
+    },
+    {
+      title: 'Abilities',
+      grid: {
+        columns: [
+          { template: 'Ability #', label: 'Ability', pick: { abilities: true } },
+          { template: 'Ability # Value', label: 'Value' },
+        ],
+        from: 0,
+        to: 29,
+      },
+    },
+    {
+      title: 'Rooms',
+      fields: [f('Map Number', 'Current Map'), f('Room Number', 'Current Room')],
+      grid: {
+        columns: [
+          { template: 'Trail # Map', label: 'Map' },
+          { template: 'Trail # Room', label: 'Room' },
+        ],
+        from: 0,
+        to: 19,
+      },
+    },
+    {
+      title: 'Worn',
+      grid: {
+        columns: [
+          { template: 'Worn #', label: 'Item', pick: { ref: 'Items' } },
+          { template: 'Worn # Uses', label: 'Uses' },
+        ],
+        from: 0,
+        to: 19,
+      },
+    },
+    {
+      title: 'Misc',
+      fields: [
+        f('Runic'), f('Platinum'), f('Gold'), f('Silver'), f('Copper'),
+        f('Perception'), f('Stealth'), f('Martial Arts'), f('Thievery'), f('Spellcasting'),
+        f('Traps'), f('Disarm'), f('Picklocks'), f('Tracking'), f('Evil Points'),
+        f('Broadcast Channel', 'BC Channel'), f('Gang'), f('Suicide Password'),
+      ],
+    },
+    {
+      title: 'Spells Cast',
+      fields: [f('Poison', 'Poison flag')],
+      grid: {
+        columns: [
+          { template: 'Spell Cast #', label: 'Spell', pick: { ref: 'Spells' } },
+          { template: 'Spell Cast # Value', label: 'Value' },
+          { template: 'Spell Cast # Rounds', label: 'Rounds Left' },
+        ],
+        from: 0,
+        to: 9,
+      },
+    },
+  ],
+
+  // frmBank
+  BankBooks: [{ title: 'General', fields: [f('BBS Name'), f('Shop #', 'Bank (shop)', { ref: 'Shops' }), f('Amount'), f('Loan')] }],
+
+  // frmGang
+  Gangs: [
+    {
+      title: 'General',
+      fields: [
+        f('KeyName'), f('Display Name'), f('Leader'), f('Base Exp'), f('Roll Over Exp'),
+        f('Times Rolled'), f('Members'), f('Date Created'),
+      ],
+    },
+  ],
 };
 
 /** The numbered-column families of a table: template ("Ability #") to numbers. */

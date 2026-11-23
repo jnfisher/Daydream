@@ -610,3 +610,83 @@ fn monster_indexes_change_with_the_rooms_ranges() {
     };
     assert!(presets::plan(&realm, &twice, Dos).is_err());
 }
+
+#[test]
+fn revive_character_answers_nmrs_questions() {
+    use crate::support::{empty_realm, l, put, t};
+    use daydream_nmr::presets::ReviveTo;
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let user = |name: &'static str| {
+        vec![
+            ("BBS Name", t(name)),
+            ("Max HP", l(40)),
+            ("HP", l(-3)),
+            ("Max Mana", l(12)),
+            ("Mana", l(1)),
+            ("Lives", l(2)),
+            ("Poison", l(1)),
+            ("Spell Cast 0", l(7)),
+            ("Spell Cast 0 Rounds", l(9)),
+            ("Map Number", l(1)),
+            ("Room Number", l(50)),
+            ("Trail 3 Map", l(2)),
+            ("Trail 3 Room", l(77)),
+        ]
+    };
+    let users = [user("Ann"), user("Bob")];
+    let refs: Vec<&[(&str, Value)]> = users.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Users", &refs);
+
+    let p = Preset::ReviveCharacter {
+        user: "ann".into(),
+        lives: true,
+        spells: true,
+        to: Some(ReviveTo::Back(3)),
+    };
+    let plan = presets::plan(&realm, &p, Dos).unwrap();
+    assert_eq!(plan.records(), 1);
+    modify::apply(&realm, &plan, Dos).unwrap();
+    let users =
+        daydream_nmr::export_table(&realm, daydream_nmr::schema::table("Users").unwrap(), Dos)
+            .unwrap();
+    let col = |c: &str| users.position(c).unwrap();
+    let get = |row: usize, c: &str| n(&users.rows[row][col(c)]);
+    let ann = [
+        "HP",
+        "Mana",
+        "Lives",
+        "Poison",
+        "Spell Cast 0",
+        "Spell Cast 0 Rounds",
+        "Map Number",
+        "Room Number",
+    ]
+    .map(|c| get(0, c));
+    assert_eq!(ann, [40.0, 12.0, 9.0, 0.0, 0.0, 0.0, 2.0, 77.0]);
+    // Bob is left alone
+    assert_eq!(get(1, "HP"), -3.0);
+
+    let halls = Preset::ReviveCharacter {
+        user: "Bob".into(),
+        lives: false,
+        spells: false,
+        to: Some(ReviveTo::Halls),
+    };
+    modify::apply(&realm, &presets::plan(&realm, &halls, Dos).unwrap(), Dos).unwrap();
+    let users =
+        daydream_nmr::export_table(&realm, daydream_nmr::schema::table("Users").unwrap(), Dos)
+            .unwrap();
+    let bob = ["HP", "Lives", "Spell Cast 0", "Map Number", "Room Number"]
+        .map(|c| n(&users.rows[1][users.position(c).unwrap()]));
+    assert_eq!(bob, [40.0, 2.0, 7.0, 1.0, 2189.0]);
+
+    let nobody = Preset::ReviveCharacter {
+        user: "Cid".into(),
+        lives: false,
+        spells: false,
+        to: None,
+    };
+    assert!(presets::plan(&realm, &nobody, Dos).is_err());
+}

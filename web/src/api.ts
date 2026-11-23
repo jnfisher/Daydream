@@ -79,4 +79,6 @@ export const api = {
   insert: (table: string, values: Record<string, Cell>) =>
     call<Report>('POST', `${t(table)}/row`, { values }),
   remove: (table: string, key: Cell[]) => call<Report>('DELETE', `${t(table)}/row${k(key)}`),
+  /** One of NMR's fixes (`daydream_nmr::presets::Preset`), written straight away. */
+  preset: (body: Record<string, unknown>) => call<{ changes?: unknown[] }>('POST', '/api/tools/preset', { ...body, dry_run: false }),
 };

@@ -292,7 +292,9 @@ var api = {
   row: (table, key) => call("GET", `${t(table)}/row${k(key)}`),
   save: (table, key, values) => call("PUT", `${t(table)}/row${k(key)}`, { values }),
   insert: (table, values) => call("POST", `${t(table)}/row`, { values }),
-  remove: (table, key) => call("DELETE", `${t(table)}/row${k(key)}`)
+  remove: (table, key) => call("DELETE", `${t(table)}/row${k(key)}`),
+  /** One of NMR's fixes (`daydream_nmr::presets::Preset`), written straight away. */
+  preset: (body) => call("POST", "/api/tools/preset", { ...body, dry_run: false })
 };
 
 // src/layouts.ts
@@ -876,6 +878,157 @@ var LAYOUTS = {
         wide("Inventory to Room"),
         wide("Floor Item to User"),
         wide("Floor Item to Room")
+      ]
+    }
+  ],
+  // frmUser: NMR's tabs, the Misc tab's spells cast on a tab of their own
+  Users: [
+    {
+      title: "Stats",
+      fields: [
+        f("BBS Name"),
+        f("First Name"),
+        f("Last Name"),
+        f("Title"),
+        f("Race", "Race", { ref: "Races" }),
+        f("Class", "Class", { ref: "Classes" }),
+        f("Level"),
+        f("Exp Billions", "Exp (billions)"),
+        f("Exp"),
+        f("Lives"),
+        f("CP"),
+        f("Total CP"),
+        f("Max HP"),
+        f("HP", "Current HP"),
+        f("Max Mana"),
+        f("Mana", "Current Mana"),
+        f("HP Bonus"),
+        f("Mana Bonus"),
+        f("Max MR", "Max M.R."),
+        f("MR", "M.R."),
+        f("Max Energy"),
+        f("Energy"),
+        f("Max Weight", "Max Enc."),
+        f("Weight", "Current Enc.")
+      ],
+      matrix: {
+        headers: ["Base", "Current"],
+        rows: ["INT", "WIL", "STR", "HEA", "AGL", "CHM"].map((s) => ({ label: s, cols: [`Base ${s}`, s] }))
+      }
+    },
+    {
+      title: "Inven.",
+      fields: [f("Weapon", "Weapon (readied)", { ref: "Items" })],
+      grid: {
+        columns: [
+          { template: "Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Item # Uses", label: "Uses" }
+        ],
+        from: 0,
+        to: 99
+      }
+    },
+    {
+      title: "Keys",
+      grid: {
+        columns: [
+          { template: "Key #", label: "Key", pick: { ref: "Items" } },
+          { template: "Key # Uses", label: "Uses" }
+        ],
+        from: 0,
+        to: 49
+      }
+    },
+    {
+      title: "Spellbk.",
+      grid: { columns: [{ template: "Spellbook #", label: "Spell", pick: { ref: "Spells" } }], from: 0, to: 99 }
+    },
+    {
+      title: "Abilities",
+      grid: {
+        columns: [
+          { template: "Ability #", label: "Ability", pick: { abilities: true } },
+          { template: "Ability # Value", label: "Value" }
+        ],
+        from: 0,
+        to: 29
+      }
+    },
+    {
+      title: "Rooms",
+      fields: [f("Map Number", "Current Map"), f("Room Number", "Current Room")],
+      grid: {
+        columns: [
+          { template: "Trail # Map", label: "Map" },
+          { template: "Trail # Room", label: "Room" }
+        ],
+        from: 0,
+        to: 19
+      }
+    },
+    {
+      title: "Worn",
+      grid: {
+        columns: [
+          { template: "Worn #", label: "Item", pick: { ref: "Items" } },
+          { template: "Worn # Uses", label: "Uses" }
+        ],
+        from: 0,
+        to: 19
+      }
+    },
+    {
+      title: "Misc",
+      fields: [
+        f("Runic"),
+        f("Platinum"),
+        f("Gold"),
+        f("Silver"),
+        f("Copper"),
+        f("Perception"),
+        f("Stealth"),
+        f("Martial Arts"),
+        f("Thievery"),
+        f("Spellcasting"),
+        f("Traps"),
+        f("Disarm"),
+        f("Picklocks"),
+        f("Tracking"),
+        f("Evil Points"),
+        f("Broadcast Channel", "BC Channel"),
+        f("Gang"),
+        f("Suicide Password")
+      ]
+    },
+    {
+      title: "Spells Cast",
+      fields: [f("Poison", "Poison flag")],
+      grid: {
+        columns: [
+          { template: "Spell Cast #", label: "Spell", pick: { ref: "Spells" } },
+          { template: "Spell Cast # Value", label: "Value" },
+          { template: "Spell Cast # Rounds", label: "Rounds Left" }
+        ],
+        from: 0,
+        to: 9
+      }
+    }
+  ],
+  // frmBank
+  BankBooks: [{ title: "General", fields: [f("BBS Name"), f("Shop #", "Bank (shop)", { ref: "Shops" }), f("Amount"), f("Loan")] }],
+  // frmGang
+  Gangs: [
+    {
+      title: "General",
+      fields: [
+        f("KeyName"),
+        f("Display Name"),
+        f("Leader"),
+        f("Base Exp"),
+        f("Roll Over Exp"),
+        f("Times Rolled"),
+        f("Members"),
+        f("Date Created")
       ]
     }
   ]
@@ -1734,15 +1887,15 @@ function massRoomEditor(rooms, post2, show2, changed2) {
       out.replaceChildren(h4("p", { class: "error" }, "Check the fields to set."));
       return;
     }
-    const range = { table: "Rooms", map: Number(map.value), from: Number(from.value), to: Number(to.value) };
-    if (range.from > range.to) {
+    const range2 = { table: "Rooms", map: Number(map.value), from: Number(from.value), to: Number(to.value) };
+    if (range2.from > range2.to) {
       out.replaceChildren(h4("p", { class: "error" }, "Illegal Range Entered!"));
       return;
     }
-    if (!dryRun && !confirm(`Set ${values.length} fields on rooms ${range.from} to ${range.to} of map ${range.map}?`)) return;
+    if (!dryRun && !confirm(`Set ${values.length} fields on rooms ${range2.from} to ${range2.to} of map ${range2.map}?`)) return;
     out.replaceChildren(h4("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
     try {
-      const res = await post2("/api/tools/modify", JSON.stringify({ table: "Rooms", action: { kind: "set", values }, range, only_if: [], dry_run: dryRun }));
+      const res = await post2("/api/tools/modify", JSON.stringify({ table: "Rooms", action: { kind: "set", values }, range: range2, only_if: [], dry_run: dryRun }));
       out.replaceChildren(show2(res));
       if (!dryRun) changed2();
     } catch (e) {
@@ -1856,8 +2009,8 @@ function indexChanger(post2, result, failure2, changed2) {
     }
   };
   const option = (group, from, to, what) => {
-    const range = from === to ? `${from}` : `${from}-${to}`;
-    const o = h5("option", {}, `${groupName(group)}/${range}: ${what}`);
+    const range2 = from === to ? `${from}` : `${from}-${to}`;
+    const o = h5("option", {}, `${groupName(group)}/${range2}: ${what}`);
     Object.assign(o.dataset, { group: String(group), from: String(from), to: String(to) });
     return o;
   };
@@ -2329,11 +2482,11 @@ function deleter(changed2) {
   card2.append(h7("label", {}, "Delete from: ", select2), table, h7("div", { class: "toolbar" }, preview, go), out);
   const run = async (dryRun) => {
     const r = row[1];
-    const range = rangeOf(r);
-    const what = range ? `${r.table} ${range.map !== void 0 ? `map ${range.map}, ` : ""}${range.from} to ${range.to}` : `every ${r.table} record`;
+    const range2 = rangeOf(r);
+    const what = range2 ? `${r.table} ${range2.map !== void 0 ? `map ${range2.map}, ` : ""}${range2.from} to ${range2.to}` : `every ${r.table} record`;
     if (!dryRun && !confirm(`Delete ${what} from the realm? This cannot be undone.`)) return;
     try {
-      const res = await post("/api/tools/delete", JSON.stringify({ table: r.table, range, all: range === null, dry_run: dryRun }), true);
+      const res = await post("/api/tools/delete", JSON.stringify({ table: r.table, range: range2, all: range2 === null, dry_run: dryRun }), true);
       out.replaceChildren(h7("p", {}, `${res.report.deleted} ${r.table} record${res.report.deleted === 1 ? "" : "s"} ${dryRun ? "would be " : ""}deleted.`));
       if (!dryRun) changed2();
     } catch (e) {
@@ -2426,7 +2579,7 @@ function universalModifier(tables, changed2) {
   const setUp = () => {
     const t2 = editable.find((x) => x.name === editor.value);
     const hasAbilities = t2.columns.some((c) => c.name === "Ability 0");
-    const [tr, range] = rangeRow(t2.name, false);
+    const [tr, range2] = rangeRow(t2.name, false);
     rangeBody.replaceChildren(tr);
     const kinds = [["math", "Field"]];
     if (hasAbilities) kinds.push(["change_ability", "Ability value"], ["give_ability", "Give ability"], ["take_ability", "Take ability"]);
@@ -2483,7 +2636,7 @@ function universalModifier(tables, changed2) {
       const only_if = conditions.filter((c) => c.k.value).map(
         (c) => c.k.value === "column" ? { kind: "column", column: c.col.value, cmp: c.cmp.value, value: n(c.v) } : { kind: c.k.value, ability: Number(c.ab.value), cmp: c.cmp.value, value: n(c.v) }
       );
-      return { table: t2.name, action, range: rangeOf(range), only_if };
+      return { table: t2.name, action, range: rangeOf(range2), only_if };
     };
   };
   editor.addEventListener("change", () => {
@@ -2744,8 +2897,195 @@ function toolsPage(changed2) {
   return page;
 }
 
+// src/users.ts
+function nextNumber(text, at) {
+  let start = at;
+  let y = at;
+  for (; y < text.length; y++) {
+    const c = text[y];
+    if (c === "*") start = y + 1;
+    else if (!/[0-9 ]/.test(c)) break;
+  }
+  if (y <= start) return "";
+  const digits = text.slice(start, y).replace(/ /g, "");
+  return digits === "" ? "0" : String(Number(digits));
+}
+function nameAfter(text, label, next) {
+  const i = text.indexOf(label);
+  if (i < 0) return "";
+  const x = i + label.length;
+  let y = text.indexOf(next, x);
+  if (y > x + 15 || y >= 0 && text.slice(x, y).trim().includes("\n")) y = -1;
+  if (y < 0) y = text.indexOf("\r", x);
+  if (y < 0) y = text.indexOf("\n", x);
+  return y > x ? text.slice(x, y).trim() : "";
+}
+function parseStats(text) {
+  const values = {};
+  const take = (label, columns, min = 1) => {
+    const i = text.indexOf(label);
+    if (i < 0) return;
+    const n = nextNumber(text, i + label.length);
+    if (n === "" || Number(n) < min) return;
+    for (const c of columns) values[c] = n;
+  };
+  for (const [label, stat] of [
+    ["Intellect: ", "INT"],
+    ["Willpower: ", "WIL"],
+    ["Strength: ", "STR"],
+    ["Health: ", "HEA"],
+    ["Agility: ", "AGL"],
+    ["Charm: ", "CHM"]
+  ]) {
+    take(label, [`Base ${stat}`, stat]);
+  }
+  const exp = text.indexOf("Exp: ");
+  if (exp >= 0) {
+    const n = nextNumber(text, exp + 5);
+    if (n !== "") {
+      const e = Number(n);
+      values["Exp Billions"] = String(Math.floor(e / 1e9));
+      values["Exp"] = String(e % 1e9);
+    }
+  }
+  take("Level: ", ["Level"]);
+  take("Hits: ", ["HP"]);
+  take("Mana: ", ["Mana"]);
+  take("Kai: ", ["Mana"]);
+  take("Lives/CP:", ["Lives"]);
+  const cp = text.indexOf("CP:");
+  if (cp >= 0) {
+    const slash = text.indexOf("/", cp + 3);
+    if (slash >= 0 && slash + 1 < text.length) {
+      const n = nextNumber(text, slash + 1);
+      if (n !== "") values["CP"] = n;
+    }
+  }
+  return { values, race: nameAfter(text, "Race: ", "Exp:"), cls: nameAfter(text, "Class: ", "Level:") };
+}
+var STATS = ["INT", "WIL", "STR", "HEA", "AGL", "CHM"];
+var STAT_COLUMNS = [...STATS.map((s) => `Base ${s}`), ...STATS];
+var range = (n) => Array.from({ length: n }, (_, i) => i);
+var SINGLES = [
+  ["BBSName", "BBS Name"],
+  ["FirstName", "First Name", "name"],
+  ["LastName", "Last Name", "name"],
+  ["Race", "Race"],
+  ["Class", "Class"],
+  ["Experience", ""],
+  ["Level", "Level"],
+  ["Title", "Title"],
+  ["EvilPoints", "Evil Points"],
+  ["GangName", "Gang", "gang"],
+  ["SuicidePassword", "Suicide Password", "deets"],
+  ["BroadcastChan", "Broadcast Channel", "deets"],
+  ["bEDITED", "Edited"],
+  ["Runic", "Runic", "deets"],
+  ["Platinum", "Platinum", "deets"],
+  ["Gold", "Gold", "deets"],
+  ["Silver", "Silver", "deets"],
+  ["Copper", "Copper", "deets"],
+  ["MaxHP", "Max HP"],
+  ["CurrentHP", "HP"],
+  ["HPRolls", "HP Rolls"],
+  ["MaxMana", "Max Mana"],
+  ["CurrentMana", "Mana"],
+  ["SpellCasting", "Spellcasting"],
+  ["LivesRemaining", "Lives", "deets"],
+  ["CPRemaining", "CP"],
+  ["Perception", "Perception"],
+  ["Thievery", "Thievery"],
+  ["Traps", "Traps"],
+  ["Picklocks", "Picklocks"],
+  ["Tracking", "Tracking"],
+  ["MartialArts", "Martial Arts"],
+  ["MagicRes", "Max MR"],
+  ["Stealth", "Stealth"],
+  ["CurrentENC", "Weight"],
+  ["MaxENC", "Max Weight"],
+  ["WeaponHand", "Weapon"],
+  ["RoomNum", "Room Number", "rooms"],
+  ["MapNumber", "Map Number", "rooms"]
+];
+var LISTS = [
+  ["STATS", 12, (i) => [STAT_COLUMNS[i]]],
+  ["ABILS", 30, (i) => [`Ability ${i}`, `Ability ${i} Value`]],
+  ["WORN", 20, (i) => [`Worn ${i}`]],
+  ["ITEMS", 100, (i) => [`Item ${i}`, `Item ${i} Uses`]],
+  ["KEYS", 50, (i) => [`Key ${i}`, `Key ${i} Uses`]],
+  ["SPELLS", 100, (i) => [`Spellbook ${i}`]],
+  ["AURAS", 10, (i) => [`Spell Cast ${i}`, `Spell Cast ${i} Value`, `Spell Cast ${i} Rounds`]],
+  ["ROOMS", 20, (i) => [`Trail ${i} Map`, `Trail ${i} Room`], "rooms"]
+];
+function exportUser(v) {
+  const s = (c) => String(v[c] ?? 0);
+  const exp = BigInt(Math.trunc(Number(v["Exp Billions"] ?? 0))) * 1000000000n + BigInt(Math.trunc(Number(v["Exp"] ?? 0)));
+  const lines = [];
+  const list2 = (key) => {
+    const [, n, cols] = LISTS.find(([k2]) => k2 === key);
+    lines.push(`${key}:${range(n).map((i) => cols(i).map(s).join("|")).join(",")}`);
+  };
+  for (const [key, col] of SINGLES) {
+    if (key === "CurrentENC") list2("STATS"), list2("ABILS");
+    if (key === "RoomNum") list2("WORN"), list2("ITEMS"), list2("KEYS"), list2("SPELLS"), list2("AURAS");
+    lines.push(`${key}:${key === "Experience" ? exp.toString() : s(col).split("\0")[0]}`);
+  }
+  list2("ROOMS");
+  return lines.join("\r\n");
+}
+var IMPORT_DEFAULTS = {
+  name: false,
+  gang: false,
+  deets: false,
+  rooms: false,
+  clearItems: true,
+  clearKeys: false,
+  clearSpells: true,
+  clearAbils: false
+};
+function importUser(text, o) {
+  const out = {};
+  const zero = (key) => {
+    const [, n, cols] = LISTS.find(([k2]) => k2 === key);
+    for (const i of range(n)) for (const c of cols(i)) out[c] = "0";
+  };
+  if (o.clearItems) zero("ITEMS"), zero("WORN");
+  if (o.clearKeys) zero("KEYS");
+  if (o.clearSpells) zero("SPELLS"), zero("AURAS");
+  if (o.clearAbils) zero("ABILS");
+  const allowed = (need) => !need || o[need];
+  for (const line of text.trim().split(/\r?\n/)) {
+    const m = /^([^\r\n:]+):(.*)$/.exec(line);
+    if (!m) continue;
+    const [, key, raw] = m;
+    const value = raw.trim();
+    const single = SINGLES.find(([k2]) => k2 === key);
+    if (single && key !== "BBSName") {
+      const [, col, need2] = single;
+      if (!allowed(need2)) continue;
+      if (key === "Experience") {
+        const e = /^\d+$/.test(value) ? BigInt(value) : 0n;
+        out["Exp Billions"] = (e / 1000000000n).toString();
+        out["Exp"] = (e % 1000000000n).toString();
+      } else out[col] = value;
+      continue;
+    }
+    const list2 = LISTS.find(([k2]) => k2 === key);
+    if (!list2) continue;
+    const [, n, cols, need] = list2;
+    if (!allowed(need)) continue;
+    value.split(",").slice(0, n).forEach((entry, i) => {
+      const parts = entry.split("|");
+      const want = cols(i);
+      if (want.length > 1 && parts.length !== want.length) return;
+      want.forEach((c, j) => out[c] = parts[j].trim());
+    });
+  }
+  return out;
+}
+
 // src/main.ts
-var ORDER = ["Items", "Monsters", "Spells", "Classes", "Races", "Shops", "Rooms", "Messages", "Textblocks", "Actions"];
+var ORDER = ["Items", "Monsters", "Spells", "Classes", "Races", "Shops", "Rooms", "Messages", "Textblocks", "Actions", "Users", "BankBooks", "Gangs"];
 var LIST_LIMIT = 500;
 var state = {
   tables: [],
@@ -3067,6 +3407,12 @@ function toolbar(t2) {
     const [map, room] = state.row.key;
     bar.append(h8("a", { href: `#/map/${map}/${room}`, class: "button-link" }, "Map"));
   }
+  if (state.row && t2.name === "Users") {
+    button("Revive", "NMR's Revive Character: HP and Mana to full, then lives, spells cast and where to move them", () => void revive());
+    button("Paste Stats", "NMR's Paste Character: read a capture of the game's stat output into the fields", () => void pasteStats());
+    button("Export", "NMR's character export: copy this user as text", () => void exportCharacter());
+    button("Import", "NMR's character import: fill this user from exported text", () => void importCharacter());
+  }
   bar.append(h8("span", { id: "dirty" }));
   return bar;
 }
@@ -3108,6 +3454,122 @@ async function openTable(name, key) {
   }
   renderList();
   renderEditor();
+}
+async function revive() {
+  const row = state.row;
+  if (!row || !state.table) return;
+  if (Object.keys(changed()).length) {
+    status("Save or discard your changes first.", "error");
+    return;
+  }
+  const v = (c) => Number(row.values[c] ?? 0);
+  const lives = v("Lives") < 9 && confirm("Reset Lives to 9?");
+  const cast = v("Poison") !== 0 || Array.from({ length: 10 }, (_, i) => v(`Spell Cast ${i}`)).some((x) => x > 0);
+  const spells = cast && confirm("Reset Auras (clear the spells cast on them)?");
+  let to = null;
+  if (v("Map Number") !== 1 || v("Room Number") !== 2189) {
+    const answer = prompt(
+      "Move user?\n- Enter 1-19: move them that many rooms back\n- Enter 99: to the Halls of the Dead\n- Enter Map/Room, as 1/2189\n\nEnter 0 or cancel to leave them alone.",
+      "0"
+    );
+    const mr = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(answer ?? "");
+    const n = parseInt(answer ?? "", 10) || 0;
+    if (mr) to = { room: { map: Number(mr[1]), room: Number(mr[2]) } };
+    else if (n === 99) to = "halls";
+    else if (n >= 1 && n <= 19) to = { back: n };
+  }
+  try {
+    await api.preset({ preset: "revive_character", user: String(row.key[0]), lives, spells, to });
+    const fresh = await api.row(state.table.name, row.key);
+    state.row = fresh;
+    loadEdits(fresh);
+    renderEditor();
+    status(`Revived ${row.key[0]}.`, "ok");
+  } catch (e) {
+    fail(e);
+  }
+}
+async function textDialog(intro, text, buttons, extra) {
+  const form = h8(
+    "form",
+    { method: "dialog" },
+    h8("p", {}, intro),
+    text,
+    ...extra ? [extra] : [],
+    h8("div", { class: "toolbar" }, ...buttons.map((b, i) => h8("button", { type: "submit", value: b, class: i === 0 ? "primary" : "" }, b)))
+  );
+  const dialog = h8("dialog", { class: "paste-dialog" }, form);
+  document.body.append(dialog);
+  dialog.showModal();
+  const answer = await new Promise((done) => dialog.addEventListener("close", () => done(dialog.returnValue), { once: true }));
+  dialog.remove();
+  return answer;
+}
+var textBox = (label, value = "") => {
+  const t2 = h8("textarea", { rows: "14", cols: "80", spellcheck: "false", "aria-label": label });
+  t2.value = value;
+  return t2;
+};
+function fillFields(values, what) {
+  for (const [col, v] of Object.entries(values)) if (column(col)) state.edits.set(col, v);
+  renderEditor();
+  const n = Object.keys(values).length;
+  status(n ? `${what}: ${n} fields filled in; save to keep them.` : `${what}: nothing in the text was recognised.`, n ? "ok" : "error");
+}
+async function pasteStats() {
+  const text = textBox("Stat capture");
+  const intro = "Paste a capture of a character's stat output (or MMUD Explorer's Copy Only Stats). Class, race, level, exp, lives, CP, HP, mana and the six stats are read.";
+  if (await textDialog(intro, text, ["Paste", "Cancel"]) !== "Paste" || text.value.trim().length < 10) return;
+  const { values, race, cls } = parseStats(text.value);
+  for (const [table, name, col] of [
+    ["Races", race, "Race"],
+    ["Classes", cls, "Class"]
+  ]) {
+    if (!name) continue;
+    for (const [n, title] of await names(table)) if (title === name) values[col] = String(n);
+  }
+  fillFields(values, "Paste Stats");
+}
+async function exportCharacter() {
+  if (!state.row) return;
+  const text = textBox("Exported character", exportUser(state.row.values));
+  text.readOnly = true;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(text.value);
+    copied = true;
+  } catch {
+  }
+  const intro = `${copied ? "Copied to the clipboard. " : ""}NMR's character export of the saved record: Import it into another user, here or in NMR.`;
+  await textDialog(intro, text, ["Close"]);
+}
+async function importCharacter() {
+  const text = textBox("Character to import");
+  try {
+    text.value = await navigator.clipboard.readText();
+  } catch {
+  }
+  const labels = [
+    ["name", "Import Character Name"],
+    ["gang", "Import Gang Name"],
+    ["deets", "Import Lives, Suicide, Channel, Cash"],
+    ["rooms", "Import Rooms"],
+    ["clearItems", "Clear Items First"],
+    ["clearKeys", "Clear Keys First"],
+    ["clearSpells", "Clear Spells First"],
+    ["clearAbils", "Clear Abilities First"]
+  ];
+  const boxes = labels.map(([k2, label]) => {
+    const c = h8("input", { type: "checkbox" });
+    c.checked = IMPORT_DEFAULTS[k2];
+    return [k2, c, h8("label", {}, c, " ", label)];
+  });
+  const extra = h8("div", { class: "import-boxes" }, ...boxes.map(([, , l]) => l));
+  const intro = "Paste a character exported from NMR's or Daydream's user editor.";
+  if (await textDialog(intro, text, ["Import", "Cancel"], extra) !== "Import") return;
+  const o = { ...IMPORT_DEFAULTS };
+  for (const [k2, c] of boxes) o[k2] = c.checked;
+  fillFields(importUser(text.value, o), "Import");
 }
 function select(key) {
   if (!state.table || state.row && sameKey(state.row.key, key)) return;

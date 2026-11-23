@@ -116,6 +116,28 @@ pub enum Preset {
         table: IndexTable,
         changes: Vec<IndexChange>,
     },
+    /// Users: NMR's Revive Character for the user `user` (their BBS Name). HP and Mana to
+    /// their max; with `lives`, Lives to 9 when below; with `spells`, the spells cast on
+    /// them (and the poison flag beside them) cleared; with `to`, moved.
+    ReviveCharacter {
+        user: String,
+        #[serde(default)]
+        lives: bool,
+        #[serde(default)]
+        spells: bool,
+        #[serde(default)]
+        to: Option<ReviveTo>,
+    },
+}
+
+/// Where Revive Character moves a user: NMR's "move them that many rooms back" (1 to 19,
+/// from their trail), the Halls of the Dead (1/2189) or a map and room.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviveTo {
+    Back(u32),
+    Halls,
+    Room { map: i64, room: i64 },
 }
 
 /// Which table the Monster Group/Index Changer runs over: NMR's runs over both, in turn.
@@ -430,6 +452,12 @@ pub fn plan(realm: &Realm, preset: &Preset, layout: LayoutSet) -> Result<Plan, P
         Preset::ChangeMonsterIndexes { table, changes } => {
             change_indexes(realm, *table, changes, layout)
         }
+        Preset::ReviveCharacter {
+            user,
+            lives,
+            spells,
+            to,
+        } => revive(realm, user, *lives, *spells, to.as_ref(), layout),
         Preset::DeleteBufferRooms { map } => {
             let (t, rows) = load(realm, "Rooms", layout)?;
             let (m, r, name) = (
@@ -780,6 +808,85 @@ fn change_indexes(
             }))
         }
     }
+}
+
+/// NMR's Revive Character (`cmdReviveChar_Click`), its questions answered up front.
+fn revive(
+    realm: &Realm,
+    user: &str,
+    lives: bool,
+    spells: bool,
+    to: Option<&ReviveTo>,
+    layout: LayoutSet,
+) -> Result<Plan, PresetError> {
+    if let Some(ReviveTo::Back(n)) = to
+        && !(1..=19).contains(n)
+    {
+        return Err(bad("a user moves 1 to 19 rooms back"));
+    }
+    let (t, rows) = load(realm, "Users", layout)?;
+    let name = at(&rows, "BBS Name")?;
+    let want = crate::export::key_text(user);
+    if !rows.rows.iter().any(|r| match &r[name] {
+        Value::Text(s) => crate::export::key_text(s) == want,
+        _ => false,
+    }) {
+        return Err(bad(format!("no user {user}")));
+    }
+    let hp = (at(&rows, "Max HP")?, at(&rows, "HP")?);
+    let mana = (at(&rows, "Max Mana")?, at(&rows, "Mana")?);
+    let life = at(&rows, "Lives")?;
+    let poison = at(&rows, "Poison")?;
+    let cast: Vec<usize> = (0..10)
+        .flat_map(|i| {
+            [
+                format!("Spell Cast {i}"),
+                format!("Spell Cast {i} Value"),
+                format!("Spell Cast {i} Rounds"),
+            ]
+        })
+        .map(|c| at(&rows, &c))
+        .collect::<Result<_, _>>()?;
+    let (map, room) = (at(&rows, "Map Number")?, at(&rows, "Room Number")?);
+    let trail = match to {
+        Some(ReviveTo::Back(n)) => Some((
+            at(&rows, &format!("Trail {n} Map"))?,
+            at(&rows, &format!("Trail {n} Room"))?,
+        )),
+        _ => None,
+    };
+    Ok(collect(t, &rows, |row| {
+        match &row[name] {
+            Value::Text(s) if crate::export::key_text(s) == want => {}
+            _ => return Step::Out,
+        }
+        let mut new = row.to_vec();
+        for (max, cur) in [hp, mana] {
+            new[cur] = row[max].clone();
+        }
+        if lives && num(&row[life]) < 9.0 {
+            new[life] = cell(&row[life], 9.0);
+        }
+        if spells {
+            for &c in cast.iter().chain([&poison]) {
+                new[c] = cell(&row[c], 0.0);
+            }
+        }
+        // as NMR's: a user already in the Halls is not asked to move
+        let in_halls = num(&row[map]) == 1.0 && num(&row[room]) == 2189.0;
+        let place = match to {
+            _ if in_halls => None,
+            None => None,
+            Some(ReviveTo::Halls) => Some((1.0, 2189.0)),
+            Some(ReviveTo::Room { map, room }) => Some((*map as f64, *room as f64)),
+            Some(ReviveTo::Back(_)) => trail.map(|(m, r)| (num(&row[m]), num(&row[r]))),
+        };
+        if let Some((m, r)) = place {
+            new[map] = cell(&row[map], m);
+            new[room] = cell(&row[room], r);
+        }
+        Step::Row(new)
+    }))
 }
 
 #[cfg(test)]

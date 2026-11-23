@@ -14,6 +14,12 @@ revisited. Pull requests merged once CI was green.
   messages, text blocks and actions each follow their NMR form's tabs, labels and choice
   lists, and save through the same import an NMR `.mdb` goes through. Messages and text
   blocks show a preview in a terminal's ANSI colours.
+- **M3: NMR's world tools are in.** The Universal Modifier and Mass Room Editor (with a
+  preview of every change), NMR's one-click fixes, its lists (as CSV too), the Map with its
+  Map Editor, the Quest Organizer, the Monster Group/Index Changer and the Record Number
+  Changer.
+- **M4: the player editors are in** (Users with Revive, Paste Stats and NMR's character
+  export/import; Bank Books; Gangs). The MME export, M4's other half, is next.
 
 ## Pull requests
 
@@ -29,7 +35,8 @@ revisited. Pull requests merged once CI was green.
 | #12 | M3: NMR's lists, the Mass Room Editor, and the rest of its fixes | merged (squash 0f7b6dc) |
 | #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | merged (squash e839b9d) |
 | #14 | M3: the Record Number Changer | merged (squash 8725f04) |
-| #15 | M3: the Map Editor (digging rooms) and CSV downloads of lists | open |
+| #15 | M3: the Map Editor (digging rooms) and CSV downloads of lists | merged (squash 508365a) |
+| #16 | M4: Users, Bank Books and Gangs editors, Revive Character, character paste/export/import | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -77,6 +84,14 @@ revisited. Pull requests merged once CI was green.
   both ways (a map change exit when the maps differ). A room whose way back is already used
   is joined one way only, unless "replace" is ticked. Every built list (Lists page) has a
   Download CSV button.
+- **M4's player editors** (#16). Users, Bank Books and Gangs have editors; Users follow
+  NMR's frmUser tabs (Stats, Inventory, Keys, Spellbook, Abilities, Rooms, Worn, Misc, and
+  the spells cast on them). NMR's user tools are in: **Revive** (HP and Mana to max, then
+  NMR's questions: reset lives, clear auras, move them back along their trail, to the Halls
+  of the Dead or to a map/room), **Paste Stats** (reads a capture of the game's `stat`
+  output) and **Export / Import** (NMR's `Key:value` character text, with its import boxes,
+  so a character moves between NMR and Daydream). Tried in Chromium: a user exported and
+  imported into another matches it field for field, except the boxes left unticked.
 
 ## Decisions taken
 
@@ -161,6 +176,16 @@ revisited. Pull requests merged once CI was green.
     splits it into a new part), and a ScatterItems spell is listed, not changed (NMR asks).
     All are in `renumber.rs`'s header.
 
+20. **Users, Bank Books and Gangs are Daydream's own tables, in NMR's terms.** NMR's
+    `.mdb` has no such tables, so their columns are generated (`tools/nmr/gen_players.py`)
+    with NMR's labels, and are kept out of the `.mdb` export. Experience is two fields
+    (billions and the rest), as the record holds it; NMR's form shows the sum.
+21. **Revive writes straight away; NMR's fills the form.** In Daydream it is a preset
+    (`revive_character`), so it is tested and usable from the API; it refuses while the
+    form has unsaved edits. Paste Stats and Import fill the form, as NMR's do. NMR's import
+    sets the gang from the "Import Character Name" box (a slip); here "Import Gang Name"
+    does.
+
 ## Known gaps
 
 - The read-only per-file API (`/api/files/...`) decodes records in the DOS layout only, so on
@@ -170,6 +195,8 @@ revisited. Pull requests merged once CI was green.
   even on a Worldgroup realm. They now use the realm's own (#8).
 - Users' inventories are not renumbered by the Record Number Changer, as in NMR (users are
   not among NMR's tables). Worth adding if renumbering items on a live realm matters.
+- NMR's Paste Items (reading an inventory capture) and Copy User are not in. Insert on a
+  user copies it to a new BBS name.
 - The Tools page (#9) imports with Daydream's strict rules only; NMR mode stays a
   command-line and CI option.
 
