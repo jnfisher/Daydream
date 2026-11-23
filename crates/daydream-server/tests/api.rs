@@ -603,3 +603,55 @@ async fn a_dig_from_a_missing_room_is_refused() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
+
+#[tokio::test]
+async fn users_are_edited_and_revived() {
+    let dir = realm();
+    let meta = Metadata {
+        record_length: 1998,
+        physical_record_length: 2002,
+        page_length: 4096,
+        variable_length_records: false,
+        version: 4,
+    };
+    WbtrvDb::create(&dir.path().join("WCCUSERS.db"), meta, Vec::new()).unwrap();
+    let (_, tables) = get(dir.path(), "/api/tables").await;
+    let users = tables["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "Users")
+        .unwrap()
+        .clone();
+    assert_eq!(users["key"], serde_json::json!(["BBS Name"]));
+
+    let values = serde_json::json!({ "values": {
+        "BBS Name": "Ann", "Max HP": 30, "HP": 2, "Lives": 3,
+        "Map Number": 1, "Room Number": 9, "Trail 2 Map": 4, "Trail 2 Room": 40,
+    }});
+    let (status, body) = send(dir.path(), "POST", "/api/tables/Users/row", values).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let revive = serde_json::json!({
+        "preset": "revive_character", "user": "Ann", "lives": true, "spells": true,
+        "to": { "back": 2 }, "dry_run": false,
+    });
+    let (status, body) = send(dir.path(), "POST", "/api/tools/preset", revive).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, row) = get(
+        dir.path(),
+        &format!(
+            "/api/tables/Users/row?key={}",
+            key(serde_json::json!(["Ann"]))
+        ),
+    )
+    .await;
+    let v = &row["values"];
+    assert_eq!(
+        [&v["HP"], &v["Lives"], &v["Map Number"], &v["Room Number"]],
+        [30, 9, 4, 40]
+    );
+    let nobody =
+        serde_json::json!({ "preset": "revive_character", "user": "Bob", "dry_run": true });
+    let (status, _) = send(dir.path(), "POST", "/api/tools/preset", nobody).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

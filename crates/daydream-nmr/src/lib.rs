@@ -15,6 +15,8 @@
 
 #[rustfmt::skip]
 pub mod columns;
+#[rustfmt::skip]
+pub mod players;
 pub mod data;
 pub mod export;
 pub mod import;

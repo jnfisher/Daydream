@@ -26,3 +26,8 @@ option (on by default in NMR) and the `Info` row.
 `write-mdb.ps1` creates the `.mdb` on Windows the way `CreateAccessTables` does (ADOX, the
 same column types, keys and indexes) and inserts the rows through OLE DB. It reads the plan
 `daydream nmr-export --plan` writes, so the export can be made on any OS.
+
+`gen_players.py` writes `crates/daydream-nmr/src/players.rs`: Users, Bank Books and Gangs,
+which NMR edits in its User, Bank and Gang forms but never exports. They take the same
+`NmrTable` shape so the editors, imports and deletes work on them, and stay out of
+`columns::TABLES`, so the `.mdb` export is unchanged.

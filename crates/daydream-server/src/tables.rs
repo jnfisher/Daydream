@@ -38,7 +38,14 @@ use serde_json::{Map, Value, json};
 use crate::{ApiError, AppState, blocking, not_found};
 
 /// The columns a row list shows besides the key, the first one a table has.
-const TITLE_COLUMNS: &[&str] = &["Name", "Line 1", "Data", "Single to User"];
+const TITLE_COLUMNS: &[&str] = &[
+    "Name",
+    "Line 1",
+    "Data",
+    "Single to User",
+    "Display Name",
+    "First Name",
+];
 
 /// The most characters of a title a row list shows.
 const TITLE_LEN: usize = 60;
@@ -269,6 +276,7 @@ fn apply_values(
 pub(crate) async fn tables() -> Json<Value> {
     let tables: Vec<Value> = daydream_nmr::columns::TABLES
         .iter()
+        .chain(daydream_nmr::players::TABLES)
         .filter(|t| t.table.is_some())
         .map(|t| {
             let columns: Vec<Value> = t

@@ -292,7 +292,9 @@ var api = {
   row: (table, key) => call("GET", `${t(table)}/row${k(key)}`),
   save: (table, key, values) => call("PUT", `${t(table)}/row${k(key)}`, { values }),
   insert: (table, values) => call("POST", `${t(table)}/row`, { values }),
-  remove: (table, key) => call("DELETE", `${t(table)}/row${k(key)}`)
+  remove: (table, key) => call("DELETE", `${t(table)}/row${k(key)}`),
+  /** One of NMR's fixes (`daydream_nmr::presets::Preset`), written straight away. */
+  preset: (body) => call("POST", "/api/tools/preset", { ...body, dry_run: false })
 };
 
 // src/layouts.ts
@@ -876,6 +878,157 @@ var LAYOUTS = {
         wide("Inventory to Room"),
         wide("Floor Item to User"),
         wide("Floor Item to Room")
+      ]
+    }
+  ],
+  // frmUser: NMR's tabs, the Misc tab's spells cast on a tab of their own
+  Users: [
+    {
+      title: "Stats",
+      fields: [
+        f("BBS Name"),
+        f("First Name"),
+        f("Last Name"),
+        f("Title"),
+        f("Race", "Race", { ref: "Races" }),
+        f("Class", "Class", { ref: "Classes" }),
+        f("Level"),
+        f("Exp Billions", "Exp (billions)"),
+        f("Exp"),
+        f("Lives"),
+        f("CP"),
+        f("Total CP"),
+        f("Max HP"),
+        f("HP", "Current HP"),
+        f("Max Mana"),
+        f("Mana", "Current Mana"),
+        f("HP Bonus"),
+        f("Mana Bonus"),
+        f("Max MR", "Max M.R."),
+        f("MR", "M.R."),
+        f("Max Energy"),
+        f("Energy"),
+        f("Max Weight", "Max Enc."),
+        f("Weight", "Current Enc.")
+      ],
+      matrix: {
+        headers: ["Base", "Current"],
+        rows: ["INT", "WIL", "STR", "HEA", "AGL", "CHM"].map((s) => ({ label: s, cols: [`Base ${s}`, s] }))
+      }
+    },
+    {
+      title: "Inven.",
+      fields: [f("Weapon", "Weapon (readied)", { ref: "Items" })],
+      grid: {
+        columns: [
+          { template: "Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Item # Uses", label: "Uses" }
+        ],
+        from: 0,
+        to: 99
+      }
+    },
+    {
+      title: "Keys",
+      grid: {
+        columns: [
+          { template: "Key #", label: "Key", pick: { ref: "Items" } },
+          { template: "Key # Uses", label: "Uses" }
+        ],
+        from: 0,
+        to: 49
+      }
+    },
+    {
+      title: "Spellbk.",
+      grid: { columns: [{ template: "Spellbook #", label: "Spell", pick: { ref: "Spells" } }], from: 0, to: 99 }
+    },
+    {
+      title: "Abilities",
+      grid: {
+        columns: [
+          { template: "Ability #", label: "Ability", pick: { abilities: true } },
+          { template: "Ability # Value", label: "Value" }
+        ],
+        from: 0,
+        to: 29
+      }
+    },
+    {
+      title: "Rooms",
+      fields: [f("Map Number", "Current Map"), f("Room Number", "Current Room")],
+      grid: {
+        columns: [
+          { template: "Trail # Map", label: "Map" },
+          { template: "Trail # Room", label: "Room" }
+        ],
+        from: 0,
+        to: 19
+      }
+    },
+    {
+      title: "Worn",
+      grid: {
+        columns: [
+          { template: "Worn #", label: "Item", pick: { ref: "Items" } },
+          { template: "Worn # Uses", label: "Uses" }
+        ],
+        from: 0,
+        to: 19
+      }
+    },
+    {
+      title: "Misc",
+      fields: [
+        f("Runic"),
+        f("Platinum"),
+        f("Gold"),
+        f("Silver"),
+        f("Copper"),
+        f("Perception"),
+        f("Stealth"),
+        f("Martial Arts"),
+        f("Thievery"),
+        f("Spellcasting"),
+        f("Traps"),
+        f("Disarm"),
+        f("Picklocks"),
+        f("Tracking"),
+        f("Evil Points"),
+        f("Broadcast Channel", "BC Channel"),
+        f("Gang"),
+        f("Suicide Password")
+      ]
+    },
+    {
+      title: "Spells Cast",
+      fields: [f("Poison", "Poison flag")],
+      grid: {
+        columns: [
+          { template: "Spell Cast #", label: "Spell", pick: { ref: "Spells" } },
+          { template: "Spell Cast # Value", label: "Value" },
+          { template: "Spell Cast # Rounds", label: "Rounds Left" }
+        ],
+        from: 0,
+        to: 9
+      }
+    }
+  ],
+  // frmBank
+  BankBooks: [{ title: "General", fields: [f("BBS Name"), f("Shop #", "Bank (shop)", { ref: "Shops" }), f("Amount"), f("Loan")] }],
+  // frmGang
+  Gangs: [
+    {
+      title: "General",
+      fields: [
+        f("KeyName"),
+        f("Display Name"),
+        f("Leader"),
+        f("Base Exp"),
+        f("Roll Over Exp"),
+        f("Times Rolled"),
+        f("Members"),
+        f("Date Created")
       ]
     }
   ]
@@ -2745,7 +2898,7 @@ function toolsPage(changed2) {
 }
 
 // src/main.ts
-var ORDER = ["Items", "Monsters", "Spells", "Classes", "Races", "Shops", "Rooms", "Messages", "Textblocks", "Actions"];
+var ORDER = ["Items", "Monsters", "Spells", "Classes", "Races", "Shops", "Rooms", "Messages", "Textblocks", "Actions", "Users", "BankBooks", "Gangs"];
 var LIST_LIMIT = 500;
 var state = {
   tables: [],
@@ -3067,6 +3220,9 @@ function toolbar(t2) {
     const [map, room] = state.row.key;
     bar.append(h8("a", { href: `#/map/${map}/${room}`, class: "button-link" }, "Map"));
   }
+  if (state.row && t2.name === "Users") {
+    button("Revive", "NMR's Revive Character: HP and Mana to full, then lives, spells cast and where to move them", () => void revive());
+  }
   bar.append(h8("span", { id: "dirty" }));
   return bar;
 }
@@ -3108,6 +3264,40 @@ async function openTable(name, key) {
   }
   renderList();
   renderEditor();
+}
+async function revive() {
+  const row = state.row;
+  if (!row || !state.table) return;
+  if (Object.keys(changed()).length) {
+    status("Save or discard your changes first.", "error");
+    return;
+  }
+  const v = (c) => Number(row.values[c] ?? 0);
+  const lives = v("Lives") < 9 && confirm("Reset Lives to 9?");
+  const cast = v("Poison") !== 0 || Array.from({ length: 10 }, (_, i) => v(`Spell Cast ${i}`)).some((x) => x > 0);
+  const spells = cast && confirm("Reset Auras (clear the spells cast on them)?");
+  let to = null;
+  if (v("Map Number") !== 1 || v("Room Number") !== 2189) {
+    const answer = prompt(
+      "Move user?\n- Enter 1-19: move them that many rooms back\n- Enter 99: to the Halls of the Dead\n- Enter Map/Room, as 1/2189\n\nEnter 0 or cancel to leave them alone.",
+      "0"
+    );
+    const mr = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(answer ?? "");
+    const n = parseInt(answer ?? "", 10) || 0;
+    if (mr) to = { room: { map: Number(mr[1]), room: Number(mr[2]) } };
+    else if (n === 99) to = "halls";
+    else if (n >= 1 && n <= 19) to = { back: n };
+  }
+  try {
+    await api.preset({ preset: "revive_character", user: String(row.key[0]), lives, spells, to });
+    const fresh = await api.row(state.table.name, row.key);
+    state.row = fresh;
+    loadEdits(fresh);
+    renderEditor();
+    status(`Revived ${row.key[0]}.`, "ok");
+  } catch (e) {
+    fail(e);
+  }
 }
 function select(key) {
   if (!state.table || state.row && sameKey(state.row.key, key)) return;

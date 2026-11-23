@@ -132,10 +132,11 @@ impl NmrTable {
     }
 }
 
-/// The table with this name (any case).
+/// The table with this name (any case): one of NMR's `.mdb`, or a player table.
 pub fn table(name: &str) -> Option<&'static NmrTable> {
     crate::columns::TABLES
         .iter()
+        .chain(crate::players::TABLES)
         .find(|t| t.name.eq_ignore_ascii_case(name))
 }
 
@@ -304,7 +305,7 @@ mod tests {
 
     #[test]
     fn every_column_resolves_in_both_layouts() {
-        for t in crate::columns::TABLES {
+        for t in crate::columns::TABLES.iter().chain(crate::players::TABLES) {
             let Some(table) = t.table else { continue };
             for set in [LayoutSet::Dos, LayoutSet::Worldgroup] {
                 let layout = layout_of(table, set);
@@ -331,7 +332,7 @@ mod tests {
 
     #[test]
     fn index_columns_exist() {
-        for t in crate::columns::TABLES {
+        for t in crate::columns::TABLES.iter().chain(crate::players::TABLES) {
             if let Some(i) = &t.index {
                 for c in i.columns {
                     assert!(t.column(c).is_some(), "{}: {c}", i.name);

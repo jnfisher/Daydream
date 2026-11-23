@@ -11,7 +11,7 @@ import { mapPage } from './map';
 import { toolsPage } from './tools';
 
 /** The editors' tables, in NMR's menu order. */
-const ORDER = ['Items', 'Monsters', 'Spells', 'Classes', 'Races', 'Shops', 'Rooms', 'Messages', 'Textblocks', 'Actions'];
+const ORDER = ['Items', 'Monsters', 'Spells', 'Classes', 'Races', 'Shops', 'Rooms', 'Messages', 'Textblocks', 'Actions', 'Users', 'BankBooks', 'Gangs'];
 /** The most rows the list shows at once; the filter narrows the rest. */
 const LIST_LIMIT = 500;
 
@@ -392,6 +392,9 @@ function toolbar(t: TableInfo): HTMLElement {
     const [map, room] = state.row.key;
     bar.append(h('a', { href: `#/map/${map}/${room}`, class: 'button-link' }, 'Map'));
   }
+  if (state.row && t.name === 'Users') {
+    button('Revive', 'NMR\'s Revive Character: HP and Mana to full, then lives, spells cast and where to move them', () => void revive());
+  }
   bar.append(h('span', { id: 'dirty' }));
   return bar;
 }
@@ -438,6 +441,42 @@ async function openTable(name: string, key?: Cell[]) {
   }
   renderList();
   renderEditor();
+}
+
+/** NMR's Revive Character, asking its questions as NMR does, then writing the user. */
+async function revive() {
+  const row = state.row;
+  if (!row || !state.table) return;
+  if (Object.keys(changed()).length) {
+    status('Save or discard your changes first.', 'error');
+    return;
+  }
+  const v = (c: string) => Number(row.values[c] ?? 0);
+  const lives = v('Lives') < 9 && confirm('Reset Lives to 9?');
+  const cast = v('Poison') !== 0 || Array.from({ length: 10 }, (_, i) => v(`Spell Cast ${i}`)).some((x) => x > 0);
+  const spells = cast && confirm('Reset Auras (clear the spells cast on them)?');
+  let to: unknown = null;
+  if (v('Map Number') !== 1 || v('Room Number') !== 2189) {
+    const answer = prompt(
+      'Move user?\n- Enter 1-19: move them that many rooms back\n- Enter 99: to the Halls of the Dead\n- Enter Map/Room, as 1/2189\n\nEnter 0 or cancel to leave them alone.',
+      '0',
+    );
+    const mr = /^\s*(\d+)\s*\/\s*(\d+)\s*$/.exec(answer ?? '');
+    const n = parseInt(answer ?? '', 10) || 0;
+    if (mr) to = { room: { map: Number(mr[1]), room: Number(mr[2]) } };
+    else if (n === 99) to = 'halls';
+    else if (n >= 1 && n <= 19) to = { back: n };
+  }
+  try {
+    await api.preset({ preset: 'revive_character', user: String(row.key[0]), lives, spells, to });
+    const fresh = await api.row(state.table.name, row.key);
+    state.row = fresh;
+    loadEdits(fresh);
+    renderEditor();
+    status(`Revived ${row.key[0]}.`, 'ok');
+  } catch (e) {
+    fail(e);
+  }
 }
 
 function select(key: Cell[]) {
