@@ -162,3 +162,84 @@ pub fn stock_realm() -> PathBuf {
     })
     .clone()
 }
+
+/// What [`add_cases`] changed in one table.
+#[derive(Debug, Default)]
+pub struct Cases {
+    pub table: String,
+    pub edited: usize,
+    pub added: usize,
+}
+
+/// Turns an export into a batch of test cases, all in one file: in every world table,
+/// every fourth row takes each of its element columns (all but the index) from another
+/// row, so every column changes somewhere to a value real data holds; and two new rows,
+/// copies of the first with new index keys, are added after the last.
+pub fn add_cases(data: &mut NmrData) -> Vec<Cases> {
+    let mut out = Vec::new();
+    for rows in &mut data.tables {
+        let Some(t) = daydream_nmr::schema::table(&rows.name) else {
+            continue;
+        };
+        if t.table.is_none() || rows.rows.is_empty() {
+            continue;
+        }
+        let index = t.index.as_ref().unwrap();
+        let at = |name: &str| rows.position(name);
+        let key_cols: Vec<usize> = index.columns.iter().filter_map(|c| at(c)).collect();
+        let editable: Vec<usize> = t
+            .columns
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.source,
+                    Source::Element { .. } | Source::Unsigned(_) | Source::TextblockData
+                )
+            })
+            .filter_map(|c| at(c.name))
+            .filter(|i| !key_cols.contains(i))
+            .collect();
+        let n = rows.rows.len();
+        let mut cases = Cases {
+            table: rows.name.clone(),
+            ..Cases::default()
+        };
+        let donors: Vec<Vec<Value>> = rows.rows.clone();
+        for (i, row) in rows.rows.iter_mut().enumerate() {
+            if i % 4 != 1 {
+                continue;
+            }
+            let donor = &donors[(i * 7 + 3) % n];
+            for &c in &editable {
+                row[c] = donor[c].clone();
+            }
+            cases.edited += 1;
+        }
+        let first = key_cols[0];
+        let max = rows
+            .rows
+            .iter()
+            .filter_map(|r| match r[first] {
+                V::Long(x) => Some(x),
+                _ => None,
+            })
+            .max();
+        for k in 1..=2 {
+            let mut row = rows.rows[0].clone();
+            row[first] = match (&row[first], max) {
+                (V::Long(_), Some(m)) => V::Long(m + k),
+                // as exported: the name, then NULs to the column's width
+                (V::Text(t), _) => {
+                    let name = format!("daydream{k}");
+                    let width = t.chars().count().max(name.len());
+                    V::Text(format!("{name:\0<width$}"))
+                }
+                (v, _) => panic!("{}: index value {v:?}", rows.name),
+            };
+            rows.rows.push(row);
+            cases.added += 1;
+        }
+        out.push(cases);
+    }
+    out
+}

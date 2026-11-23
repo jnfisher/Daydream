@@ -11,7 +11,8 @@
 # which is the importer's start folder), ticks every table, chooses Update and full logging,
 # presses Import, answers NMR's message boxes, then closes NMR and the engine so every write
 # is on disk. OUTDIR gets NMR's import log, timings.txt, the text of every message box NMR
-# showed, and a screenshot of anything unexpected.
+# showed, and a screenshot of anything unexpected. crates/daydream-nmr/tests/windows_nmr.rs
+# runs it in CI.
 param(
     [Parameter(Mandatory = $true)][string]$Nmr,
     [Parameter(Mandatory = $true)][string]$Wg,

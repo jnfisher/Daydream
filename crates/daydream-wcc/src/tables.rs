@@ -109,8 +109,70 @@ pub const FILES: &[WccFile] = &[
     },
 ];
 
+/// The same files in a Worldgroup 3 realm (`WCCITEM2`, ...: the aligned layouts, see
+/// `LayoutSet::Worldgroup`). Its map is `WCCMP002`.
+pub const WORLDGROUP_FILES: &[WccFile] = &[
+    WccFile {
+        stem: "WCCITEM2",
+        table: Table::Items,
+    },
+    WccFile {
+        stem: "WCCKNMS2",
+        table: Table::Monsters,
+    },
+    WccFile {
+        stem: "WCCSPEL2",
+        table: Table::Spells,
+    },
+    WccFile {
+        stem: "WCCCLAS2",
+        table: Table::Classes,
+    },
+    WccFile {
+        stem: "WCCRACE2",
+        table: Table::Races,
+    },
+    WccFile {
+        stem: "WCCSHOP2",
+        table: Table::Shops,
+    },
+    WccFile {
+        stem: "WCCMSG2",
+        table: Table::Messages,
+    },
+    WccFile {
+        stem: "WCCTEXT2",
+        table: Table::TextBlocks,
+    },
+    WccFile {
+        stem: "WCCACTS2",
+        table: Table::Actions,
+    },
+    WccFile {
+        stem: "WCCUSER2",
+        table: Table::Users,
+    },
+    WccFile {
+        stem: "WCCBANK2",
+        table: Table::BankBooks,
+    },
+    WccFile {
+        stem: "WCCGANG2",
+        table: Table::Gangs,
+    },
+    WccFile {
+        stem: "WCCACMS2",
+        table: Table::ActiveMonsters,
+    },
+    WccFile {
+        stem: "WCCITOW2",
+        table: Table::ItemOwnership,
+    },
+];
+
 /// The record type of the file with this stem (any case), or `None` for a file Daydream
-/// keeps but does not decode (`WCCUPDAT`, `WCCVACN`, ...). Map files are `WCCMPnnn`.
+/// keeps but does not decode (`WCCUPDAT`, `WCCVACN`, ...). Map files are `WCCMPnnn`; the
+/// Worldgroup 3 names (`WCCITEM2`, ...) count too.
 pub fn table_for_stem(stem: &str) -> Option<Table> {
     let upper = stem.to_ascii_uppercase();
     if let Some(n) = upper.strip_prefix("WCCMP")
@@ -119,7 +181,11 @@ pub fn table_for_stem(stem: &str) -> Option<Table> {
     {
         return Some(Table::Rooms);
     }
-    FILES.iter().find(|f| f.stem == upper).map(|f| f.table)
+    FILES
+        .iter()
+        .chain(WORLDGROUP_FILES)
+        .find(|f| f.stem == upper)
+        .map(|f| f.table)
 }
 
 impl Table {

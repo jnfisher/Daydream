@@ -115,8 +115,8 @@ jobs:
         timeout-minutes: 10
         run: cargo test -p daydream-wcc --locked --test all windows_btrieve -- --nocapture
 
-      # NMR's Database Importer, driven by tools/nmr/nmr-import.ps1 (a timed spike for now:
-      # it reports, and does not yet fail the job)
+      # NMR's Database Importer, driven by tools/nmr/nmr-import.ps1: the controls NMR needs
+      # come from Microsoft's VB6 SP6 update, extracted once and cached
       - name: VB6 controls cache
         id: vb6
         uses: actions/cache@v4
@@ -126,7 +126,6 @@ jobs:
 
       - name: VB6 controls (Microsoft's VB6 SP6 cumulative update, extracted)
         if: steps.vb6.outputs.cache-hit != 'true'
-        continue-on-error: true
         shell: pwsh
         run: |
           $urls = 'https://download.microsoft.com/download/1/1/d/11d5349e-a432-4e17-a595-62d6889519ac/VB60SP6-KB2708437-x86-ENU.msi',
@@ -146,7 +145,6 @@ jobs:
           }
 
       - name: NMR's components
-        continue-on-error: true
         shell: pwsh
         run: |
           $sys = "$env:SystemRoot\SysWOW64"
@@ -165,28 +163,22 @@ jobs:
           $dao = "${env:CommonProgramFiles(x86)}\Microsoft Shared\DAO\dao360.dll"
           Write-Output "dao360: $(Test-Path $dao)"
 
-      - name: NMR import (timed spike)
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 15
+      - name: NMR's realm (fresh 1.11p Worldgroup files)
         shell: pwsh
         run: |
           7z x "_nmr\_fresh dats.7z" -o_wg -y | Out-Null
           # Btrieve ends a file name at the first space
-          $wg = "_realm"
-          New-Item -ItemType Directory -Force $wg | Out-Null
-          Copy-Item "_wg\_dats\MajorMUD v1.11p final\*" $wg
-          New-Item -ItemType Directory -Force _import | Out-Null
-          $t = [Diagnostics.Stopwatch]::StartNew()
-          cargo run -p daydream-nmr --locked --example stock_mdb -- _import\stock.mdb
-          Write-Output ("stock .mdb written in {0:N1} s, {1} bytes" -f $t.Elapsed.TotalSeconds, (Get-Item _import\stock.mdb).Length)
-          $before = Get-ChildItem $wg | ForEach-Object { "$($_.Name) $((Get-FileHash $_.FullName).Hash)" }
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools\nmr\nmr-import.ps1 _nmr $wg _import\stock.mdb _nmr-out
-          $code = $LASTEXITCODE
-          $after = Get-ChildItem $wg | ForEach-Object { "$($_.Name) $((Get-FileHash $_.FullName).Hash)" }
-          Compare-Object $before $after | Format-Table -AutoSize | Out-String | Write-Output
-          if (Test-Path _nmr-out\NMR-Log_Import.txt) { Get-Content _nmr-out\NMR-Log_Import.txt -TotalCount 60 }
-          exit $code
+          New-Item -ItemType Directory -Force _realm | Out-Null
+          Copy-Item "_wg\_dats\MajorMUD v1.11p final\*" _realm
+
+      - name: test (through NMR)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        env:
+          DAYDREAM_NMR_DIR: ${{ github.workspace }}\_nmr
+          DAYDREAM_NMR_REALM: ${{ github.workspace }}\_realm
+          DAYDREAM_NMR_OUT: ${{ github.workspace }}\_nmr-out
+        run: cargo test -p daydream-nmr --locked --test all windows_nmr -- --nocapture
 
       - name: NMR import artifacts
         if: ${{ always() }}
