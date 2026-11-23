@@ -361,6 +361,24 @@ fn btrieve_clones_the_stock_files() {
                 println!("  FCR page {p}:");
                 print!("{}", nonzero_rows(&bytes[p * page..(p + 1) * page]));
             }
+            if bytes.len() > 256 * 1024 {
+                // where the page tables are, by byte offset: past 30 of them Btrieve leaves
+                // a 4096-byte hole, so look on every 512-byte boundary
+                let tables: Vec<String> = (0..bytes.len() - 8)
+                    .step_by(512)
+                    .filter(|&at| bytes[at..at + 2] == *b"PP" && bytes[at + 3] == 0)
+                    .map(|at| {
+                        let seq = u16::from_le_bytes([bytes[at + 2], bytes[at + 3]]);
+                        format!("{seq}@{at:#x}")
+                    })
+                    .collect();
+                println!("  page tables: {}", tables.join(" "));
+                let holes: Vec<String> = (0..bytes.len() / 512)
+                    .filter(|&b| bytes[b * 512..(b + 1) * 512].iter().all(|&x| x == 0))
+                    .map(|b| format!("{:#x}", b * 512))
+                    .collect();
+                println!("  zero 512-byte blocks: {}", holes.join(" "));
+            }
             for (p, chunk) in bytes.chunks(page).enumerate().skip(fcr_pages) {
                 // after 30 page tables Btrieve's pages shift by 8: show what is there
                 let after_30 = 2 + 30 * page / 4;
