@@ -134,12 +134,19 @@ fn compare(engine: &Path, path: &Path) {
         let theirs = read_dump(&out.path().join(format!("key{k}.bin")));
         assert_eq!(theirs.len(), expected.len(), "{name} key {k}: record count");
         for (i, (t, e)) in theirs.iter().zip(&expected).enumerate() {
-            assert!(
-                t == *e,
-                "{name} key {k}: record {i} in key order differs (Btrieve {} bytes, Daydream {})",
-                t.len(),
-                e.len()
-            );
+            if t != *e {
+                let at = t.iter().zip(e.iter()).position(|(a, b)| a != b);
+                let show = |v: &[u8], at: usize| format!("{:02x?}", &v[at..v.len().min(at + 16)]);
+                let at = at.unwrap_or(t.len().min(e.len()));
+                panic!(
+                    "{name} key {k}: record {i} in key order differs (Btrieve {} bytes, Daydream \
+                     {}), first at byte {at}: Btrieve {} Daydream {}",
+                    t.len(),
+                    e.len(),
+                    show(t, at),
+                    show(e, at)
+                );
+            }
         }
         println!("{name}: key {k}: {} records match Btrieve", theirs.len());
     }

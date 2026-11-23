@@ -88,3 +88,7 @@ public static class Btrieve {
 
 $result = [Btrieve]::Dump($File, $Out)
 Write-Output "$File`: $result"
+# Btrieve Stop leaves the workstation engine running with its page cache; end it so the next
+# run reads the file from disk
+Get-Process W32MKDE -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process W32MKDE -ErrorAction SilentlyContinue | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue
