@@ -19,6 +19,7 @@ daydream-types.workspace = true
 daydream-wcc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

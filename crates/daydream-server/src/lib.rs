@@ -2,8 +2,9 @@
 //!
 //! It runs on the sysop's own machine and opens in the browser. `/` is the web UI (built
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
-//! editors work on NMR's tables through the routes in [`tables`]; the routes below serve
-//! each file's records decoded (every member by name, `unk_*` spans included), read only.
+//! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
+//! in [`tools`], and the routes below serve each file's records decoded (every member by
+//! name, `unk_*` spans included), read only.
 //!
 //! | Route | Answer |
 //! |---|---|
@@ -18,11 +19,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use axum::extract::DefaultBodyLimit;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use daydream_store::{Realm, RealmFile, StoreError, WbtrvDb};
 use daydream_wcc::decode::base64;
@@ -30,6 +32,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub mod tables;
+pub mod tools;
 
 /// The largest page of records one request returns.
 pub const MAX_PAGE: i64 = 1000;
@@ -65,6 +68,15 @@ pub fn router(realm_dir: &Path) -> Router {
         .route("/api/realm", get(realm))
         .route("/api/files/{stem}/records", get(records))
         .route("/api/files/{stem}/records/{id}", get(record))
+        .route(
+            "/api/tools/import",
+            post(tools::import).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),
+        )
+        .route("/api/tools/delete", post(tools::delete))
+        .route(
+            "/api/tools/merge-users",
+            post(tools::merge_users).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),
+        )
         .with_state(state)
 }
 

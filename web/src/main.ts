@@ -6,6 +6,7 @@ import { ABILITIES } from './abilities';
 import { renderAnsi, titleOf, toShown, toWire } from './ansi';
 import { api, type Cell, type ColumnInfo, type Row, type TableInfo } from './api';
 import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './layouts';
+import { toolsPage } from './tools';
 
 /** The editors' tables, in NMR's menu order. */
 const ORDER = ['Items', 'Monsters', 'Spells', 'Classes', 'Races', 'Shops', 'Rooms', 'Messages', 'Textblocks', 'Actions'];
@@ -136,8 +137,29 @@ function renderNav() {
   );
   for (const t of ordered) {
     const a = h('a', { href: `#/${encodeURIComponent(t.name)}` }, t.name);
-    if (t === state.table) a.classList.add('active');
+    if (t === state.table && !onTools()) a.classList.add('active');
     nav.append(a);
+  }
+  const tools = h('a', { href: '#/tools', class: 'tools-link' }, 'Tools');
+  if (onTools()) tools.classList.add('active');
+  nav.append(tools);
+}
+
+const onTools = () => location.hash.startsWith('#/tools');
+
+function showTools(on: boolean) {
+  ($('main') as HTMLElement).hidden = on;
+  const page = $('#tools');
+  page.hidden = !on;
+  if (on && !page.childElementCount) {
+    page.append(
+      toolsPage(() => {
+        // the realm changed under the editors: reload what they show
+        state.table = null;
+        state.row = null;
+        state.names.clear();
+      }),
+    );
   }
 }
 
@@ -494,6 +516,11 @@ async function remove() {
 // ---- routing -----------------------------------------------------------------
 
 async function route() {
+  showTools(onTools());
+  if (onTools()) {
+    renderNav();
+    return;
+  }
   const [, table, key] = location.hash.split('/');
   const name = decodeURIComponent(table ?? '') || state.tables.find((t) => t.name === ORDER[0])?.name;
   if (!name) return;

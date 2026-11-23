@@ -35,6 +35,7 @@ export interface Report {
   inserted: number;
   updated: number;
   unchanged: number;
+  skipped: number;
   deleted: number;
   errors: string[];
 }

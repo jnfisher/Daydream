@@ -323,3 +323,151 @@ async fn the_ui_is_served() {
         assert!(ty.starts_with(kind), "{uri}: {ty}");
     }
 }
+
+async fn post_bytes(dir: &std::path::Path, uri: &str, body: Vec<u8>) -> (StatusCode, Value) {
+    let req = Request::post(uri).body(Body::from(body)).unwrap();
+    let res = daydream_server::router(dir).oneshot(req).await.unwrap();
+    let status = res.status();
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// The realm's races as NMR's JSON export, with every name changed.
+fn races_renamed(dir: &std::path::Path) -> Vec<u8> {
+    let realm = daydream_store::Realm::open(dir).unwrap();
+    let t = daydream_nmr::schema::table("Races").unwrap();
+    let mut rows =
+        daydream_nmr::export_table(&realm, t, daydream_types::records::LayoutSet::Dos).unwrap();
+    let name = rows.position("Name").unwrap();
+    for r in &mut rows.rows {
+        r[name] = daydream_nmr::Value::Text("Imported".into());
+    }
+    serde_json::to_vec(&daydream_nmr::NmrData { tables: vec![rows] }).unwrap()
+}
+
+#[tokio::test]
+async fn the_importer_takes_an_export_and_its_options() {
+    let dir = realm();
+    let file = races_renamed(dir.path());
+    let opts = |o: Value| format!("/api/tools/import?options={}", key(o));
+
+    let (status, body) = post_bytes(
+        dir.path(),
+        &opts(serde_json::json!({"dry_run": true})),
+        file.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["reports"][0]["updated"], 2);
+    let (_, races) = get(dir.path(), "/api/tables/Races/rows").await;
+    assert_eq!(races["rows"][0][1], "Human");
+
+    let ranged = serde_json::json!({"ranges": [{"table": "Races", "from": 2, "to": 2}]});
+    let (status, body) = post_bytes(dir.path(), &opts(ranged), file.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["reports"][0]["updated"], 1);
+    assert_eq!(body["reports"][0]["skipped"], 1);
+    let (_, races) = get(dir.path(), "/api/tables/Races/rows").await;
+    assert_eq!(
+        races["rows"],
+        serde_json::json!([[[1], "Human"], [[2], "Imported"]])
+    );
+
+    let skip = serde_json::json!({"skip_existing": true});
+    let (_, body) = post_bytes(dir.path(), &opts(skip), file.clone()).await;
+    assert_eq!(body["reports"][0]["updated"], 0);
+
+    let (status, _) = post_bytes(dir.path(), "/api/tools/import", b"not a file".to_vec()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = post_bytes(
+        dir.path(),
+        &opts(serde_json::json!({"room_parts": "some"})),
+        file,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn the_deleter_needs_a_range_or_all() {
+    let dir = realm();
+    let del = |body: Value| send(dir.path(), "POST", "/api/tools/delete", body);
+    assert_eq!(
+        del(serde_json::json!({"table": "Races"})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, body) =
+        del(serde_json::json!({"table": "Races", "all": true, "dry_run": true})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["report"]["deleted"], 2);
+    let (_, body) =
+        del(serde_json::json!({"table": "Races", "range": {"table": "", "from": 2, "to": 9}}))
+            .await;
+    assert_eq!(body["report"]["deleted"], 1);
+    let (_, races) = get(dir.path(), "/api/tables/Races/rows").await;
+    assert_eq!(races["rows"].as_array().unwrap().len(), 1);
+}
+
+/// A user file of 8-byte records keyed by their first two bytes.
+fn users(path: &std::path::Path, ids: &[u16]) {
+    let keys = vec![Key {
+        segments: vec![Segment {
+            number: 0,
+            index: 0,
+            attributes: 0,
+            data_type: ty::UNSIGNED_BINARY,
+            offset: 0,
+            length: 2,
+            null_value: 0,
+            acs: None,
+        }],
+        acs_name: None,
+        acs: None,
+    }];
+    let meta = Metadata {
+        record_length: 8,
+        physical_record_length: 12,
+        page_length: 1024,
+        variable_length_records: false,
+        version: 4,
+    };
+    let mut db = WbtrvDb::create(path, meta, keys).unwrap();
+    for &id in ids {
+        let mut r = vec![0u8; 8];
+        r[..2].copy_from_slice(&id.to_le_bytes());
+        db.insert(&r).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn users_merge_in() {
+    let dir = realm();
+    let other = tempfile::tempdir().unwrap();
+    users(&other.path().join("WCCUSERS.db"), &[1, 2, 3]);
+    let file = std::fs::read(other.path().join("WCCUSERS.db")).unwrap();
+    // no user file in the realm yet
+    let (status, _) = post_bytes(dir.path(), "/api/tools/merge-users", file.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    users(&dir.path().join("WCCUSERS.db"), &[2]);
+    let (status, body) = post_bytes(
+        dir.path(),
+        "/api/tools/merge-users?dry_run=true",
+        file.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["copied"], 2);
+    let (_, body) = post_bytes(dir.path(), "/api/tools/merge-users", file).await;
+    assert_eq!(body["copied"], 2);
+    assert_eq!(body["skipped"].as_array().unwrap().len(), 1);
+    let (_, realm) = get(dir.path(), "/api/realm").await;
+    let users = realm["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["stem"] == "WCCUSERS")
+        .unwrap()
+        .clone();
+    assert_eq!(users["records"], 3);
+}
