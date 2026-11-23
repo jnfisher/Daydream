@@ -3,6 +3,7 @@
 // which writes it through the same import an NMR .mdb goes through.
 
 import { ABILITIES } from './abilities';
+import { renderAnsi, titleOf, toShown, toWire } from './ansi';
 import { api, type Cell, type ColumnInfo, type Row, type TableInfo } from './api';
 import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './layouts';
 
@@ -54,7 +55,7 @@ function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-const show = (v: Cell) => (v === null ? '' : String(v));
+const show = (v: Cell) => (v === null ? '' : toShown(String(v)));
 const keyText = (key: Cell[]) => key.map(show).join('/');
 const sameKey = (a: Cell[], b: Cell[]) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -78,7 +79,7 @@ function changed(): Record<string, Cell> {
   const out: Record<string, Cell> = {};
   if (!state.row) return out;
   for (const [col, typed] of state.edits) {
-    if (typed !== show(state.row.values[col] ?? null)) out[col] = typed;
+    if (typed !== show(state.row.values[col] ?? null)) out[col] = toWire(typed);
   }
   return out;
 }
@@ -225,15 +226,65 @@ function renderTab(tabIndex: number): HTMLElement {
     for (const field of tab.fields) grid.append(renderField(field));
     body.append(grid);
   }
+  if (tab.preview) {
+    const box = h('pre', { class: 'terminal', 'aria-label': 'Preview' });
+    const draw = () => {
+      box.replaceChildren();
+      tab.preview!.forEach((col, i) => {
+        if (i) box.append('\n');
+        box.append(renderAnsi(state.edits.get(col) ?? ''));
+      });
+    };
+    draw();
+    body.addEventListener('input', draw);
+    body.append(h('div', { class: 'preview-label' }, 'As players see it'), box);
+  }
+  if (tab.matrix) {
+    const m = tab.matrix;
+    const table = h('table', { class: 'grid matrix' });
+    const head = h('tr', {}, h('th'));
+    for (const label of m.headers) head.append(h('th', {}, label));
+    table.append(h('thead', {}, head));
+    const tbody = h('tbody');
+    for (const row of m.rows) {
+      const tr = h('tr', {}, h('td', { class: 'n' }, row.label));
+      for (const col of row.cols) {
+        const info = column(col);
+        tr.append(h('td', { title: col }, info ? input({ col }, info) : ''));
+      }
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    body.append(table);
+  }
   if (tab.grid) {
     const g = tab.grid;
+    if (g.across) {
+      const table = h('table', { class: 'grid across' });
+      const head = h('tr', {}, h('th'));
+      for (let n = g.from; n <= g.to; n++) head.append(h('th', {}, `${g.across} ${n - g.from + 1}`));
+      table.append(h('thead', {}, head));
+      const tbody = h('tbody');
+      for (const c of g.columns) {
+        const tr = h('tr', {}, h('td', { class: 'n' }, c.label ?? c.template));
+        for (let n = g.from; n <= g.to; n++) {
+          const col = c.template.replace('#', String(n));
+          const info = column(col);
+          tr.append(h('td', { title: col }, info ? input({ col, pick: c.pick }, info) : ''));
+        }
+        tbody.append(tr);
+      }
+      table.append(tbody);
+      body.append(table);
+      return body;
+    }
     const table = h('table', { class: 'grid' });
     const head = h('tr', {}, h('th', {}, '#'));
     for (const c of g.columns) head.append(h('th', {}, c.label ?? c.template));
     table.append(h('thead', {}, head));
     const tbody = h('tbody');
     for (let n = g.from; n <= g.to; n++) {
-      const tr = h('tr', {}, h('td', { class: 'n' }, String(n)));
+      const tr = h('tr', {}, h('td', { class: 'n' }, g.names?.[n - g.from] ?? String(n)));
       for (const c of g.columns) {
         const col = c.template.replace('#', String(n));
         const info = column(col);
@@ -257,7 +308,7 @@ function renderEditor() {
     ed.append(toolbar(t));
     return;
   }
-  const title = t.title ? show(state.row.values[t.title] ?? null).trimEnd() : '';
+  const title = t.title ? titleOf(show(state.row.values[t.title] ?? null)) : '';
   ed.append(h('h2', {}, `${t.name} ${keyText(state.row.key)}`, title ? ` — ${title}` : ''));
   ed.append(toolbar(t));
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
@@ -305,7 +356,7 @@ async function openTable(name: string, key?: Cell[]) {
     state.table = t;
     const layout = layoutFor(t);
     const rest = t.columns.map((c) => c.name).filter((c) => !columnsShown(layout).has(c));
-    state.layout = rest.length ? [...layout, { title: 'Other', fields: rest.map((col) => ({ col })) }] : layout;
+    state.layout = rest.length ? [...layout, { title: 'More', fields: rest.map((col) => ({ col })) }] : layout;
     state.tab = 0;
     state.row = null;
     state.filter = '';
@@ -353,7 +404,10 @@ async function save() {
     state.row = await api.row(t.name, row.key);
     loadEdits(state.row);
     const i = state.rows.findIndex(([k]) => sameKey(k, row.key));
-    if (i >= 0 && t.title) state.rows[i] = [row.key, state.row.values[t.title] ?? null];
+    if (i >= 0 && t.title) {
+      const v = state.row.values[t.title] ?? null;
+      state.rows[i] = [row.key, typeof v === 'string' ? titleOf(v) : v];
+    }
     state.names.delete(t.name);
     renderList();
     renderEditor();
@@ -402,7 +456,8 @@ async function insert() {
   if (dirty()) return;
   const key = newKey(t);
   if (!key) return;
-  const values: Record<string, Cell> = state.row ? Object.fromEntries(state.edits) : {};
+  const values: Record<string, Cell> = {};
+  if (state.row) for (const [col, typed] of state.edits) values[col] = toWire(typed);
   t.key.forEach((c, i) => (values[c] = key[i] ?? null));
   try {
     await api.insert(t.name, values);

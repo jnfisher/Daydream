@@ -38,7 +38,40 @@ use serde_json::{Map, Value, json};
 use crate::{ApiError, AppState, blocking, not_found};
 
 /// The columns a row list shows besides the key, the first one a table has.
-const TITLE_COLUMNS: &[&str] = &["Name", "Line 1", "Link To", "Single to User"];
+const TITLE_COLUMNS: &[&str] = &["Name", "Line 1", "Data", "Single to User"];
+
+/// The most characters of a title a row list shows.
+const TITLE_LEN: usize = 60;
+
+/// A cell as a row list's title: text's first line, without ANSI escapes, and short.
+fn title_json(v: &Cell) -> Value {
+    let Cell::Text(s) = v else {
+        return cell_json(v);
+    };
+    let line = s
+        .split(['\0', '\n', '\r'])
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    let mut out = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // ESC [ parameters, up to the final letter
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    let out = out.trim();
+    match out.char_indices().nth(TITLE_LEN) {
+        Some((i, _)) => json!(format!("{}...", &out[..i])),
+        None => json!(out),
+    }
+}
 
 fn bad(msg: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
@@ -275,7 +308,7 @@ pub(crate) async fn rows(
             .iter()
             .map(|r| {
                 let key: Vec<Value> = key_of_row(&rows, r, &index).iter().map(cell_json).collect();
-                json!([key, title.map(|i| cell_json(&r[i]))])
+                json!([key, title.map(|i| title_json(&r[i]))])
             })
             .collect();
         Ok(Json(json!({ "table": t.name, "key": index, "rows": list })))
@@ -404,4 +437,22 @@ pub(crate) async fn remove(
         Ok(Json(report_json(&report)))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn titles_are_one_clean_short_line() {
+        let t = |s: &str| title_json(&Cell::Text(s.into()));
+        assert_eq!(
+            t("\n  \n\u{1b}[1;33mThe %s\u{1b}[0m greets you\nmore"),
+            json!("The %s greets you")
+        );
+        assert_eq!(t("grey robes\0junk"), json!("grey robes"));
+        let long = "x".repeat(70);
+        assert_eq!(t(&long), json!(format!("{}...", "x".repeat(60))));
+        assert_eq!(title_json(&Cell::Long(7)), json!(7));
+    }
 }

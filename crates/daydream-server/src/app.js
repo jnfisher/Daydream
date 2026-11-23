@@ -192,6 +192,71 @@ var ABILITIES = {
   90: ["KickACY", "believed to alter kick accuracy value"]
 };
 
+// src/ansi.ts
+var ESC_SHOWN = "\u241B";
+var toShown = (s) => s.replaceAll("\x1B", ESC_SHOWN);
+var toWire = (s) => s.replaceAll(ESC_SHOWN, "\x1B");
+var COLOURS = [
+  "#000000",
+  "#aa0000",
+  "#00aa00",
+  "#aa5500",
+  "#0000aa",
+  "#aa00aa",
+  "#00aaaa",
+  "#aaaaaa",
+  "#555555",
+  "#ff5555",
+  "#55ff55",
+  "#ffff55",
+  "#5555ff",
+  "#ff55ff",
+  "#55ffff",
+  "#ffffff"
+];
+function renderAnsi(text) {
+  const out = document.createDocumentFragment();
+  const pen = { fg: 7, bg: 0, bold: false };
+  const s = toWire(text);
+  let run = "";
+  const flush = () => {
+    if (!run) return;
+    const span = document.createElement("span");
+    span.textContent = run;
+    span.style.color = COLOURS[pen.fg + (pen.bold ? 8 : 0)] ?? COLOURS[7];
+    if (pen.bg) span.style.backgroundColor = COLOURS[pen.bg] ?? "";
+    out.append(span);
+    run = "";
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c !== "\x1B") {
+      if (c !== "\r") run += c;
+      continue;
+    }
+    const m = /^\[([0-9;]*)([A-Za-z])/.exec(s.slice(i + 1));
+    if (!m) continue;
+    i += m[0].length;
+    if (m[2] !== "m") continue;
+    flush();
+    const codes = (m[1] || "0").split(";").map((x) => Number(x || 0));
+    for (const code of codes) {
+      if (code === 0) Object.assign(pen, { fg: 7, bg: 0, bold: false });
+      else if (code === 1) pen.bold = true;
+      else if (code === 22) pen.bold = false;
+      else if (code >= 30 && code <= 37) pen.fg = code - 30;
+      else if (code >= 40 && code <= 47) pen.bg = code - 40;
+    }
+  }
+  flush();
+  return out;
+}
+function titleOf(text) {
+  const line = toWire(text).split(/[\0\r\n]/).find((l) => l.trim()) ?? "";
+  const clean = line.replace(/\x1b\[[0-9;]*[A-Za-z]?/g, "").trim();
+  return clean.length > 60 ? `${clean.slice(0, 60)}...` : clean;
+}
+
 // src/api.ts
 var ApiError = class extends Error {
   constructor(status2, message) {
@@ -289,6 +354,114 @@ var ARMOUR = {
   9: "Platemail"
 };
 var COST_TYPE = { 0: "Copper", 1: "Silver", 2: "Gold", 3: "Platinum", 4: "Runic" };
+var MAGERY = { 0: "None", 1: "Mage", 2: "Priest", 3: "Druid", 4: "Bard", 5: "Kai" };
+var list = (...labels) => Object.fromEntries(labels.map((l, i) => [i, l]));
+var CLASS_ARMOUR = list(
+  "Natural",
+  "Robes",
+  "Padded",
+  "Soft Leather",
+  "Soft Studded Leather",
+  "Rigid Leather",
+  "Studded Rigid Leather",
+  "Chainmail",
+  "Scalemail",
+  "Platemail"
+);
+var CLASS_WEAPONS = list(
+  "1H Blunt",
+  "2H Blunt",
+  "1H Sharp",
+  "2H Sharp",
+  "Any 1H",
+  "Any 2H",
+  "Any Sharp",
+  "Any Blunt",
+  "All Weapons",
+  "Limited (staff)"
+);
+var MONSTER_GROUP = list(
+  "Lair",
+  "Wanderer",
+  "NPC",
+  "Living",
+  "Random",
+  "Guard",
+  ...Array.from({ length: 30 }, (_, i) => `Group ${i + 1}`),
+  "Arena",
+  "Angel",
+  "Quest",
+  "Other"
+);
+var MONSTER_TYPE = list("Solo", "Leader", "Follower", "Stationary");
+var ALIGNMENT = list("Good", "Evil", "Chaotic Evil", "Neutral", "Lawful Good", "Neutral Evil", "Lawful Evil");
+var GENDER = list("It", "He", "She");
+var ATTACK_TYPE = list("None", "Normal", "Spell", "Rob");
+var SPELL_TYPE = list("Auto-Combat", "Poison", "Change me", "General");
+var TARGET = list(
+  "Single",
+  "Self",
+  "Self or Single",
+  "Divided Area Not You",
+  "Monster",
+  "Divided Area Incl. You",
+  "Any",
+  "Item",
+  "Monster or Single",
+  "Divided Attack Area",
+  "Divided Party Area",
+  "Full Area",
+  "Full Attack Area",
+  "Full Party Area"
+);
+var RESIST_ABILITY = list("Magic Resistance", "Strength", "Agility", "Health", "Intellect", "Wisdom", "Charm");
+var ELEMENT = list("Cold", "Hot", "Stone", "Lightning", "Normal", "Water", "Poison");
+var RESISTS = list("Never", "Anti-Magic Only", "Everyone");
+var YES_NO = list("Yes", "No");
+var ROOM_TYPE = list("Normal", "Shop", "Arena", "Lair", "Hotel", "Colliseum", "Jail", "Library");
+var EXIT_TYPE = list(
+  "Normal",
+  "Spell",
+  "Key",
+  "Item",
+  "Toll",
+  "Action",
+  "Hidden",
+  "Door",
+  "map Change",
+  "Trap",
+  "Text",
+  "Gate",
+  "Remote Action",
+  "Class",
+  "Race",
+  "Level",
+  "Timed",
+  "Ticket",
+  "User Count",
+  "Block Guard",
+  "Alignment",
+  "Delay",
+  "Cast",
+  "Ability",
+  "Spell Trap"
+);
+var EXITS = ["N", "S", "E", "W", "NE", "NW", "SE", "SW", "U", "D"];
+var SHOP_TYPE = list(
+  "General",
+  "Weapons",
+  "Armour",
+  "Items",
+  "Spells",
+  "Hospital",
+  "Tavern",
+  "Bank",
+  "Training",
+  "Inn",
+  "Specific",
+  "Gang Shop",
+  "Deed Shop"
+);
 var f = (col, label, pick) => ({ col, label, pick });
 var wide = (col, label) => ({ col, label, wide: true });
 var abilities = (from, to) => ({
@@ -364,6 +537,347 @@ var LAYOUTS = {
     },
     { title: "Abilities p1", grid: abilities(0, 9) },
     { title: "Abilities p2", grid: abilities(10, 19) }
+  ],
+  // frmMonster
+  Monsters: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("Group", "Group", { options: MONSTER_GROUP }),
+        f("Index"),
+        f("Type", "Type", { options: MONSTER_TYPE }),
+        f("Alignment", "Alignment", { options: ALIGNMENT }),
+        f("Gender", "Gender", { options: GENDER }),
+        f("Active"),
+        f("Undead"),
+        f("Experience"),
+        f("Exp Multiplier", "Multiplier"),
+        f("Hit Points", "Hitpoints"),
+        f("HP Regen"),
+        f("Energy"),
+        f("AC"),
+        f("DR"),
+        f("MR", "M.R."),
+        f("Follow", "Follow %"),
+        f("Charm LvL", "Charm Lvl"),
+        f("Charm RES", "Charm Resist"),
+        f("BS Defense"),
+        f("Game Limit"),
+        f("Regen Time"),
+        f("Date Killed", "Last Killed (date)"),
+        f("Time Killed", "Last Killed (time)")
+      ]
+    },
+    {
+      title: "Drop",
+      fields: [f("Runic"), f("Platinum"), f("Gold"), f("Silver"), f("Copper")],
+      grid: {
+        columns: [
+          { template: "Item Number #", label: "Item", pick: { ref: "Items" } },
+          { template: "Item Uses #", label: "Uses" },
+          { template: "Item Drop % #", label: "%" }
+        ],
+        from: 0,
+        to: 9
+      }
+    },
+    {
+      title: "Spells/Attacks",
+      grid: {
+        columns: [
+          { template: "Attack Type #", label: "Type", pick: { options: ATTACK_TYPE } },
+          { template: "Attack Accu/Spell #", label: "Accu/Spell" },
+          { template: "Attack % #", label: "Attack%" },
+          { template: "Attack Min Hit/Cast % #", label: "MinH/Cast%" },
+          { template: "Attack Max Hit/Cast LVL #", label: "MaxH/CastLvL" },
+          { template: "Attack Energy #", label: "Energy" },
+          { template: "Attack Hit Msg #", label: "Hit Msg", pick: { ref: "Messages" } },
+          { template: "Attack Dodge Msg #", label: "Dodge Msg", pick: { ref: "Messages" } },
+          { template: "Attack Miss Msg #", label: "Miss Msg", pick: { ref: "Messages" } },
+          { template: "Attack Hit Spell #", label: "Hit Spell", pick: { ref: "Spells" } }
+        ],
+        from: 0,
+        to: 4,
+        across: "Attack"
+      }
+    },
+    {
+      title: "Between-Round Spells",
+      grid: {
+        columns: [
+          { template: "Spell Number #", label: "Spell", pick: { ref: "Spells" } },
+          { template: "Spell Cast % #", label: "%" },
+          { template: "Spell Cast LVL #", label: "LvL" }
+        ],
+        from: 0,
+        to: 4
+      }
+    },
+    {
+      title: "Weapon/Txt/Msg",
+      fields: [
+        f("Weapon Number", "Weapon", { ref: "Items" }),
+        f("Death Spell", "Death Spell", { ref: "Spells" }),
+        f("Create Spell", "Create Spell", { ref: "Spells" }),
+        f("Move Msg", "Move Msg", { ref: "Messages" }),
+        f("Death Msg", "Death Msg", { ref: "Messages" }),
+        f("Greet Txt"),
+        f("Desc Txt"),
+        f("Talk Txt"),
+        wide("Desc 1", "Description"),
+        wide("Desc 2", ""),
+        wide("Desc 3", ""),
+        wide("Desc 4", "")
+      ]
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmSpell
+  Spells: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("Short Name"),
+        f("Level", "Req. Level"),
+        f("Level Cap"),
+        f("Magery A", "Magery", { options: MAGERY }),
+        f("Magery B", "Magery Level"),
+        f("Spell Type", "Spell Type", { options: SPELL_TYPE }),
+        f("Target", "Target", { options: TARGET }),
+        f("Attack Type", "Type of Attack", { options: ELEMENT }),
+        f("Type of Resists", "Type of Resists", { options: RESISTS }),
+        f("Resist Ability", "Resist Ability", { options: RESIST_ABILITY }),
+        f("Difficulty"),
+        f("Energy"),
+        f("Mana"),
+        f("Min", "Base Min"),
+        f("Max", "Base Max"),
+        f("Duration", "Base Duration"),
+        f("Min Increase", "Min increase"),
+        f("LVLS Min Increase", "LVLs/Min increase"),
+        f("Max Increase", "Max increase"),
+        f("LVLS Max Increase", "LVLs/Max increase"),
+        f("Dur Increase", "Dur. increase"),
+        f("LVLS Dur Increase", "LVLs/Dur. increase"),
+        f("MSG Style", "Norm Msg Style", { options: YES_NO }),
+        f("Cast MSG A", "Cast Msg A", { ref: "Messages" }),
+        f("Cast MSG B", "Cast Msg B", { ref: "Messages" }),
+        wide("Desc 1", "Description Line 1"),
+        wide("Desc 2", "Description Line 2"),
+        f("UNDEFINED01", "unknown 1"),
+        f("UNDEFINED02", "unknown 2")
+      ]
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmClass
+  Classes: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("EXP %", "Exp %"),
+        f("Min HP", "HP (min)"),
+        f("Max HP", "HP (max)"),
+        f("Armour", "Armour", { options: CLASS_ARMOUR }),
+        f("Weapon", "Weapons", { options: CLASS_WEAPONS }),
+        f("Combat"),
+        f("Magic Type", "Magery", { options: MAGERY }),
+        f("Magic LVL", "Magery Level"),
+        f("Title Text")
+      ]
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmRace
+  Races: [
+    {
+      title: "General",
+      fields: [f("Number"), f("Name"), f("EXP %", "Exp %"), f("CP", "Starting Cp"), f("HP Bonus", "Hp Bonus")],
+      matrix: {
+        headers: ["Min", "Max"],
+        rows: [
+          { label: "Strength", cols: ["Min STR", "Max STR"] },
+          { label: "Agility", cols: ["Min AGL", "Max AGL"] },
+          { label: "Intellect", cols: ["Min INT", "Max INT"] },
+          { label: "Health", cols: ["Min HEA", "Max HEA"] },
+          { label: "Willpower", cols: ["Min WIL", "Max WIL"] },
+          { label: "Charm", cols: ["Min CHM", "Max CHM"] }
+        ]
+      }
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmShop
+  Shops: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("Type", "Type", { options: SHOP_TYPE }),
+        f("Min Lvl", "Min LVL"),
+        f("Max Lvl", "Max LVL"),
+        f("MarkUp", "Markup %"),
+        f("Class Limit", "Class", { ref: "Classes" }),
+        wide("Desc A", "Description"),
+        wide("Desc B", ""),
+        wide("Desc C", "")
+      ]
+    },
+    {
+      title: "Items Sold",
+      grid: {
+        columns: [
+          { template: "Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Max #", label: "Max" },
+          { template: "Normal #", label: "Normal" },
+          { template: "Regen Time #", label: "Time" },
+          { template: "Regen Number#", label: "Rgn#" },
+          { template: "Regen %#", label: "Rgn%" }
+        ],
+        from: 0,
+        to: 19
+      }
+    }
+  ],
+  // frmRoom
+  Rooms: [
+    {
+      title: "General",
+      fields: [
+        f("Map Number"),
+        f("Room Number"),
+        wide("Name"),
+        wide("Desc 0", "Description"),
+        wide("Desc 1", ""),
+        wide("Desc 2", ""),
+        wide("Desc 3", ""),
+        wide("Desc 4", ""),
+        wide("Desc 5", ""),
+        wide("Desc 6", ""),
+        f("Type", "Type", { options: ROOM_TYPE }),
+        f("Shop Number", "Shop", { ref: "Shops" }),
+        f("Gang House Number", "Gang House"),
+        f("Light"),
+        f("AnsiMap", "ANSI Map"),
+        f("Attributes")
+      ]
+    },
+    {
+      title: "Exits",
+      grid: {
+        columns: [
+          { template: "Exit #", label: "To Room" },
+          { template: "Type #", label: "Type", pick: { options: EXIT_TYPE } },
+          { template: "Para1 #", label: "Para 1" },
+          { template: "Para2 #", label: "Para 2" },
+          { template: "Para3 #", label: "Para 3" },
+          { template: "Para4 #", label: "Para 4" }
+        ],
+        from: 0,
+        to: 9,
+        names: EXITS
+      }
+    },
+    {
+      title: "NPC / Items / Coins",
+      fields: [
+        f("Perm NPC", "Perm NPC", { ref: "Monsters" }),
+        f("Mon Type", "Monster Type", { options: MONSTER_GROUP }),
+        f("Min Index"),
+        f("Max Index"),
+        f("Max Regen"),
+        f("Max Area"),
+        f("Runic"),
+        f("Platinum"),
+        f("Gold"),
+        f("Silver"),
+        f("Copper"),
+        f("InvisRunic", "Hidden Runic"),
+        f("InvisPlatinum", "Hidden Platinum"),
+        f("InvisGold", "Hidden Gold"),
+        f("InvisSilver", "Hidden Silver"),
+        f("InvisCopper", "Hidden Copper")
+      ],
+      grid: { columns: [{ template: "Placed Item #", label: "Placed Item", pick: { ref: "Items" } }], from: 0, to: 9 }
+    },
+    {
+      title: "Visible Items",
+      grid: {
+        columns: [
+          { template: "Room Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Room Item # USES", label: "Uses" },
+          { template: "Room Item # QTY", label: "Qty" }
+        ],
+        from: 0,
+        to: 16
+      }
+    },
+    {
+      title: "Hidden Items",
+      grid: {
+        columns: [
+          { template: "Hidden Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Hidden Item # USES", label: "Uses" },
+          { template: "Hidden Item # QTY", label: "Qty" }
+        ],
+        from: 0,
+        to: 14
+      }
+    },
+    {
+      title: "Other",
+      fields: [
+        f("Control Room"),
+        f("Death Room"),
+        f("Exit Room"),
+        f("Command Text"),
+        f("Delay"),
+        f("Spell", "Spell", { ref: "Spells" })
+      ]
+    }
+  ],
+  // frmMessage
+  Messages: [
+    {
+      title: "General",
+      fields: [f("Number"), wide("Line 1"), wide("Line 2"), wide("Line 3")],
+      preview: ["Line 1", "Line 2", "Line 3"]
+    }
+  ],
+  // frmTextblock
+  Textblocks: [
+    {
+      title: "General",
+      fields: [f("Number"), f("Part #", "Part"), f("Link To", "Link To"), wide("Data", "Text")],
+      preview: ["Data"]
+    }
+  ],
+  // frmAction
+  Actions: [
+    {
+      title: "General",
+      fields: [
+        f("Action"),
+        wide("Single to User"),
+        wide("Single to Room"),
+        wide("User to User"),
+        wide("User to Other User"),
+        wide("User to Room"),
+        wide("Monster to User"),
+        wide("Monster to Room"),
+        wide("Inventory to User"),
+        wide("Inventory to Room"),
+        wide("Floor Item to User"),
+        wide("Floor Item to Room")
+      ]
+    }
   ]
 };
 function families(t2) {
@@ -376,9 +890,9 @@ function families(t2) {
       continue;
     }
     const template = `${m[1]}#${m[3]}`;
-    const list = byTemplate.get(template) ?? [];
-    list.push(Number(m[2]));
-    byTemplate.set(template, list);
+    const list2 = byTemplate.get(template) ?? [];
+    list2.push(Number(m[2]));
+    byTemplate.set(template, list2);
   }
   const grids = /* @__PURE__ */ new Map();
   for (const [template, numbers] of byTemplate) {
@@ -425,6 +939,7 @@ function columnsShown(layout) {
   const shown = /* @__PURE__ */ new Set();
   for (const tab of layout) {
     for (const field of tab.fields ?? []) shown.add(field.col);
+    for (const row of tab.matrix?.rows ?? []) for (const c of row.cols) shown.add(c);
     if (tab.grid) {
       for (let n = tab.grid.from; n <= tab.grid.to; n++) {
         for (const c of tab.grid.columns) shown.add(c.template.replace("#", String(n)));
@@ -459,7 +974,7 @@ function h(tag, props = {}, ...children) {
   for (const c of children) if (c !== null) el.append(c);
   return el;
 }
-var show = (v) => v === null ? "" : String(v);
+var show = (v) => v === null ? "" : toShown(String(v));
 var keyText = (key) => key.map(show).join("/");
 var sameKey = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function status(text, kind = "info") {
@@ -477,7 +992,7 @@ function changed() {
   const out = {};
   if (!state.row) return out;
   for (const [col, typed] of state.edits) {
-    if (typed !== show(state.row.values[col] ?? null)) out[col] = typed;
+    if (typed !== show(state.row.values[col] ?? null)) out[col] = toWire(typed);
   }
   return out;
 }
@@ -500,8 +1015,8 @@ async function names(table) {
   m = /* @__PURE__ */ new Map();
   state.names.set(table, m);
   try {
-    const list = await api.rows(table);
-    for (const [key, title] of list.rows) {
+    const list2 = await api.rows(table);
+    for (const [key, title] of list2.rows) {
       if (typeof key[0] === "number") m.set(key[0], show(title));
     }
   } catch {
@@ -528,8 +1043,8 @@ function renderNav() {
   }
 }
 function renderList() {
-  const list = $("#rows");
-  list.replaceChildren();
+  const list2 = $("#rows");
+  list2.replaceChildren();
   const needle = state.filter.trim().toLowerCase();
   const matches = state.rows.filter(
     ([key, title]) => !needle || `${keyText(key)} ${show(title)}`.toLowerCase().includes(needle)
@@ -538,7 +1053,7 @@ function renderList() {
     const li = h("li", {}, h("span", { class: "key" }, keyText(key)), " ", show(title).trimEnd());
     if (state.row && sameKey(state.row.key, key)) li.classList.add("selected");
     li.addEventListener("click", () => select(key));
-    list.append(li);
+    list2.append(li);
   }
   $("#count").textContent = matches.length > LIST_LIMIT ? `${LIST_LIMIT} of ${matches.length}; filter to narrow` : `${matches.length} of ${state.rows.length}`;
 }
@@ -606,15 +1121,65 @@ function renderTab(tabIndex) {
     for (const field of tab.fields) grid.append(renderField(field));
     body.append(grid);
   }
+  if (tab.preview) {
+    const box = h("pre", { class: "terminal", "aria-label": "Preview" });
+    const draw = () => {
+      box.replaceChildren();
+      tab.preview.forEach((col, i) => {
+        if (i) box.append("\n");
+        box.append(renderAnsi(state.edits.get(col) ?? ""));
+      });
+    };
+    draw();
+    body.addEventListener("input", draw);
+    body.append(h("div", { class: "preview-label" }, "As players see it"), box);
+  }
+  if (tab.matrix) {
+    const m = tab.matrix;
+    const table = h("table", { class: "grid matrix" });
+    const head = h("tr", {}, h("th"));
+    for (const label of m.headers) head.append(h("th", {}, label));
+    table.append(h("thead", {}, head));
+    const tbody = h("tbody");
+    for (const row of m.rows) {
+      const tr = h("tr", {}, h("td", { class: "n" }, row.label));
+      for (const col of row.cols) {
+        const info = column(col);
+        tr.append(h("td", { title: col }, info ? input({ col }, info) : ""));
+      }
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    body.append(table);
+  }
   if (tab.grid) {
     const g = tab.grid;
+    if (g.across) {
+      const table2 = h("table", { class: "grid across" });
+      const head2 = h("tr", {}, h("th"));
+      for (let n = g.from; n <= g.to; n++) head2.append(h("th", {}, `${g.across} ${n - g.from + 1}`));
+      table2.append(h("thead", {}, head2));
+      const tbody2 = h("tbody");
+      for (const c of g.columns) {
+        const tr = h("tr", {}, h("td", { class: "n" }, c.label ?? c.template));
+        for (let n = g.from; n <= g.to; n++) {
+          const col = c.template.replace("#", String(n));
+          const info = column(col);
+          tr.append(h("td", { title: col }, info ? input({ col, pick: c.pick }, info) : ""));
+        }
+        tbody2.append(tr);
+      }
+      table2.append(tbody2);
+      body.append(table2);
+      return body;
+    }
     const table = h("table", { class: "grid" });
     const head = h("tr", {}, h("th", {}, "#"));
     for (const c of g.columns) head.append(h("th", {}, c.label ?? c.template));
     table.append(h("thead", {}, head));
     const tbody = h("tbody");
     for (let n = g.from; n <= g.to; n++) {
-      const tr = h("tr", {}, h("td", { class: "n" }, String(n)));
+      const tr = h("tr", {}, h("td", { class: "n" }, g.names?.[n - g.from] ?? String(n)));
       for (const c of g.columns) {
         const col = c.template.replace("#", String(n));
         const info = column(col);
@@ -637,7 +1202,7 @@ function renderEditor() {
     ed.append(toolbar(t2));
     return;
   }
-  const title = t2.title ? show(state.row.values[t2.title] ?? null).trimEnd() : "";
+  const title = t2.title ? titleOf(show(state.row.values[t2.title] ?? null)) : "";
   ed.append(h("h2", {}, `${t2.name} ${keyText(state.row.key)}`, title ? ` \u2014 ${title}` : ""));
   ed.append(toolbar(t2));
   const tabs = h("div", { class: "tabs", role: "tablist" });
@@ -680,16 +1245,16 @@ async function openTable(name, key) {
     state.table = t2;
     const layout = layoutFor(t2);
     const rest = t2.columns.map((c) => c.name).filter((c) => !columnsShown(layout).has(c));
-    state.layout = rest.length ? [...layout, { title: "Other", fields: rest.map((col) => ({ col })) }] : layout;
+    state.layout = rest.length ? [...layout, { title: "More", fields: rest.map((col) => ({ col })) }] : layout;
     state.tab = 0;
     state.row = null;
     state.filter = "";
     $("#filter").value = "";
     renderNav();
     status(`Loading ${t2.name}\u2026`);
-    const list = await api.rows(t2.name);
-    state.rows = list.rows;
-    status(`${t2.name}: ${list.rows.length} records`);
+    const list2 = await api.rows(t2.name);
+    state.rows = list2.rows;
+    status(`${t2.name}: ${list2.rows.length} records`);
     const refs = /* @__PURE__ */ new Set();
     for (const tab of state.layout) {
       for (const f2 of tab.fields ?? []) if (f2.pick && "ref" in f2.pick) refs.add(f2.pick.ref);
@@ -725,7 +1290,10 @@ async function save() {
     state.row = await api.row(t2.name, row.key);
     loadEdits(state.row);
     const i = state.rows.findIndex(([k2]) => sameKey(k2, row.key));
-    if (i >= 0 && t2.title) state.rows[i] = [row.key, state.row.values[t2.title] ?? null];
+    if (i >= 0 && t2.title) {
+      const v = state.row.values[t2.title] ?? null;
+      state.rows[i] = [row.key, typeof v === "string" ? titleOf(v) : v];
+    }
     state.names.delete(t2.name);
     renderList();
     renderEditor();
@@ -769,12 +1337,13 @@ async function insert() {
   if (dirty()) return;
   const key = newKey(t2);
   if (!key) return;
-  const values = state.row ? Object.fromEntries(state.edits) : {};
+  const values = {};
+  if (state.row) for (const [col, typed] of state.edits) values[col] = toWire(typed);
   t2.key.forEach((c, i) => values[c] = key[i] ?? null);
   try {
     await api.insert(t2.name, values);
-    const list = await api.rows(t2.name);
-    state.rows = list.rows;
+    const list2 = await api.rows(t2.name);
+    state.rows = list2.rows;
     state.row = null;
     state.names.delete(t2.name);
     status(`Inserted ${t2.name} ${keyText(key)}.`, "ok");
