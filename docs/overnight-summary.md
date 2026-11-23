@@ -23,11 +23,14 @@ revisited. Pull requests merged once CI was green.
 | #6 | M2: editor API and web UI, item editor as NMR's | merged (squash df539c4) |
 | #7 | M2: every other editor laid out as NMR's, ANSI preview | merged (squash 163fa0c) |
 | #8 | NMR's import options, Database Deleter and Merge Users | open |
+| #9 | The importer, deleter and Merge Users in the browser (Tools) | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
   deletion of text block parts the file no longer has, NMR's Database Deleter (all or a
-  range) and its Merge Users.
+  range) and its Merge Users. In the browser they are on a Tools page laid out as NMR's
+  Database Importer (per table: import it or not, All or a From/To range, Map for rooms),
+  with Preview First on each tool.
 
 ## Decisions taken
 
@@ -76,8 +79,8 @@ revisited. Pull requests merged once CI was green.
   will learn the realm's layout.
 - Found and fixed on the way: `daydream nmr-export` and `nmr-import` used the DOS layouts
   even on a Worldgroup realm. They now use the realm's own (#8).
-- No browser UI for the import options, the deleter or the merge yet; they are on the
-  command line.
+- The Tools page (#9) imports with Daydream's strict rules only; NMR mode stays a
+  command-line and CI option.
 
 ## Needs John
 

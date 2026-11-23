@@ -207,12 +207,13 @@ fn find_row<'a>(rows: &'a NmrRows, index: &[&str], key: &[Cell]) -> Option<&'a V
         .find(|r| same_key(&key_of_row(rows, r, index), key))
 }
 
-fn report_json(r: &TableReport) -> Value {
+pub(crate) fn report_json(r: &TableReport) -> Value {
     json!({
         "table": r.table,
         "inserted": r.inserted,
         "updated": r.updated,
         "unchanged": r.unchanged,
+        "skipped": r.skipped,
         "deleted": r.deleted,
         "errors": r.errors,
     })
