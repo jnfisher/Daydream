@@ -229,16 +229,32 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
             }
             // the first records alone, to place a failure on the file's size: the 4096-byte
             // page files cross into a second page table at about 2,040 records
-            if stem.eq_ignore_ascii_case("WCCMP001") {
+            let sizes: &[usize] = match stem.to_ascii_uppercase().as_str() {
+                "WCCMP001" => &[10_000, 15_000, 20_000, 25_000],
+                "WCCMSG" => &[500, 1000, 2000, 3000, 3500],
+                _ => &[],
+            };
+            if !sizes.is_empty() {
                 let all = payloads(&copy);
-                for n in [1000, 2000, 2030, 2060, 4000, 10_000] {
-                    let bytes = build(&open(&copy), &all[..n], 0x6B04_459B).unwrap();
-                    let part = tmp.path().join(format!("MP{n}.DAT"));
+                let source = open(&copy);
+                for (k, key) in source.keys.iter().enumerate() {
+                    println!("{stem} key {k}: {:?}", key.segments);
+                }
+                for &n in sizes {
+                    let bytes = build(&source, &all[..n], 0x6B04_459B).unwrap();
+                    let part = tmp.path().join(format!("{}{n}.DAT", &stem[3..5]));
                     std::fs::write(&part, &bytes).unwrap();
-                    let h = OpenOptions::new().open_bytes("part", bytes).unwrap().header;
+                    let mut part_file = OpenOptions::new().open_bytes("part", bytes).unwrap();
+                    let h = part_file.header.clone();
+                    let report = part_file.verify_indexes().unwrap();
                     println!(
-                        "MP{n}: page length {}, {} pages",
-                        h.page_length, h.page_count
+                        "{stem} first {n}: page length {}, {} pages, record length {}, \
+                         physical {}, indexes {:?}",
+                        h.page_length,
+                        h.page_count,
+                        h.record_length,
+                        h.physical_record_length,
+                        report.keys
                     );
                     files.push(part);
                 }

@@ -41,11 +41,28 @@ public static class Btrieve {
     [DllImport("WBTRV32.DLL", CallingConvention = CallingConvention.StdCall)]
     static extern short BTRCALL(ushort op, byte[] pos, byte[] data, ref int len, byte[] key, short keyLen, short keyNum);
 
-    const ushort OPEN = 0, CLOSE = 1, GET_NEXT = 6, GET_FIRST = 12, STAT = 15, STOP = 25;
+    const ushort OPEN = 0, CLOSE = 1, GET_NEXT = 6, GET_FIRST = 12, STAT = 15, STOP = 25,
+        STEP_NEXT = 24, STEP_FIRST = 33;
     const short END_OF_FILE = 9;
 
     static void Check(short status, string what) {
         if (status != 0) throw new Exception(what + ": Btrieve status " + status);
+    }
+
+    // How far a walk in physical order (Step First / Step Next) gets, for a failure report.
+    static string Steps(byte[] pos) {
+        var data = new byte[65535];
+        var key = new byte[255];
+        ushort op = STEP_FIRST;
+        int n = 0;
+        while (true) {
+            int len = data.Length;
+            short s = BTRCALL(op, pos, data, ref len, key, 255, 0);
+            if (s == END_OF_FILE) return "the physical walk reads all " + n + " records";
+            if (s != 0) return "the physical walk stops after " + n + " records with status " + s;
+            n++;
+            op = STEP_NEXT;
+        }
     }
 
     public static string Dump(string file, string outDir) {
@@ -66,11 +83,15 @@ public static class Btrieve {
             for (short k = 0; k < keys; k++) {
                 using (var w = new BinaryWriter(File.Create(Path.Combine(outDir, "key" + k + ".bin")))) {
                     ushort op = GET_FIRST;
+                    int n = 0;
                     while (true) {
                         len = data.Length;
                         short s = BTRCALL(op, pos, data, ref len, key, 255, k);
                         if (s == END_OF_FILE) break;
-                        Check(s, "key " + k + " read");
+                        if (s != 0) {
+                            throw new Exception("key " + k + " read after " + n + " records: Btrieve status " + s + "; " + Steps(pos));
+                        }
+                        n++;
                         w.Write(len);
                         w.Write(data, 0, len);
                         op = GET_NEXT;
