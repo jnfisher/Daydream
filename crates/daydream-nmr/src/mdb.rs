@@ -1,4 +1,9 @@
 //! Reading an NMR `.mdb`, on any OS, with the pure-Rust Jet 4 reader of `datacraft-jet`.
+//!
+//! Known gap: in a column with Unicode compression on, Jet stores a text it cannot compress
+//! (one holding NULs) as plain UCS-2 without the `FF FE` marker, and datacraft-jet 0.2.0
+//! reads such a value as compressed, which garbles it when it starts with a NUL. The files
+//! Daydream writes turn compression off; files NMR itself wrote may hit this.
 
 use std::path::Path;
 
