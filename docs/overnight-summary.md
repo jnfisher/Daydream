@@ -19,8 +19,9 @@ revisited. Pull requests merged once CI was green.
   Map Editor, the Quest Organizer, the Monster Group/Index Changer and the Record Number
   Changer.
 - **M4: the player editors are in** (Users with Revive, Paste Stats and NMR's character
-  export/import; Bank Books; Gangs). The MME export, M4's other half, is under way: its
-  tables and the records' own values match NMR's export of the stock world.
+  export/import; Bank Books; Gangs). **The MME export's library is done** (#17): every
+  table and column of NMR's export, checked against NMR's own export of the stock world.
+  It is not yet offered in the UI or command line.
 
 ## Pull requests
 
@@ -38,7 +39,7 @@ revisited. Pull requests merged once CI was green.
 | #14 | M3: the Record Number Changer | merged (squash 8725f04) |
 | #15 | M3: the Map Editor (digging rooms) and CSV downloads of lists | merged (squash 508365a) |
 | #16 | M4: Users, Bank Books and Gangs editors, Revive Character, character paste/export/import | merged (squash e4be5ba) |
-| #17 | M4: the MME export, part 1 (MME's tables, the records' own values, rooms and exits) | open |
+| #17 | M4: the MME export, parts 1 to 4 (tables, walk, lairs, attack simulation) | open, CI green; merging it was refused by my permissions, so it waits for John |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -103,9 +104,22 @@ revisited. Pull requests merged once CI was green.
   export of the stock world** (the data file MME ships, pinned by sha256): on the 1.11p
   realm here, all 26,694 rooms, 1,950 items, 1,101 monsters, 1,379 spells, 178 shops and
   the classes and races match value for value, except two item weights where that realm
-  differs from the one NMR exported. Not yet: NMR's walk of the world (what is in the game
-  and where it comes from), the lairs table and the monster attack simulation; the export
-  is not offered in the UI or CLI until they are, so nothing reveals more than NMR's would.
+  differs from the one NMR exported.
+- **The MME export, parts 2 to 4** (added to #17, since #17 could not be merged first).
+  - **NMR's walk of the world**: what is in the game and where it comes from (`In Game`,
+    `Obtained From`, `References`, `Learned From`, `Casted By`, `Summoned By`,
+    `Assigned To`, `TBInfo`). It follows rooms, shops, monster drops and text block
+    commands (`giveitem`, `learnspell`, `checkitem`, random items, class restrictions) as
+    NMR's `LocateRecords` does, down to VB's string and Currency rules. Matches NMR's
+    export exactly.
+  - **The lairs**: the Lairs table, each lair's average walk between its rooms, AvgLairExp
+    and ScriptValue. Matches NMR's export exactly.
+  - **The monster attack simulation**: AvgDmg, AvgDmgPhys, AvgDmgSpell and AttTrue%. NMR's
+    is random and stops when its average settles, so its own numbers move from one export to
+    the next. Daydream's uses VB's own generator with a fixed seed; on the 1.11p realm here all but 3
+    of 1,101 AvgDmg values are within 5% of NMR's, and none is more than 6% off.
+  - Still deliberately not offered in the UI or CLI: wiring it up (with NMR's options) is the
+    next step, and a separate PR so it can be reviewed against the privacy rule.
 
 ## Decisions taken
 
@@ -200,6 +214,13 @@ revisited. Pull requests merged once CI was green.
     sets the gang from the "Import Character Name" box (a slip); here "Import Gang Name"
     does.
 
+22. **The simulated columns are tested within a tolerance, not exactly.** Each value must
+    be within 3 points or 25% of NMR's, and no more than 6% of a column may be over 10%
+    off. A tighter test would test NMR's dice, not the formula; the share rule catches a
+    sim that drifts as a whole. Measured worst cases are in `tests/mme.rs`.
+23. **The simulation is seeded, so an export is the same every time.** NMR reseeds from
+    the clock; a fixed seed makes Daydream's export reproducible and diffable.
+
 ## Known gaps
 
 - The read-only per-file API (`/api/files/...`) decodes records in the DOS layout only, so on
@@ -216,7 +237,9 @@ revisited. Pull requests merged once CI was green.
 
 ## Needs John
 
-- Nothing blocking. Worth a look when convenient:
+- **Merge #17** (MME export library, CI green). My attempt to merge it was refused by the
+  session's permission check, so it is waiting on you.
+- Worth a look when convenient:
   - The item editor's layout against NMR's.
   - **No Limited Items keeps item 1749 ("yellow bone portal"), as NMR does.** In the 1.11p
     data there are two yellow bone portals, 1749 and 1807, and only 1807 is placed in the
