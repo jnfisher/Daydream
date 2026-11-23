@@ -1,15 +1,19 @@
-//! Daydream's Btrieve reader, index walk and in-place writer against a real Btrieve engine.
+//! Daydream's Btrieve reader, index walk and writers against a real Btrieve engine.
 //!
 //! On Windows, with `DAYDREAM_BTRIEVE_DIR` naming a directory holding `WBTRV32.DLL` and the
 //! 6.15 workstation engine `W32MKDE.EXE` (Nightmare Redux ships both; the `windows` workflow
-//! checks out a pinned copy), every stock file is copied as a `.DAT`, every fixed-length one
-//! has all its non-key bytes rewritten by `update_in_place`, and `tools/btrieve/
-//! btrieve-dump.ps1` reads each back through Btrieve, key by key. Btrieve must return the
-//! records Daydream expects, in the order Daydream's index walk gives. Elsewhere the test
-//! does nothing; in CI on Windows the engine is required.
+//! checks out a pinned copy), every stock file is copied as a `.DAT`; every fixed-length one
+//! also has all its non-key bytes rewritten by `update_in_place`, and is rebuilt whole from
+//! its records by the `.DAT` builder. `tools/btrieve/btrieve-dump.ps1` reads each back
+//! through Btrieve, key by key: Btrieve must return the records Daydream expects, in the
+//! order Daydream's index walk gives. Btrieve then deletes and inserts records in a copy of
+//! each rebuilt file (`btrieve-churn.ps1`), and the result must still check out, in
+//! Daydream and in Btrieve. Elsewhere the tests do nothing; in CI on Windows the engine is
+//! required.
 
 use std::path::{Path, PathBuf};
 
+use daydream_wcc::btrieve::build::build;
 use daydream_wcc::btrieve::update::update_in_place;
 use daydream_wcc::btrieve::{BtrieveFile, OpenOptions, RecordAddress};
 
@@ -75,9 +79,22 @@ fn read_dump(path: &Path) -> Vec<Vec<u8>> {
     out
 }
 
-/// Runs the dump script once over all `files`, into `out`.
-fn dump(engine: &Path, files: &[PathBuf], out: &Path) {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/btrieve/btrieve-dump.ps1");
+/// Every record's payload, in the reader's order.
+fn payloads(path: &Path) -> Vec<Vec<u8>> {
+    let mut file = open(path);
+    let mut out = Vec::new();
+    let mut records = file.records();
+    while let Some(record) = records.next_record() {
+        out.push(record.unwrap().data.to_vec());
+    }
+    out
+}
+
+/// Runs a script of `tools/btrieve` once, with `args` and then `files`.
+fn script(name: &str, args: &[&Path], files: &[PathBuf]) {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tools/btrieve")
+        .join(name);
     let result = std::process::Command::new("powershell")
         .args([
             "-NoProfile",
@@ -87,8 +104,7 @@ fn dump(engine: &Path, files: &[PathBuf], out: &Path) {
             "-File",
         ])
         .arg(&script)
-        .arg(out)
-        .arg(engine)
+        .args(args)
         .args(files)
         .output()
         .unwrap();
@@ -170,9 +186,15 @@ fn compare(path: &Path, out: &Path) -> Vec<String> {
     problems
 }
 
+/// Runs the dump script once over all `files`, into `out`.
+fn dump(engine: &Path, files: &[PathBuf], out: &Path) {
+    script("btrieve-dump.ps1", &[out, engine], files);
+}
+
 // One engine run over every case: each stock file as an untouched copy, and each
-// fixed-length one again as a copy Daydream rewrote (a separate file, so the engine has
-// nothing of it cached).
+// fixed-length one again as a copy Daydream rewrote and as a file Daydream rebuilt (each a
+// separate file, so the engine has nothing of it cached). Then Btrieve churns a copy of
+// each rebuilt file, and a second run reads those.
 #[test]
 fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
     let Some(engine) = engine() else { return };
@@ -185,6 +207,7 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
         .collect();
     names.sort();
     let mut files = Vec::new();
+    let mut churned = Vec::new();
     for name in names {
         let stem = name.trim_end_matches(".VIR").trim_end_matches(".vir");
         let copy = tmp.path().join(format!("{stem}.DAT"));
@@ -194,12 +217,43 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
             std::fs::copy(&copy, &rewritten).unwrap();
             rewrite_non_key_bytes(&rewritten);
             files.push(rewritten);
+            let bytes = build(&open(&copy), &payloads(&copy), 0x6B04_459B)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            for (suffix, list) in [("R", &mut files), ("C", &mut churned)] {
+                let rebuilt = tmp.path().join(format!("{stem}_{suffix}.DAT"));
+                std::fs::write(&rebuilt, &bytes).unwrap();
+                list.push(rebuilt);
+            }
         }
         files.push(copy);
     }
     let out = tmp.path().join("dumps");
     dump(&engine, &files, &out);
-    let problems: Vec<String> = files.iter().flat_map(|f| compare(f, &out)).collect();
+    let mut problems: Vec<String> = files.iter().flat_map(|f| compare(f, &out)).collect();
+
+    // Btrieve deletes and inserts in the rebuilt files: they keep their records, and
+    // Daydream and Btrieve still agree on them
+    script("btrieve-churn.ps1", &[&engine], &churned);
+    for f in &churned {
+        let rebuilt = tmp.path().join(
+            f.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .replace("_C.DAT", "_R.DAT"),
+        );
+        let (mut before, mut after) = (payloads(&rebuilt), payloads(f));
+        before.sort();
+        after.sort();
+        if before != after {
+            problems.push(format!("{}: the records changed", f.display()));
+        }
+        if let Err(e) = open(f).verify_indexes() {
+            problems.push(format!("after Btrieve's deletes and inserts: {e}"));
+        }
+    }
+    let out = tmp.path().join("churned");
+    dump(&engine, &churned, &out);
+    problems.extend(churned.iter().flat_map(|f| compare(f, &out)));
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
@@ -240,29 +294,7 @@ fn btrieve_clones_the_stock_files() {
     }
     files.sort();
     let out = tmp.path().join("clones");
-    let script =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/btrieve/btrieve-clone.ps1");
-    let result = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ])
-        .arg(&script)
-        .arg(&out)
-        .arg(&engine)
-        .args(&files)
-        .output()
-        .unwrap();
-    println!("{}", String::from_utf8_lossy(&result.stdout).trim());
-    assert!(
-        result.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr)
-    );
+    script("btrieve-clone.ps1", &[&out, &engine], &files);
     for f in &files {
         let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
         for (what, path) in [
@@ -300,4 +332,33 @@ fn btrieve_clones_the_stock_files() {
             }
         }
     }
+    // the .DAT builder writes an empty file as Btrieve's Create does, byte for byte but
+    // for the creation time (taken from Btrieve's) and Btrieve's running counter at +0x68
+    let mut differ = Vec::new();
+    for f in &files {
+        let source = open(f);
+        if source.header.is_variable_length() {
+            continue;
+        }
+        let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
+        let theirs = std::fs::read(out.join(format!("{stem}.EMPTY.DAT"))).unwrap();
+        let created = u32::from_le_bytes(theirs[0x56..0x5A].try_into().unwrap());
+        let ours = build(&source, &Vec::<Vec<u8>>::new(), created)
+            .unwrap_or_else(|e| panic!("{stem}: {e}"));
+        let bytes: Vec<usize> = (0..ours.len().max(theirs.len()))
+            .filter(|&i| ours.get(i) != theirs.get(i) && !(0x68..0x6A).contains(&i))
+            .collect();
+        if bytes.is_empty() {
+            println!("{stem}: the builder's empty file is Btrieve's");
+        } else {
+            differ.push(format!(
+                "{stem}: {} bytes against Btrieve's {}, {} differ, first at {:#x}",
+                ours.len(),
+                theirs.len(),
+                bytes.len(),
+                bytes[0]
+            ));
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
 }

@@ -404,7 +404,7 @@ fn repeating(key: &Key) -> bool {
 }
 
 /// True when a record's key is null and so left out of the index.
-fn is_null(key: &Key, record: &[u8]) -> bool {
+pub(crate) fn is_null(key: &Key, record: &[u8]) -> bool {
     let a = key.primary().attributes;
     let null = |s: &KeyDef| {
         s.bytes(record)

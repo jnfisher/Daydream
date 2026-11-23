@@ -2,9 +2,10 @@
 //!
 //! This is the only code in the project that knows the Btrieve file format; the record
 //! decoders take the byte slices it yields. It follows the parsing half of MBBSEmu wbtrv32's
-//! `btrieve/BtrieveDatabase.cc` (no cursor emulation). Two Daydream additions go further:
-//! [`index`] reads the index trees back to check them against the records, and [`update`]
-//! rewrites records in place when no key changes.
+//! `btrieve/BtrieveDatabase.cc` (no cursor emulation). Three Daydream additions go
+//! further: [`index`] reads the index trees back to check them against the records,
+//! [`update`] rewrites records in place when no key changes, and [`build`] writes a whole
+//! Btrieve 6 file from records.
 //!
 //! # What it reads
 //!
@@ -41,6 +42,8 @@
 //! `getVariableLengthData`.
 
 pub mod acs;
+mod btree;
+pub mod build;
 pub mod error;
 pub mod header;
 pub mod index;
