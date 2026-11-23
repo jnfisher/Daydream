@@ -415,6 +415,35 @@ async fn a_silvermere_database_opens_into_a_working_copy() {
     .await;
     assert_eq!(st["running"], false, "{st}");
 
+    // with silvermere itself serving the database (SILVERMERE_BIN: CI keeps the release),
+    // the picker sees it run and nothing reads or writes the world under it
+    let bin = silvermere_bin();
+    if let Some(bin) = &bin {
+        let _serving = serve(bin, &url);
+        let (_, st) = call(
+            &app,
+            "GET",
+            &format!("/api/games/status?id={id}"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(st["running"], true, "{st}");
+        let (status, body) = call(
+            &app,
+            "POST",
+            "/api/games/open",
+            Some(json!({"id": id})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(
+            body["error"].as_str().unwrap().contains("Stop it first"),
+            "{body}"
+        );
+    }
+
     let (status, body) = call(
         &app,
         "POST",
@@ -447,4 +476,99 @@ async fn a_silvermere_database_opens_into_a_working_copy() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{res}");
+
+    // the export the card would make is refused while silvermere serves, and goes once stopped
+    if let Some(bin) = &bin {
+        let serving = serve(bin, &url);
+        let (_, st) = call(&app, "GET", "/api/games/status?id=current", None, None).await;
+        assert_eq!(st["running"], true, "{st}");
+        let (status, res) = call(
+            &app,
+            "POST",
+            "/api/silvermere/export",
+            Some(json!({})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{res}");
+        drop(serving);
+        let (status, res) = call(
+            &app,
+            "POST",
+            "/api/silvermere/export",
+            Some(json!({})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{res}");
+    }
+}
+
+/// The silvermere release to run, when given (`SILVERMERE_BIN`).
+fn silvermere_bin() -> Option<PathBuf> {
+    std::env::var_os("SILVERMERE_BIN")
+        .filter(|b| !b.is_empty())
+        .map(Into::into)
+}
+
+/// `silvermere serve` on a database, stopped when dropped.
+struct Serving {
+    child: std::process::Child,
+    /// Its data folder, removed after it stops.
+    _data: tempfile::TempDir,
+}
+
+impl Drop for Serving {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Starts `bin serve` on `url` and waits until it listens, or panics with its output.
+fn serve(bin: &Path, url: &str) -> Serving {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let data = tempfile::tempdir().unwrap();
+    let mut child = Command::new(bin)
+        .arg("serve")
+        .arg("--data-dir")
+        .arg(data.path())
+        .args(["--database-url", url])
+        .args([
+            "--telnet-bind",
+            "127.0.0.1:0",
+            "--admin-bind",
+            "127.0.0.1:0",
+        ])
+        .args(["--set", "server.web_bind=\"\"", "--log-format", "pretty"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("{}: {e}", bin.display()));
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    for out in [
+        Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
+        Box::new(child.stderr.take().unwrap()),
+    ] {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+    let serving = Serving { child, _data: data };
+    let mut seen = Vec::new();
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(line) if line.contains("telnet listening") => return serving,
+            Ok(line) => seen.push(line),
+            Err(e) => panic!("silvermere did not start ({e:?}):\n{}", seen.join("\n")),
+        }
+    }
 }
