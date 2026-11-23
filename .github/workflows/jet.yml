@@ -105,4 +105,5 @@ jobs:
 
       - name: test (through Btrieve)
         if: ${{ !cancelled() }}
+        timeout-minutes: 10
         run: cargo test -p daydream-wcc --locked --test all windows_btrieve -- --nocapture

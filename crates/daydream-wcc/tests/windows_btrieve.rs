@@ -75,8 +75,8 @@ fn read_dump(path: &Path) -> Vec<Vec<u8>> {
     out
 }
 
-/// Runs the dump script on `file` into `out`.
-fn dump(engine: &Path, file: &Path, out: &Path) {
+/// Runs the dump script once over all `files`, into `out`.
+fn dump(engine: &Path, files: &[PathBuf], out: &Path) {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/btrieve/btrieve-dump.ps1");
     let result = std::process::Command::new("powershell")
         .args([
@@ -87,27 +87,25 @@ fn dump(engine: &Path, file: &Path, out: &Path) {
             "-File",
         ])
         .arg(&script)
-        .arg(file)
         .arg(out)
         .arg(engine)
+        .args(files)
         .output()
         .unwrap();
     println!("{}", String::from_utf8_lossy(&result.stdout).trim());
     assert!(
         result.status.success(),
-        "{}: {}{}",
-        file.display(),
+        "{}{}",
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
 }
 
-/// Checks Btrieve's view of `path` against Daydream's.
-fn compare(engine: &Path, path: &Path) {
+/// Btrieve's view of `path` (dumped into `out`) against Daydream's; every difference, as text.
+fn compare(path: &Path, out: &Path) -> Vec<String> {
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
-    let out = tempfile::tempdir().unwrap();
-    dump(engine, path, out.path());
-
+    let out = out.join(&name);
+    let mut problems = Vec::new();
     let mut file = open(path);
     let mut payloads = std::collections::HashMap::new();
     {
@@ -117,12 +115,13 @@ fn compare(engine: &Path, path: &Path) {
             payloads.insert(RecordAddress::of(&record), record.data.to_vec());
         }
     }
-    let stat = std::fs::read_to_string(out.path().join("stat.txt")).unwrap();
-    assert!(
-        stat.contains(&format!("records {}\n", payloads.len())),
-        "{name}: Btrieve's Stat says {stat:?}, Daydream reads {} records",
-        payloads.len()
-    );
+    let stat = std::fs::read_to_string(out.join("stat.txt")).unwrap_or_default();
+    if !stat.contains(&format!("records {}\n", payloads.len())) {
+        problems.push(format!(
+            "{name}: Btrieve's Stat says {stat:?}, Daydream reads {} records",
+            payloads.len()
+        ));
+    }
     for k in 0..file.keys.len() {
         let expected: Vec<&Vec<u8>> = file
             .index_entries(k)
@@ -131,27 +130,49 @@ fn compare(engine: &Path, path: &Path) {
             .flat_map(|e| e.records.clone())
             .map(|a| &payloads[&a])
             .collect();
-        let theirs = read_dump(&out.path().join(format!("key{k}.bin")));
-        assert_eq!(theirs.len(), expected.len(), "{name} key {k}: record count");
-        for (i, (t, e)) in theirs.iter().zip(&expected).enumerate() {
-            if t != *e {
-                let at = t.iter().zip(e.iter()).position(|(a, b)| a != b);
-                let show = |v: &[u8], at: usize| format!("{:02x?}", &v[at..v.len().min(at + 16)]);
-                let at = at.unwrap_or(t.len().min(e.len()));
-                panic!(
-                    "{name} key {k}: record {i} in key order differs (Btrieve {} bytes, Daydream \
-                     {}), first at byte {at}: Btrieve {} Daydream {}",
-                    t.len(),
-                    e.len(),
-                    show(t, at),
-                    show(e, at)
-                );
-            }
+        let theirs = read_dump(&out.join(format!("key{k}.bin")));
+        if theirs.len() != expected.len() {
+            problems.push(format!(
+                "{name} key {k}: Btrieve returns {} records, Daydream {}",
+                theirs.len(),
+                expected.len()
+            ));
         }
-        println!("{name}: key {k}: {} records match Btrieve", theirs.len());
+        let differ: Vec<usize> = theirs
+            .iter()
+            .zip(&expected)
+            .enumerate()
+            .filter(|(_, (t, e))| *t != **e)
+            .map(|(i, _)| i)
+            .collect();
+        if let Some(&i) = differ.first() {
+            let (t, e) = (&theirs[i], expected[i]);
+            let at = t
+                .iter()
+                .zip(e.iter())
+                .position(|(a, b)| a != b)
+                .unwrap_or(t.len().min(e.len()));
+            let show = |v: &[u8]| format!("{:02x?}", &v[at.min(v.len())..v.len().min(at + 16)]);
+            problems.push(format!(
+                "{name} key {k}: {} of {} records differ; first is record {i} in key order \
+                 ({} bytes from Btrieve, {} from Daydream), at byte {at}: Btrieve {} Daydream {}",
+                differ.len(),
+                theirs.len(),
+                t.len(),
+                e.len(),
+                show(t),
+                show(e)
+            ));
+        } else {
+            println!("{name}: key {k}: {} records match Btrieve", theirs.len());
+        }
     }
+    problems
 }
 
+// One engine run over every case: each stock file as an untouched copy, and each
+// fixed-length one again as a copy Daydream rewrote (a separate file, so the engine has
+// nothing of it cached).
 #[test]
 fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
     let Some(engine) = engine() else { return };
@@ -163,15 +184,21 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
         .filter(|n| n.to_ascii_uppercase().ends_with(".VIR"))
         .collect();
     names.sort();
+    let mut files = Vec::new();
     for name in names {
-        // as untouched copies first, then (fixed-length files) after Daydream's rewrite
         let stem = name.trim_end_matches(".VIR").trim_end_matches(".vir");
         let copy = tmp.path().join(format!("{stem}.DAT"));
         std::fs::copy(dir.join(&name), &copy).unwrap();
-        compare(&engine, &copy);
         if !open(&copy).header.is_variable_length() {
-            rewrite_non_key_bytes(&copy);
-            compare(&engine, &copy);
+            let rewritten = tmp.path().join(format!("{stem}_W.DAT"));
+            std::fs::copy(&copy, &rewritten).unwrap();
+            rewrite_non_key_bytes(&rewritten);
+            files.push(rewritten);
         }
+        files.push(copy);
     }
+    let out = tmp.path().join("dumps");
+    dump(&engine, &files, &out);
+    let problems: Vec<String> = files.iter().flat_map(|f| compare(f, &out)).collect();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
