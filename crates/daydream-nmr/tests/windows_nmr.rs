@@ -9,7 +9,8 @@
 //! it as a `.mdb` through Jet. NMR's Database Importer (driven by `tools/nmr/nmr-import.ps1`)
 //! imports it into one copy of the realm, Daydream's import into another, and every record
 //! of the two must be the same, byte for byte. Every difference is reported, by table, row
-//! and column. Elsewhere the test does nothing; in CI on Windows NMR is required.
+//! and column. `DAYDREAM_NMR_OUT` (default: the temp folder) holds the work while it runs.
+//! Elsewhere the test does nothing; in CI on Windows NMR is required.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -186,7 +187,16 @@ fn compare_bytes(ours: &Path, theirs: &Path) -> Vec<String> {
 #[test]
 fn nmr_imports_daydreams_cases_as_daydream_does() {
     let Some((app, dats)) = nmr() else { return };
-    let tmp = tempfile::tempdir().unwrap();
+    // NMR's log, the message boxes it showed and any screenshots go to DAYDREAM_NMR_OUT, and
+    // the realms too, in a plain path like those NMR's users have
+    let out = std::env::var_os("DAYDREAM_NMR_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    std::fs::create_dir_all(&out).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("nmr")
+        .tempdir_in(&out)
+        .unwrap();
     let base = tmp.path().join("base");
     daydream_store::realm::convert_dir(&dats, &base).unwrap();
 
@@ -215,11 +225,7 @@ fn nmr_imports_daydreams_cases_as_daydream_does() {
     // NMR's
     let nmr_dats = tmp.path().join("nmr");
     copy_dats(&dats, &nmr_dats);
-    // NMR's log, the message boxes it showed and any screenshots go to DAYDREAM_NMR_OUT
-    let out = std::env::var_os("DAYDREAM_NMR_OUT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| tmp.path().join("nmr-out"));
-    let mut problems = nmr_import(&app, &nmr_dats, &file, &out);
+    let mut problems = nmr_import(&app, &nmr_dats, &file, &tmp.path().join("nmr-out"));
     let theirs = tmp.path().join("theirs");
     daydream_store::realm::convert_dir(&nmr_dats, &theirs).unwrap();
 
@@ -227,5 +233,9 @@ fn nmr_imports_daydreams_cases_as_daydream_does() {
     let their_data = export(&Realm::open(&theirs).unwrap(), &opts()).unwrap();
     problems.extend(compare_columns(&our_data, &their_data));
     problems.extend(compare_bytes(&ours, &theirs));
-    assert!(problems.is_empty(), "{}", problems.join("\n"));
+    if !problems.is_empty() {
+        // keep NMR's log, the message boxes and the realms for a look
+        let kept = tmp.keep();
+        panic!("{}\n(work kept in {})", problems.join("\n"), kept.display());
+    }
 }

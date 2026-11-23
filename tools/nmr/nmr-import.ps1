@@ -252,7 +252,13 @@ try {
     $controls = [W]::Children([IntPtr]$importer)
     $button = { param($caption) $controls | Where-Object { [W]::Class($_) -like '*CommandButton' -and [W]::Text($_) -eq $caption } | Select-Object -First 1 }
     $name = Split-Path $Mdb -Leaf
-    Wait-For "$name in the file list" $proc { ([W]::ListItems($list)) -contains $name } 10 | Out-Null
+    try {
+        Wait-For "$name in the file list" $proc { ([W]::ListItems($list)) -contains $name } 10 | Out-Null
+    } catch {
+        Write-Host "file list: $([W]::ListItems($list) -join ', ')"
+        $controls | Where-Object { [W]::Class($_) -like '*DirListBox' } | ForEach-Object { Write-Host "folders: $([W]::ListItems($_) -join ' | ')" }
+        throw
+    }
     $items = @([W]::ListItems($list))
     Mark 'importer open'
 
