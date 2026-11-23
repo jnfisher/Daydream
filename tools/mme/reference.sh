@@ -11,9 +11,9 @@ URL="https://raw.githubusercontent.com/jnfisher/MMUD-Explorer/${COMMIT}/data-v1.
 dir="${XDG_CACHE_HOME:-$HOME/.cache}/daydream/mme"
 file="$dir/data-v1.11p-${SHA256:0:12}.mdb"
 mkdir -p "$dir"
-if ! echo "$SHA256  $file" | sha256sum -c --status 2>/dev/null; then
+if ! echo "$SHA256  $file" | sha256sum -c --status >/dev/null 2>&1; then
   curl -fsSL --retry 3 -o "$file.part" "$URL"
-  echo "$SHA256  $file.part" | sha256sum -c --status || {
+  echo "$SHA256  $file.part" | sha256sum -c --status >/dev/null 2>&1 || {
     echo "data-v1.11p.mdb does not match its pinned sha256" >&2
     exit 1
   }
