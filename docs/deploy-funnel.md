@@ -1,6 +1,6 @@
 # A Daydream test server over Tailscale Funnel
 
-How to put a Daydream running on your own Linux machine on the internet for testing: the web
+How to put a Daydream running on your own Linux machine or Mac on the internet for testing: the web
 editor from any browser, and the MCP endpoint for hosted agents (Claude.ai's and ChatGPT's
 connectors, the Claude and OpenAI APIs). Those agents call from their own servers, which are
 not on your tailnet, so plain Tailscale is not enough; Funnel gives the machine a public
@@ -17,8 +17,10 @@ What [`tools/deploy/funnel.sh`](../tools/deploy/funnel.sh) sets up, all as your 
   (downloaded from MBBSEmu once and checked). Edits stay in it across restarts and updates.
 - An access token in `~/.config/daydream/env` (mode 600). Funnel adds forwarding headers, and
   Daydream refuses forwarded requests without a token, so the token is not optional.
-- `daydream serve` on `127.0.0.1:7340` as a systemd **user** service, with lingering so it
-  runs without you logged in and comes back after a reboot.
+- `daydream serve` on `127.0.0.1:7340` as a user service: on Linux a systemd **user** unit,
+  with lingering so it runs without you logged in and comes back after a reboot; on macOS a
+  launchd agent (`~/Library/LaunchAgents/io.github.jnfisher.daydream.plist`), which runs
+  while you are logged in, logging to `~/Library/Logs/daydream/`.
 - `tailscale funnel` from port 443 to it, kept across reboots by Tailscale.
 
 Nothing else on the machine is exposed: Funnel forwards only that one port, and Daydream
@@ -27,11 +29,22 @@ asks for the token on everything but its sign-in page and health check.
 ## What you need
 
 - Linux with systemd, `git`, `curl` and a C compiler (Debian/Ubuntu:
-  `sudo apt install git curl build-essential`).
-- Tailscale installed and logged in (`tailscale up`), with MagicDNS and HTTPS certificates on
+  `sudo apt install git curl build-essential`); or macOS with Apple's command line tools
+  (`xcode-select --install`).
+- Tailscale installed and logged in (`tailscale up`, or signed in to the app), with MagicDNS and HTTPS certificates on
   for the tailnet (admin console, DNS). The first `tailscale funnel` prints a link if Funnel
   is not yet allowed for the machine: open it, allow it, and the command carries on.
 - About 10 minutes for the first build.
+
+### On a Mac
+
+- Use Tailscale's **standalone** app (tailscale.com/download/mac) or Homebrew's `tailscale`,
+  not the Mac App Store build: Funnel from the command line may not work in the App Store
+  one. The script finds the CLI on the `PATH` or inside `/Applications/Tailscale.app`.
+- It needs no `sudo`.
+- launchd runs Daydream only while you are logged in. For a Mac left to serve, keep it awake
+  (System Settings, Energy: prevent automatic sleeping when the display is off) and turn on
+  automatic login if it should come back by itself after a restart.
 
 ## Run it
 
@@ -40,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/jnfisher/daydream/main/tools/deploy
 bash funnel.sh
 ```
 
-It asks for `sudo` twice at most: `loginctl enable-linger` (once), and `tailscale funnel`
+On Linux it asks for `sudo` twice at most: `loginctl enable-linger` (once), and `tailscale funnel`
 unless you are Tailscale's operator (`sudo tailscale set --operator=$USER` once avoids it).
 
 It ends with the URLs. Check from outside the tailnet, for example on a phone with wifi off:
@@ -85,7 +98,7 @@ To follow `main` without thinking about it:
 ```sh
 daydream-funnel auto-update on     # checks every 15 minutes (DAYDREAM_UPDATE_EVERY=1h for hourly)
 daydream-funnel auto-update off
-journalctl --user -u daydream-update    # what the last runs did
+journalctl --user -u daydream-update    # what the last runs did (macOS: ~/Library/Logs/daydream/update.log)
 ```
 
 `~/.local/bin` is on the `PATH` of most distributions once it exists (log in again after the
@@ -104,5 +117,6 @@ daydream-funnel off                       # stop the funnel, the service and aut
 Here `funnel.sh` is `daydream-funnel` or any copy of the script. A commit given as
 `DAYDREAM_REF` must be the full hash.
 
-Logs: `journalctl --user -u daydream`. Status: `systemctl --user status daydream` and
-`tailscale funnel status`.
+Logs: `journalctl --user -u daydream` (macOS: `~/Library/Logs/daydream/serve.log` and
+`update.log`). Status: `systemctl --user status daydream` (macOS:
+`launchctl print gui/$UID/io.github.jnfisher.daydream`) and `tailscale funnel status`.
