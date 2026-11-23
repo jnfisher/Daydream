@@ -105,5 +105,6 @@ fn stock_mme_export_through_jet() {
         }
         d
     };
-    assert_same_data(&numbers(as_written(data)), &numbers(read));
+    // empty texts go in as zero-length texts, as in NMR's own MME export
+    assert_same_data(&numbers(data), &numbers(read));
 }

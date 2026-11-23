@@ -356,7 +356,7 @@ impl MmeTable {
 pub fn plan(data: &NmrData) -> String {
     let tables = tables();
     let plan: Vec<_> = tables.iter().map(MmeTable::plan_table).collect();
-    crate::jet::plan_for(&plan, data)
+    crate::jet::plan_for(&plan, data, false)
 }
 
 /// A range of rooms left out of the export.

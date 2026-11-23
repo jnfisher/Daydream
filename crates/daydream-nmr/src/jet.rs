@@ -86,12 +86,14 @@ pub fn plan(data: &NmrData) -> Result<String, JetError> {
                 .map(|i| (i.name, i.primary, i.columns.to_vec())),
         })
         .collect();
-    Ok(plan_for(&tables, data))
+    Ok(plan_for(&tables, data, true))
 }
 
 /// The plan for `data` over `tables` (another `.mdb`'s, such as MME's): each table `data`
-/// has, in `tables`' order, with the columns `data` has.
-pub fn plan_for(tables: &[PlanTable], data: &NmrData) -> String {
+/// has, in `tables`' order, with the columns `data` has. With `empty_as_null`, an empty
+/// text goes in as Null (NMR's export: its text columns are required, so Jet refuses
+/// both); without, as a zero-length text (MME's file, which holds empty room names).
+pub fn plan_for(tables: &[PlanTable], data: &NmrData, empty_as_null: bool) -> String {
     let mut out = String::new();
     for t in tables {
         let Some(rows) = data.table(t.name) else {
@@ -124,8 +126,7 @@ pub fn plan_for(tables: &[PlanTable], data: &NmrData) -> String {
                     Value::Null => out.push('N'),
                     Value::Long(n) => write!(out, "L{n}").unwrap(),
                     Value::Double(d) => write!(out, "D{d:?}").unwrap(),
-                    // an empty string is Null: NMR's text columns do not allow zero length
-                    Value::Text(s) if s.is_empty() => out.push('N'),
+                    Value::Text(s) if s.is_empty() && empty_as_null => out.push('N'),
                     Value::Text(s) => {
                         out.push('S');
                         escape(s, &mut out);
