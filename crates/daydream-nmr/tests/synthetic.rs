@@ -170,3 +170,54 @@ fn zero_runtime_clears_game_state_only() {
     assert_eq!(rooms.columns.len(), t.columns.len());
     assert!(t.columns.iter().any(|c| matches!(c.source, Source::Zero)));
 }
+
+#[test]
+fn like_nmr_trims_text_and_builds_new_records_from_the_one_before() {
+    let dir = tempfile::tempdir().unwrap();
+    random_realm(dir.path(), 3, 6);
+    let realm = Realm::open(dir.path()).unwrap();
+    let mut data = export(&realm, &full()).unwrap();
+    let races = data.table_mut("Races").unwrap();
+    let (name, number) = (
+        races.position("Name").unwrap(),
+        races.position("Number").unwrap(),
+    );
+    races.rows[0][name] = Value::Text("  Elf \0".into());
+    let mut new = races.rows[1].clone();
+    new[number] = Value::Long(100);
+    new[name] = Value::Text("Gnome".into());
+    races.rows.push(new);
+    let opts = ImportOptions {
+        like_nmr: true,
+        ..ImportOptions::default()
+    };
+    let reports = import(&realm, &data, &opts).unwrap();
+    let r = reports.iter().find(|r| r.table == "Races").unwrap();
+    assert_eq!(r.inserted, 1, "{r:?}");
+
+    let layout = layout_of(daydream_wcc::tables::Table::Races, LayoutSet::Dos);
+    let f = layout.field("name").unwrap();
+    let recs = &records(dir.path())
+        .into_iter()
+        .find(|(s, _)| s == stem(daydream_wcc::tables::Table::Races))
+        .unwrap()
+        .1;
+    let by_number = |n: i32| {
+        &recs
+            .iter()
+            .find(|(_, b)| b[..2] == (n as i16).to_le_bytes())
+            .unwrap()
+            .1
+    };
+    // trimmed, then padded with spaces (the NUL was inside the text)
+    let first = by_number(number_of(&data.table("Races").unwrap().rows[0][number]));
+    let mut want = b"Elf \0".to_vec();
+    want.resize(29, b' '); // NMR's Name is 29 of the member's 30 bytes
+    assert_eq!(&first[f.offset..f.offset + 29], &want[..]);
+    // the new record carries the last row's bytes outside the columns
+    let last = by_number(number_of(&data.table("Races").unwrap().rows[2][number]));
+    let added = by_number(100);
+    let unknown = layout.field("unk_0x05C").unwrap();
+    let span = unknown.offset..unknown.offset + unknown.size;
+    assert_eq!(&added[span.clone()], &last[span]);
+}

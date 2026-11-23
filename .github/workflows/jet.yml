@@ -1,10 +1,14 @@
-name: NMR .mdb through Jet
+name: Windows (Jet and Btrieve)
 
-# Writes NMR-format .mdb files through Windows' own Jet 4.0 engine (as NMR does), reads them
-# back with Daydream's pure-Rust reader and imports them into a copy of the realm: a random
-# realm covering every column, and the stock 1.11p world. It needs a Windows runner, which
-# is slower than the main CI, so it runs only when the code it covers changes, nightly, and
-# by hand.
+# What only Windows can check, against the engines NMR itself uses:
+# - Jet: writes NMR-format .mdb files through Windows' own Jet 4.0 engine (as NMR does), reads
+#   them back with Daydream's pure-Rust reader and imports them into a copy of the realm: a
+#   random realm covering every column, and the stock 1.11p world.
+# - Btrieve: reads every stock file, before and after Daydream's in-place writer rewrites it,
+#   through the real Btrieve 6.15 engine (WBTRV32.DLL and W32MKDE.EXE from a pinned
+#   Nightmare Redux checkout), key by key, and compares with Daydream's reader.
+# A Windows runner is slower than the main CI, so this runs only when the code it covers
+# changes, nightly, and by hand.
 on:
   pull_request:
     paths:
@@ -13,6 +17,7 @@ on:
       - "crates/daydream-types/**"
       - "crates/daydream-wcc/**"
       - "tools/nmr/**"
+      - "tools/btrieve/**"
       - "vendor/**"
       - "Cargo.lock"
       - ".github/workflows/jet.yml"
@@ -24,6 +29,7 @@ on:
       - "crates/daydream-types/**"
       - "crates/daydream-wcc/**"
       - "tools/nmr/**"
+      - "tools/btrieve/**"
       - "vendor/**"
       - "Cargo.lock"
       - ".github/workflows/jet.yml"
@@ -47,9 +53,31 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     env:
-      DAYDREAM_STOCK_CACHE: ${{ github.workspace }}\..\stock-cache
+      DAYDREAM_STOCK_CACHE: ${{ github.workspace }}\_stock-cache
+      DAYDREAM_BTRIEVE_DIR: ${{ github.workspace }}\_nmr
     steps:
       - uses: actions/checkout@v4
+
+      # Nightmare Redux's copy of the Btrieve 6.15 workstation engine, at a pinned commit
+      - uses: actions/checkout@v4
+        with:
+          repository: jnfisher/Nightmare-Redux
+          ref: e079ebc509f9c5d9d3b4a18eb1dfff74d1f48f83
+          path: _nmr
+          sparse-checkout: |
+            WBTRV32.DLL
+            W32MKDE.EXE
+            W32MKRC.DLL
+            W32MKSET.DLL
+            WBTRV32 - Registry Settings.reg
+            nightmare_redux.exe
+            NMRTaskBar.ocx
+            exlimiter.ocx
+            PAln32.dll
+            lltmmudxp.dll
+            ability.mdb
+            _fresh dats.7z
+          sparse-checkout-cone-mode: false
 
       - name: Toolchain (from rust-toolchain.toml)
         shell: bash
@@ -75,5 +103,90 @@ jobs:
           $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
           & $ps32 -NoProfile -Command "[IntPtr]::Size; (New-Object -ComObject ADOX.Catalog).GetType().FullName"
 
+      - name: Btrieve engine settings (as NMR installs them)
+        shell: pwsh
+        run: reg import "_nmr\WBTRV32 - Registry Settings.reg"
+
       - name: test (through Jet)
-        run: cargo test -p daydream-nmr --locked --test all -- --nocapture
+        run: cargo test -p daydream-nmr --locked --test all -- --nocapture --skip windows_nmr
+
+      - name: test (through Btrieve)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: cargo test -p daydream-wcc --locked --test all windows_btrieve -- --nocapture
+
+      # NMR's Database Importer, driven by tools/nmr/nmr-import.ps1: the controls NMR needs
+      # come from Microsoft's VB6 SP6 update, extracted once and cached
+      - name: VB6 controls cache
+        if: ${{ !cancelled() }}
+        id: vb6
+        uses: actions/cache@v4
+        with:
+          path: _vb6
+          key: vb6-kb2708437-v1
+
+      - name: VB6 controls (Microsoft's VB6 SP6 cumulative update, extracted)
+        if: ${{ !cancelled() && steps.vb6.outputs.cache-hit != 'true' }}
+        shell: pwsh
+        run: |
+          $urls = 'https://download.microsoft.com/download/1/1/d/11d5349e-a432-4e17-a595-62d6889519ac/VB60SP6-KB2708437-x86-ENU.msi',
+                  'https://download.microsoft.com/download/5/6/3/5635d6a9-885e-4c80-a2e7-8a7f4488fbf1/VB60SP6-KB2708437-x86-ENU.msi'
+          New-Item -ItemType Directory -Force _vb6 | Out-Null
+          $i = 0
+          foreach ($u in $urls) {
+            $i++
+            $msi = "$env:RUNNER_TEMP\vb6sp6-$i.msi"
+            try { Invoke-WebRequest $u -OutFile $msi } catch { Write-Output "$u : $_"; continue }
+            Write-Output "$u : $((Get-Item $msi).Length) bytes, sha256 $((Get-FileHash $msi).Hash)"
+            Start-Process msiexec -Wait -ArgumentList '/a', "`"$msi`"", '/qn', "TARGETDIR=`"$env:RUNNER_TEMP\vb6x-$i`""
+            Get-ChildItem -Recurse "$env:RUNNER_TEMP\vb6x-$i" -Include *.ocx, *.dll | ForEach-Object {
+              Write-Output "  $($_.Name) $($_.VersionInfo.FileVersion)"
+              Copy-Item $_.FullName _vb6 -Force
+            }
+          }
+
+      - name: NMR's components
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $sys = "$env:SystemRoot\SysWOW64"
+          foreach ($f in 'MSCOMCTL.OCX', 'COMDLG32.OCX', 'TABCTL32.OCX', 'MSSTDFMT.DLL', 'scrrun.dll', 'msvbvm60.dll') {
+            $there = Test-Path "$sys\$f"
+            $ours = Test-Path "_vb6\$f"
+            Write-Output ("{0,-14} on the runner: {1,-5} in the update: {2}" -f $f, $there, $ours)
+            if (-not $there -and $ours) { Copy-Item "_vb6\$f" $sys }
+          }
+          foreach ($f in 'MSCOMCTL.OCX', 'COMDLG32.OCX', 'TABCTL32.OCX', 'MSSTDFMT.DLL') {
+            if (Test-Path "$sys\$f") { & "$sys\regsvr32.exe" /s "$sys\$f"; Write-Output "regsvr32 $f : $LASTEXITCODE" }
+          }
+          foreach ($f in 'NMRTaskBar.ocx', 'exlimiter.ocx', 'PAln32.dll') {
+            & "$sys\regsvr32.exe" /s "$pwd\_nmr\$f"; Write-Output "regsvr32 $f : $LASTEXITCODE"
+          }
+          $dao = "${env:CommonProgramFiles(x86)}\Microsoft Shared\DAO\dao360.dll"
+          Write-Output "dao360: $(Test-Path $dao)"
+
+      - name: NMR's realm (fresh 1.11p Worldgroup files)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          7z x "_nmr\_fresh dats.7z" -o_wg -y | Out-Null
+          # Btrieve ends a file name at the first space
+          New-Item -ItemType Directory -Force _realm | Out-Null
+          Copy-Item "_wg\_dats\MajorMUD v1.11p final\*" _realm
+
+      - name: test (through NMR)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        env:
+          DAYDREAM_NMR_DIR: ${{ github.workspace }}\_nmr
+          DAYDREAM_NMR_REALM: ${{ github.workspace }}\_realm
+          DAYDREAM_NMR_OUT: ${{ github.workspace }}\_nmr-out
+        run: cargo test -p daydream-nmr --locked --test all windows_nmr -- --nocapture
+
+      - name: NMR import artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmr-import
+          path: _nmr-out/*/nmr-out
+          if-no-files-found: ignore

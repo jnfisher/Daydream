@@ -142,7 +142,7 @@ pub fn export(realm: &Realm, opts: &ExportOptions) -> Result<NmrData, ExportErro
 }
 
 /// The rows of a table sorted by its index columns, as NMR walks the Btrieve file.
-fn sort_by_index(t: &NmrTable, rows: &mut [Vec<Value>]) {
+pub(crate) fn sort_by_index(t: &NmrTable, rows: &mut [Vec<Value>]) {
     let Some(index) = &t.index else { return };
     let at: Vec<usize> = index
         .columns
