@@ -70,6 +70,13 @@ jobs:
             W32MKRC.DLL
             W32MKSET.DLL
             WBTRV32 - Registry Settings.reg
+            nightmare_redux.exe
+            NMRTaskBar.ocx
+            exlimiter.ocx
+            PAln32.dll
+            lltmmudxp.dll
+            ability.mdb
+            _fresh dats.7z
           sparse-checkout-cone-mode: false
 
       - name: Toolchain (from rust-toolchain.toml)
@@ -107,3 +114,81 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: cargo test -p daydream-wcc --locked --test all windows_btrieve -- --nocapture
+
+      # NMR's Database Importer, driven by tools/nmr/nmr-import.ps1 (a timed spike for now:
+      # it reports, and does not yet fail the job)
+      - name: VB6 controls cache
+        id: vb6
+        uses: actions/cache@v4
+        with:
+          path: _vb6
+          key: vb6-kb2708437-v1
+
+      - name: VB6 controls (Microsoft's VB6 SP6 cumulative update, extracted)
+        if: steps.vb6.outputs.cache-hit != 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $urls = 'https://download.microsoft.com/download/1/1/d/11d5349e-a432-4e17-a595-62d6889519ac/VB60SP6-KB2708437-x86-ENU.msi',
+                  'https://download.microsoft.com/download/5/6/3/5635d6a9-885e-4c80-a2e7-8a7f4488fbf1/VB60SP6-KB2708437-x86-ENU.msi'
+          New-Item -ItemType Directory -Force _vb6 | Out-Null
+          $i = 0
+          foreach ($u in $urls) {
+            $i++
+            $msi = "$env:RUNNER_TEMP\vb6sp6-$i.msi"
+            try { Invoke-WebRequest $u -OutFile $msi } catch { Write-Output "$u : $_"; continue }
+            Write-Output "$u : $((Get-Item $msi).Length) bytes, sha256 $((Get-FileHash $msi).Hash)"
+            Start-Process msiexec -Wait -ArgumentList '/a', "`"$msi`"", '/qn', "TARGETDIR=`"$env:RUNNER_TEMP\vb6x-$i`""
+            Get-ChildItem -Recurse "$env:RUNNER_TEMP\vb6x-$i" -Include *.ocx, *.dll | ForEach-Object {
+              Write-Output "  $($_.Name) $($_.VersionInfo.FileVersion)"
+              Copy-Item $_.FullName _vb6 -Force
+            }
+          }
+
+      - name: NMR's components
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $sys = "$env:SystemRoot\SysWOW64"
+          foreach ($f in 'MSCOMCTL.OCX', 'COMDLG32.OCX', 'TABCTL32.OCX', 'MSSTDFMT.DLL', 'scrrun.dll', 'msvbvm60.dll') {
+            $there = Test-Path "$sys\$f"
+            $ours = Test-Path "_vb6\$f"
+            Write-Output ("{0,-14} on the runner: {1,-5} in the update: {2}" -f $f, $there, $ours)
+            if (-not $there -and $ours) { Copy-Item "_vb6\$f" $sys }
+          }
+          foreach ($f in 'MSCOMCTL.OCX', 'COMDLG32.OCX', 'TABCTL32.OCX', 'MSSTDFMT.DLL') {
+            if (Test-Path "$sys\$f") { & "$sys\regsvr32.exe" /s "$sys\$f"; Write-Output "regsvr32 $f : $LASTEXITCODE" }
+          }
+          foreach ($f in 'NMRTaskBar.ocx', 'exlimiter.ocx', 'PAln32.dll') {
+            & "$sys\regsvr32.exe" /s "$pwd\_nmr\$f"; Write-Output "regsvr32 $f : $LASTEXITCODE"
+          }
+          $dao = "${env:CommonProgramFiles(x86)}\Microsoft Shared\DAO\dao360.dll"
+          Write-Output "dao360: $(Test-Path $dao)"
+
+      - name: NMR import (timed spike)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          7z x "_nmr\_fresh dats.7z" -o_wg -y | Out-Null
+          $wg = "_wg\_dats\MajorMUD v1.11p final"
+          New-Item -ItemType Directory -Force _import | Out-Null
+          $t = [Diagnostics.Stopwatch]::StartNew()
+          cargo run -p daydream-nmr --locked --example stock_mdb -- _import\stock.mdb
+          Write-Output ("stock .mdb written in {0:N1} s, {1} bytes" -f $t.Elapsed.TotalSeconds, (Get-Item _import\stock.mdb).Length)
+          $before = Get-ChildItem $wg | ForEach-Object { "$($_.Name) $((Get-FileHash $_.FullName).Hash)" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools\nmr\nmr-import.ps1 _nmr $wg _import\stock.mdb _nmr-out
+          $code = $LASTEXITCODE
+          $after = Get-ChildItem $wg | ForEach-Object { "$($_.Name) $((Get-FileHash $_.FullName).Hash)" }
+          Compare-Object $before $after | Format-Table -AutoSize | Out-String | Write-Output
+          if (Test-Path _nmr-out\NMR-Log_Import.txt) { Get-Content _nmr-out\NMR-Log_Import.txt -TotalCount 60 }
+          exit $code
+
+      - name: NMR import artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmr-import
+          path: _nmr-out
+          if-no-files-found: ignore
