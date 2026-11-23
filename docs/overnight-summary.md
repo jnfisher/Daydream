@@ -19,7 +19,8 @@ revisited. Pull requests merged once CI was green.
   Map Editor, the Quest Organizer, the Monster Group/Index Changer and the Record Number
   Changer.
 - **M4: the player editors are in** (Users with Revive, Paste Stats and NMR's character
-  export/import; Bank Books; Gangs). The MME export, M4's other half, is next.
+  export/import; Bank Books; Gangs). The MME export, M4's other half, is under way: its
+  tables and the records' own values match NMR's export of the stock world.
 
 ## Pull requests
 
@@ -36,7 +37,8 @@ revisited. Pull requests merged once CI was green.
 | #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | merged (squash e839b9d) |
 | #14 | M3: the Record Number Changer | merged (squash 8725f04) |
 | #15 | M3: the Map Editor (digging rooms) and CSV downloads of lists | merged (squash 508365a) |
-| #16 | M4: Users, Bank Books and Gangs editors, Revive Character, character paste/export/import | open |
+| #16 | M4: Users, Bank Books and Gangs editors, Revive Character, character paste/export/import | merged (squash e4be5ba) |
+| #17 | M4: the MME export, part 1 (MME's tables, the records' own values, rooms and exits) | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -92,6 +94,18 @@ revisited. Pull requests merged once CI was green.
   output) and **Export / Import** (NMR's `Key:value` character text, with its import boxes,
   so a character moves between NMR and Daydream). Tried in Chromium: a user exported and
   imported into another matches it field for field, except the boxes left unticked.
+
+- **The MME export, part 1** (#17). `daydream_nmr::mme` builds MMUD Explorer's `.mdb` as
+  NMR's exporter does: the same tables and columns, every record's own values, the rooms
+  with their exits written as MME shows them ("1/1381 (Door)", "Action#2 ..."), lair
+  monster lists, and NMR's room exclusions (its default list of sysop and test rooms, a
+  sysop's own list, "hide excluded rooms", "legit"). It is checked against **NMR's own MME
+  export of the stock world** (the data file MME ships, pinned by sha256): on the 1.11p
+  realm here, all 26,694 rooms, 1,950 items, 1,101 monsters, 1,379 spells, 178 shops and
+  the classes and races match value for value, except two item weights where that realm
+  differs from the one NMR exported. Not yet: NMR's walk of the world (what is in the game
+  and where it comes from), the lairs table and the monster attack simulation; the export
+  is not offered in the UI or CLI until they are, so nothing reveals more than NMR's would.
 
 ## Decisions taken
 
