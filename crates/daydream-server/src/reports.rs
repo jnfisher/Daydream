@@ -7,6 +7,7 @@
 //! | `GET /api/reports/control-rooms` | each control room and the rooms that name it |
 //! | `GET /api/reports/monster-groups` | each monster group and index, and its monsters |
 //! | `GET /api/reports/npc-rooms` | each room's permanent NPC |
+//! | `GET /api/map?map=` | one map's rooms and exits, and the realm's maps (map 1 when none is given) |
 //!
 //! `rooms`, `shops` and `users` default to true.
 
@@ -115,6 +116,25 @@ pub(crate) async fn monster_groups(
 pub(crate) async fn npc_rooms(State(s): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
     read(s, |realm, layout| {
         Ok(json!({ "rooms": reports::npc_rooms(realm, layout).map_err(failed)? }))
+    })
+    .await
+}
+
+/// The map asked for.
+#[derive(Debug, Deserialize)]
+pub struct MapQuery {
+    #[serde(default)]
+    map: Option<i64>,
+}
+
+pub(crate) async fn map(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<MapQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let map = q.map.unwrap_or(1);
+    read(s, move |realm, layout| {
+        let view = daydream_nmr::map::map_view(realm, layout, map).map_err(failed)?;
+        Ok(json!({ "map": map, "maps": view.maps, "rooms": view.rooms }))
     })
     .await
 }

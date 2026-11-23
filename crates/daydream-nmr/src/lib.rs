@@ -19,6 +19,7 @@ pub mod data;
 pub mod export;
 pub mod import;
 pub mod jet;
+pub mod map;
 pub mod mdb;
 pub mod modify;
 pub mod presets;

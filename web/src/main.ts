@@ -7,6 +7,7 @@ import { renderAnsi, titleOf, toShown, toWire } from './ansi';
 import { api, type Cell, type ColumnInfo, type Row, type TableInfo } from './api';
 import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './layouts';
 import { listsPage } from './lists';
+import { mapPage } from './map';
 import { toolsPage } from './tools';
 
 /** The editors' tables, in NMR's menu order. */
@@ -141,22 +142,38 @@ function renderNav() {
     if (t === state.table && !onPage()) a.classList.add('active');
     nav.append(a);
   }
-  const lists = h('a', { href: '#/lists', class: 'tools-link' }, 'Lists');
+  const map = h('a', { href: '#/map', class: 'tools-link' }, 'Map');
+  const lists = h('a', { href: '#/lists' }, 'Lists');
   const tools = h('a', { href: '#/tools' }, 'Tools');
+  if (onPage() === 'map') map.classList.add('active');
   if (onPage() === 'lists') lists.classList.add('active');
   if (onPage() === 'tools') tools.classList.add('active');
-  nav.append(lists, tools);
+  nav.append(map, lists, tools);
 }
 
-/** The page the hash names other than an editor: Tools or Lists. */
-const onPage = (): 'tools' | 'lists' | null =>
-  location.hash.startsWith('#/tools') ? 'tools' : location.hash.startsWith('#/lists') ? 'lists' : null;
+type Page = 'tools' | 'lists' | 'map';
+const PAGES: Page[] = ['tools', 'lists', 'map'];
 
-function showPage(which: 'tools' | 'lists' | null) {
+/** The page the hash names other than an editor: Tools, Lists or Map. */
+const onPage = (): Page | null => PAGES.find((p) => location.hash.startsWith(`#/${p}`)) ?? null;
+
+let theMap: ReturnType<typeof mapPage> | null = null;
+let lastPage: Page | null = null;
+
+function showPage(which: Page | null) {
   ($('main') as HTMLElement).hidden = which !== null;
-  for (const id of ['tools', 'lists'] as const) {
+  for (const id of PAGES) {
     const page = $(`#${id}`);
     page.hidden = which !== id;
+    if (id === 'map' && which === 'map') {
+      if (!theMap) {
+        theMap = mapPage();
+        page.append(theMap.el);
+      }
+      // coming back from elsewhere, the rooms may have been edited: load them afresh
+      void theMap.show(lastPage !== 'map');
+      continue;
+    }
     if (which === id && !page.childElementCount) {
       page.append(
         id === 'lists'
@@ -170,6 +187,7 @@ function showPage(which: 'tools' | 'lists' | null) {
       );
     }
   }
+  lastPage = which;
 }
 
 function renderList() {
@@ -370,6 +388,10 @@ function toolbar(t: TableInfo): HTMLElement {
   }
   button('Insert', state.row ? `Copy this record to a new ${t.name} record` : `Add a new ${t.name} record`, () => void insert());
   if (state.row) button('Delete', 'Remove this record from the realm', () => void remove(), 'danger');
+  if (state.row && t.name === 'Rooms') {
+    const [map, room] = state.row.key;
+    bar.append(h('a', { href: `#/map/${map}/${room}`, class: 'button-link' }, 'Map'));
+  }
   bar.append(h('span', { id: 'dirty' }));
   return bar;
 }

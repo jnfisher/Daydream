@@ -68,12 +68,12 @@ impl Default for Scan {
     }
 }
 
-fn n(v: &Value) -> i64 {
+pub(crate) fn n(v: &Value) -> i64 {
     schema::number(v).unwrap_or(0.0) as i64
 }
 
 /// Text up to its first NUL, as NMR's `ClipNull` reads it.
-fn text(v: &Value) -> String {
+pub(crate) fn text(v: &Value) -> String {
     match v {
         Value::Text(s) => s.split('\0').next().unwrap_or("").trim_end().to_string(),
         _ => String::new(),
@@ -81,15 +81,15 @@ fn text(v: &Value) -> String {
 }
 
 /// A table's rows and a lookup of its columns.
-struct Rows(NmrRows);
+pub(crate) struct Rows(pub(crate) NmrRows);
 
 impl Rows {
-    fn load(realm: &Realm, name: &str, layout: LayoutSet) -> Result<Self, ReportError> {
+    pub(crate) fn load(realm: &Realm, name: &str, layout: LayoutSet) -> Result<Self, ReportError> {
         let t = schema::table(name).expect("an NMR table");
         Ok(Rows(export_table(realm, t, layout)?))
     }
 
-    fn at(&self, column: &str) -> Result<usize, ReportError> {
+    pub(crate) fn at(&self, column: &str) -> Result<usize, ReportError> {
         self.0
             .position(column)
             .ok_or_else(|| ReportError::NoColumn {
@@ -99,7 +99,12 @@ impl Rows {
     }
 
     /// The positions of `stem 0`, `stem 1`, ... `stem {count - 1}`, with `suffix`.
-    fn family(&self, stem: &str, count: usize, suffix: &str) -> Result<Vec<usize>, ReportError> {
+    pub(crate) fn family(
+        &self,
+        stem: &str,
+        count: usize,
+        suffix: &str,
+    ) -> Result<Vec<usize>, ReportError> {
         (0..count)
             .map(|x| self.at(&format!("{stem} {x}{suffix}")))
             .collect()

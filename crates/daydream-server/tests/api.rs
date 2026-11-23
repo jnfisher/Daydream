@@ -545,6 +545,7 @@ async fn the_lists_answer() {
         "/api/reports/control-rooms",
         "/api/reports/monster-groups",
         "/api/reports/npc-rooms",
+        "/api/map?map=2",
     ] {
         let (status, body) = get(dir.path(), uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
