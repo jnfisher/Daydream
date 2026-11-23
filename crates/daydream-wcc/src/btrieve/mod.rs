@@ -2,7 +2,9 @@
 //!
 //! This is the only code in the project that knows the Btrieve file format; the record
 //! decoders take the byte slices it yields. It follows the parsing half of MBBSEmu wbtrv32's
-//! `btrieve/BtrieveDatabase.cc` (no index, no cursor emulation, no writes).
+//! `btrieve/BtrieveDatabase.cc` (no cursor emulation). Two Daydream additions go further:
+//! [`index`] reads the index trees back to check them against the records, and [`update`]
+//! rewrites records in place when no key changes.
 //!
 //! # What it reads
 //!
@@ -41,9 +43,11 @@
 pub mod acs;
 pub mod error;
 pub mod header;
+pub mod index;
 pub mod keys;
 mod pages;
 mod pat;
+pub mod update;
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -53,6 +57,7 @@ use std::path::{Path, PathBuf};
 pub use acs::Acs;
 pub use error::BtrieveError;
 pub use header::{Header, RecordType, Version};
+pub use index::{IndexEntry, IndexReport, RecordAddress};
 pub use keys::{Key, KeyAttributes, KeyDataType, KeyDef};
 
 use error::{Fault, ReadError};
@@ -120,6 +125,9 @@ pub struct BtrieveFile {
     reader: PageReader,
     pat: Option<Pat>,
     deleted: HashSet<u64>,
+    /// Each key's index tree: its root page and entry count, from the key's first segment
+    /// definition (Daydream addition).
+    roots: Vec<index::Root>,
 }
 
 impl std::fmt::Debug for BtrieveFile {
@@ -216,6 +224,7 @@ impl BtrieveFile {
             path,
             reader,
             deleted: HashSet::new(),
+            roots: Vec::new(),
         };
         file.read_tables().map_err(|e| e.at(&file.path))?;
         tracing::debug!(
@@ -375,6 +384,9 @@ impl BtrieveFile {
                 self.acs.push(acs.clone());
             }
             let continues = raw.attributes.has(Attr::SEGMENTED);
+            if current.is_none() {
+                self.roots.push(index::Root::parse(&def));
+            }
             let key = current.get_or_insert_with(|| Key {
                 number,
                 segments: Vec::new(),
