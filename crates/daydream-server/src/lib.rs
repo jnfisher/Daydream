@@ -73,6 +73,7 @@ pub fn router(realm_dir: &Path) -> Router {
             post(tools::import).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),
         )
         .route("/api/tools/delete", post(tools::delete))
+        .route("/api/tools/modify", post(tools::modify))
         .route(
             "/api/tools/merge-users",
             post(tools::merge_users).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),

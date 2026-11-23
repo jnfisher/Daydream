@@ -109,3 +109,9 @@ pre.terminal { background: #000; color: #aaa; font: 14px/1.25 ui-monospace, "Cas
 .tool-result { margin-top: .75rem; }
 .tool .error { color: var(--danger); }
 pre.errors { background: var(--bg); border: 1px solid var(--line); padding: .5rem; max-height: 14rem; overflow: auto; font-size: .85rem; }
+.tool fieldset > div > label[hidden], .tool select[hidden], .tool input[hidden], .tool span[hidden] { display: none; }
+.tool table.changes { margin-top: .5rem; max-height: 30rem; display: block; overflow: auto; }
+.tool fieldset select, .tool fieldset input.number { width: auto; }
+.tool fieldset input.number { width: 6rem; }
+.tool fieldset label { white-space: nowrap; }
+.tool fieldset .toolbar { margin: .3rem 0; }

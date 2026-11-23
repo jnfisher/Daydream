@@ -75,9 +75,11 @@ pub struct ImportOptions {
 
 /// Records of one table by number: `from..=to` of the first index column, and for rooms
 /// only those of map `map`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Range {
+    #[serde(default)]
     pub table: String,
+    #[serde(default)]
     pub map: Option<i64>,
     pub from: i64,
     pub to: i64,

@@ -1,7 +1,8 @@
 // NMR's database tools: the Database Importer, the Database Deleter and Merge Users, laid
 // out as NMR's forms lay them out, over the server's /api/tools routes.
 
-import type { Report } from './api';
+import { ABILITIES } from './abilities';
+import { api, type Report, type TableInfo } from './api';
 
 /** The tables NMR's importer and deleter list, in its order. */
 const TABLES = ['Items', 'Monsters', 'Spells', 'Shops', 'Races', 'Classes', 'Rooms', 'Actions', 'Messages', 'Textblocks'];
@@ -245,7 +246,202 @@ function mergeUsers(): HTMLElement {
   return card;
 }
 
+const OPS: [string, string][] = [['add', '+'], ['sub', '-'], ['mul', '*'], ['div', '/'], ['percent', '%'], ['set', '=']];
+const CMPS: [string, string][] = [['eq', '='], ['le', '<='], ['ge', '>='], ['ne', '<>']];
+
+const options = (pairs: [string, string][]) => pairs.map(([v, label]) => h('option', { value: v }, label));
+const numberInput = (value = '') => input({ type: 'text', inputmode: 'decimal', class: 'number', value });
+
+/** The numeric columns a modifier may change or test, with each numbered family (`Item Drop % 0`,
+ *  `Item Drop % 1`, ...) offered whole as well, as `Item Drop % *`. */
+function numericColumns(t: TableInfo): [string, string][] {
+  const keys = new Set(t.key);
+  const names = t.columns.filter((c) => (c.type === 'long' || c.type === 'double') && !keys.has(c.name)).map((c) => c.name);
+  const families = new Map<string, number>();
+  for (const n of names) {
+    const m = /^(.*\D) ?\d+$/.exec(n);
+    if (m) families.set(m[1]!, (families.get(m[1]!) ?? 0) + 1);
+  }
+  const out: [string, string][] = [];
+  for (const [f, count] of families) if (count > 1) out.push([`${f}*`, `${f.trimEnd()} (every one)`]);
+  return [...names.map((n): [string, string] => [n, n]), ...out];
+}
+
+/** The columns a field choice stands for. */
+function columnsOf(t: TableInfo, choice: string): string[] {
+  if (!choice.endsWith('*')) return [choice];
+  const stem = choice.slice(0, -1);
+  return t.columns.map((c) => c.name).filter((n) => n.startsWith(stem) && /^\s?\d+$/.test(n.slice(stem.length)));
+}
+
+const abilityOptions = () =>
+  options(
+    Object.entries(ABILITIES)
+      .filter(([n]) => n !== '0')
+      .map(([n, [name]]): [string, string] => [n, `${n}: ${name}`]),
+  );
+
+function universalModifier(tables: TableInfo[], changed: () => void): HTMLElement {
+  const card = h('section', { class: 'tool' }, h('h2', {}, 'Universal Modifier'));
+  card.append(
+    h(
+      'p',
+      { class: 'hint' },
+      'Change a field (or an ability) in many records at once. Preview lists every value that would change; Start writes them.',
+    ),
+  );
+  const editable = tables.filter((t) => TABLES.includes(t.name) && t.name !== 'Actions');
+  const editor = h('select', {}, ...editable.map((t) => h('option', { value: t.name }, t.name)));
+  const top = h('div', { class: 'toolbar' }, h('label', {}, 'Editor: ', editor));
+  const rangeBody = h('tbody');
+  const actionBox = h('div');
+  const onlyIfBox = h('div');
+  const out = h('div');
+  const preview = h('button', { type: 'button' }, 'Preview');
+  const go = h('button', { type: 'button', class: 'primary' }, 'Start');
+  card.append(
+    top,
+    h('table', { class: 'grid' }, rangeHead('Table'), rangeBody),
+    h('fieldset', {}, h('legend', {}, 'Modifier'), actionBox),
+    h('fieldset', {}, h('legend', {}, 'Only Perform Action If:'), onlyIfBox),
+    h('div', { class: 'toolbar' }, preview, go),
+    out,
+  );
+
+  let build: () => object = () => ({});
+
+  const setUp = () => {
+    const t = editable.find((x) => x.name === editor.value)!;
+    const hasAbilities = t.columns.some((c) => c.name === 'Ability 0');
+    const [tr, range] = rangeRow(t.name, false);
+    rangeBody.replaceChildren(tr);
+
+    // the action: a field or an ability, the arithmetic, the value and the limit
+    const kinds: [string, string][] = [['math', 'Field']];
+    if (hasAbilities) kinds.push(['change_ability', 'Ability value'], ['give_ability', 'Give ability'], ['take_ability', 'Take ability']);
+    const kind = h('select', {}, ...options(kinds));
+    const field = h('select', {}, ...options(numericColumns(t)));
+    const ability = h('select', {}, ...abilityOptions());
+    const op = h('select', {}, ...options(OPS));
+    const value = numberInput('0');
+    const limitCmp = h('select', {}, h('option', { value: '' }, '(no limit)'), ...options(CMPS.filter(([c]) => c === 'le' || c === 'ge')));
+    const limit = numberInput();
+    const clear = input({ type: 'checkbox' });
+    const fieldLabel = h('label', {}, 'Field ', field);
+    const abilityLabel = h('label', {}, 'Ability ', ability);
+    const opLabel = h('label', {}, 'Modifier ', op);
+    const valueLabel = h('label', {}, 'Value ', value);
+    const limitLabel = h('label', {}, 'Limit to ', limitCmp, limit);
+    const clearLabel = h('label', {}, clear, ' Clear its value too');
+    const show = () => {
+      const k = kind.value;
+      fieldLabel.hidden = k !== 'math';
+      abilityLabel.hidden = k === 'math';
+      opLabel.hidden = limitLabel.hidden = k === 'give_ability' || k === 'take_ability';
+      valueLabel.hidden = k === 'take_ability';
+      clearLabel.hidden = k !== 'take_ability';
+    };
+    kind.addEventListener('change', show);
+    actionBox.replaceChildren(h('label', {}, kind), fieldLabel, abilityLabel, opLabel, valueLabel, limitLabel, clearLabel);
+    show();
+
+    // three "only if" boxes, as NMR has
+    const conditionKinds: [string, string][] = [['', '(none)'], ['column', 'Field']];
+    if (hasAbilities) conditionKinds.push(['has_ability', 'Has ability'], ['lacks_ability', 'Lacks ability']);
+    const plainColumns = numericColumns(t).filter(([v]) => !v.endsWith('*'));
+    const conditions = [0, 1, 2].map(() => {
+      const k = h('select', {}, ...options(conditionKinds));
+      const col = h('select', {}, ...options(plainColumns));
+      const ab = h('select', {}, ...abilityOptions());
+      const cmp = h('select', {}, ...options(CMPS));
+      const v = numberInput('0');
+      const mustBe = h('span', {}, ' must be ');
+      const sync = () => {
+        col.hidden = k.value !== 'column';
+        ab.hidden = !k.value.endsWith('ability');
+        cmp.hidden = v.hidden = mustBe.hidden = k.value === '';
+      };
+      k.addEventListener('change', sync);
+      sync();
+      return { row: h('div', { class: 'toolbar' }, k, col, ab, mustBe, cmp, v), k, col, ab, cmp, v };
+    });
+    onlyIfBox.replaceChildren(...conditions.map((c) => c.row));
+
+    build = () => {
+      const n = (i: HTMLInputElement) => Number(i.value.trim() || 0);
+      const lim = limitCmp.value ? [limitCmp.value, n(limit)] : null;
+      const k = kind.value;
+      const action =
+        k === 'math'
+          ? { kind: k, columns: columnsOf(t, field.value), op: op.value, value: n(value), limit: lim }
+          : k === 'change_ability'
+            ? { kind: k, ability: Number(ability.value), op: op.value, value: n(value), limit: lim }
+            : k === 'give_ability'
+              ? { kind: k, ability: Number(ability.value), value: n(value) }
+              : { kind: k, ability: Number(ability.value), clear_value: clear.checked };
+      const only_if = conditions
+        .filter((c) => c.k.value)
+        .map((c) =>
+          c.k.value === 'column'
+            ? { kind: 'column', column: c.col.value, cmp: c.cmp.value, value: n(c.v) }
+            : { kind: c.k.value, ability: Number(c.ab.value), cmp: c.cmp.value, value: n(c.v) },
+        );
+      return { table: t.name, action, range: rangeOf(range), only_if };
+    };
+  };
+  editor.addEventListener('change', () => {
+    setUp();
+    out.replaceChildren();
+  });
+  setUp();
+
+  const run = async (dryRun: boolean) => {
+    const body = build();
+    if (!dryRun && !confirm(`Change ${editor.value} records as set? Preview first to see every change.`)) return;
+    out.replaceChildren(h('p', {}, dryRun ? 'Previewing…' : 'Changing…'));
+    try {
+      const res = await post('/api/tools/modify', JSON.stringify({ ...body, dry_run: dryRun }), true);
+      out.replaceChildren(modifyResult(res));
+      if (!dryRun) changed();
+    } catch (e) {
+      out.replaceChildren(failure(e));
+    }
+  };
+  preview.addEventListener('click', () => void run(true));
+  go.addEventListener('click', () => void run(false));
+  return card;
+}
+
+function modifyResult(res: any): HTMLElement {
+  const box = h('div', { class: 'tool-result' });
+  const would = res.dry_run ? 'would change' : 'changed';
+  box.append(
+    h(
+      'p',
+      {},
+      `${res.records} record${res.records === 1 ? '' : 's'} ${would} (${res.changed} value${res.changed === 1 ? '' : 's'}); ` +
+        `${res.unchanged} already as set; ${res.skipped} left out by the "only if" boxes.` +
+        (res.dry_run ? ' Preview: nothing was written.' : ''),
+    ),
+  );
+  if (res.report?.errors?.length) box.append(h('pre', { class: 'errors' }, res.report.errors.join('\n')));
+  if (res.changes.length) {
+    const body = h('tbody');
+    for (const c of res.changes) {
+      body.append(h('tr', {}, ...[c.key.join(' / '), c.column, String(c.before), String(c.after)].map((v) => h('td', {}, v))));
+    }
+    box.append(h('table', { class: 'grid changes' }, h('thead', {}, h('tr', {}, ...['Record', 'Field', 'Before', 'After'].map((c) => h('th', {}, c)))), body));
+    if (res.changes.length < res.changed) box.append(h('p', { class: 'hint' }, `The first ${res.changes.length} changes are listed.`));
+  }
+  return box;
+}
+
 /** The tools page; `changed` runs after a write, so the editors reload what they show. */
 export function toolsPage(changed: () => void): HTMLElement {
-  return h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers());
+  const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers());
+  api
+    .tables()
+    .then((tables) => page.append(universalModifier(tables, changed)))
+    .catch((e) => page.append(failure(e)));
+  return page;
 }

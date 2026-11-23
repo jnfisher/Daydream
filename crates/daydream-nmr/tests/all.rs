@@ -13,6 +13,7 @@ mod support;
 
 mod cases;
 mod mdb_read;
+mod modify;
 mod options;
 mod stock;
 mod synthetic;

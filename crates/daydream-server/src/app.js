@@ -1076,7 +1076,7 @@ function importer(changed2) {
       return;
     }
     const picked = (name) => card.querySelector(`input[name=${name}]:checked`).value;
-    const options = {
+    const options2 = {
       tables: rows.filter((r) => r.use.checked).map((r) => r.table),
       ranges: rows.filter((r) => r.use.checked).map(rangeOf).filter((r) => r !== null),
       skip_existing: picked("existing") === "skip",
@@ -1087,7 +1087,7 @@ function importer(changed2) {
     if (!dryRun && !confirm(`Import ${f2.name} into this realm?`)) return;
     out.replaceChildren(h("p", {}, `${dryRun ? "Previewing" : "Importing"} ${f2.name}\u2026`));
     try {
-      const res = await post(`/api/tools/import?options=${encodeURIComponent(JSON.stringify(options))}`, f2);
+      const res = await post(`/api/tools/import?options=${encodeURIComponent(JSON.stringify(options2))}`, f2);
       out.replaceChildren(reportTable(res.reports, res.dry_run));
       if (!dryRun) changed2();
     } catch (e) {
@@ -1159,8 +1159,166 @@ function mergeUsers() {
   go.addEventListener("click", () => void run(false));
   return card;
 }
+var OPS = [["add", "+"], ["sub", "-"], ["mul", "*"], ["div", "/"], ["percent", "%"], ["set", "="]];
+var CMPS = [["eq", "="], ["le", "<="], ["ge", ">="], ["ne", "<>"]];
+var options = (pairs) => pairs.map(([v, label]) => h("option", { value: v }, label));
+var numberInput = (value = "") => input({ type: "text", inputmode: "decimal", class: "number", value });
+function numericColumns(t2) {
+  const keys = new Set(t2.key);
+  const names2 = t2.columns.filter((c) => (c.type === "long" || c.type === "double") && !keys.has(c.name)).map((c) => c.name);
+  const families2 = /* @__PURE__ */ new Map();
+  for (const n of names2) {
+    const m = /^(.*\D) ?\d+$/.exec(n);
+    if (m) families2.set(m[1], (families2.get(m[1]) ?? 0) + 1);
+  }
+  const out = [];
+  for (const [f2, count] of families2) if (count > 1) out.push([`${f2}*`, `${f2.trimEnd()} (every one)`]);
+  return [...names2.map((n) => [n, n]), ...out];
+}
+function columnsOf(t2, choice) {
+  if (!choice.endsWith("*")) return [choice];
+  const stem = choice.slice(0, -1);
+  return t2.columns.map((c) => c.name).filter((n) => n.startsWith(stem) && /^\s?\d+$/.test(n.slice(stem.length)));
+}
+var abilityOptions = () => options(
+  Object.entries(ABILITIES).filter(([n]) => n !== "0").map(([n, [name]]) => [n, `${n}: ${name}`])
+);
+function universalModifier(tables, changed2) {
+  const card = h("section", { class: "tool" }, h("h2", {}, "Universal Modifier"));
+  card.append(
+    h(
+      "p",
+      { class: "hint" },
+      "Change a field (or an ability) in many records at once. Preview lists every value that would change; Start writes them."
+    )
+  );
+  const editable = tables.filter((t2) => TABLES.includes(t2.name) && t2.name !== "Actions");
+  const editor = h("select", {}, ...editable.map((t2) => h("option", { value: t2.name }, t2.name)));
+  const top = h("div", { class: "toolbar" }, h("label", {}, "Editor: ", editor));
+  const rangeBody = h("tbody");
+  const actionBox = h("div");
+  const onlyIfBox = h("div");
+  const out = h("div");
+  const preview = h("button", { type: "button" }, "Preview");
+  const go = h("button", { type: "button", class: "primary" }, "Start");
+  card.append(
+    top,
+    h("table", { class: "grid" }, rangeHead("Table"), rangeBody),
+    h("fieldset", {}, h("legend", {}, "Modifier"), actionBox),
+    h("fieldset", {}, h("legend", {}, "Only Perform Action If:"), onlyIfBox),
+    h("div", { class: "toolbar" }, preview, go),
+    out
+  );
+  let build = () => ({});
+  const setUp = () => {
+    const t2 = editable.find((x) => x.name === editor.value);
+    const hasAbilities = t2.columns.some((c) => c.name === "Ability 0");
+    const [tr, range] = rangeRow(t2.name, false);
+    rangeBody.replaceChildren(tr);
+    const kinds = [["math", "Field"]];
+    if (hasAbilities) kinds.push(["change_ability", "Ability value"], ["give_ability", "Give ability"], ["take_ability", "Take ability"]);
+    const kind = h("select", {}, ...options(kinds));
+    const field = h("select", {}, ...options(numericColumns(t2)));
+    const ability = h("select", {}, ...abilityOptions());
+    const op = h("select", {}, ...options(OPS));
+    const value = numberInput("0");
+    const limitCmp = h("select", {}, h("option", { value: "" }, "(no limit)"), ...options(CMPS.filter(([c]) => c === "le" || c === "ge")));
+    const limit = numberInput();
+    const clear = input({ type: "checkbox" });
+    const fieldLabel = h("label", {}, "Field ", field);
+    const abilityLabel = h("label", {}, "Ability ", ability);
+    const opLabel = h("label", {}, "Modifier ", op);
+    const valueLabel = h("label", {}, "Value ", value);
+    const limitLabel = h("label", {}, "Limit to ", limitCmp, limit);
+    const clearLabel = h("label", {}, clear, " Clear its value too");
+    const show2 = () => {
+      const k2 = kind.value;
+      fieldLabel.hidden = k2 !== "math";
+      abilityLabel.hidden = k2 === "math";
+      opLabel.hidden = limitLabel.hidden = k2 === "give_ability" || k2 === "take_ability";
+      valueLabel.hidden = k2 === "take_ability";
+      clearLabel.hidden = k2 !== "take_ability";
+    };
+    kind.addEventListener("change", show2);
+    actionBox.replaceChildren(h("label", {}, kind), fieldLabel, abilityLabel, opLabel, valueLabel, limitLabel, clearLabel);
+    show2();
+    const conditionKinds = [["", "(none)"], ["column", "Field"]];
+    if (hasAbilities) conditionKinds.push(["has_ability", "Has ability"], ["lacks_ability", "Lacks ability"]);
+    const plainColumns = numericColumns(t2).filter(([v]) => !v.endsWith("*"));
+    const conditions = [0, 1, 2].map(() => {
+      const k2 = h("select", {}, ...options(conditionKinds));
+      const col = h("select", {}, ...options(plainColumns));
+      const ab = h("select", {}, ...abilityOptions());
+      const cmp = h("select", {}, ...options(CMPS));
+      const v = numberInput("0");
+      const mustBe = h("span", {}, " must be ");
+      const sync = () => {
+        col.hidden = k2.value !== "column";
+        ab.hidden = !k2.value.endsWith("ability");
+        cmp.hidden = v.hidden = mustBe.hidden = k2.value === "";
+      };
+      k2.addEventListener("change", sync);
+      sync();
+      return { row: h("div", { class: "toolbar" }, k2, col, ab, mustBe, cmp, v), k: k2, col, ab, cmp, v };
+    });
+    onlyIfBox.replaceChildren(...conditions.map((c) => c.row));
+    build = () => {
+      const n = (i) => Number(i.value.trim() || 0);
+      const lim = limitCmp.value ? [limitCmp.value, n(limit)] : null;
+      const k2 = kind.value;
+      const action = k2 === "math" ? { kind: k2, columns: columnsOf(t2, field.value), op: op.value, value: n(value), limit: lim } : k2 === "change_ability" ? { kind: k2, ability: Number(ability.value), op: op.value, value: n(value), limit: lim } : k2 === "give_ability" ? { kind: k2, ability: Number(ability.value), value: n(value) } : { kind: k2, ability: Number(ability.value), clear_value: clear.checked };
+      const only_if = conditions.filter((c) => c.k.value).map(
+        (c) => c.k.value === "column" ? { kind: "column", column: c.col.value, cmp: c.cmp.value, value: n(c.v) } : { kind: c.k.value, ability: Number(c.ab.value), cmp: c.cmp.value, value: n(c.v) }
+      );
+      return { table: t2.name, action, range: rangeOf(range), only_if };
+    };
+  };
+  editor.addEventListener("change", () => {
+    setUp();
+    out.replaceChildren();
+  });
+  setUp();
+  const run = async (dryRun) => {
+    const body = build();
+    if (!dryRun && !confirm(`Change ${editor.value} records as set? Preview first to see every change.`)) return;
+    out.replaceChildren(h("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
+    try {
+      const res = await post("/api/tools/modify", JSON.stringify({ ...body, dry_run: dryRun }), true);
+      out.replaceChildren(modifyResult(res));
+      if (!dryRun) changed2();
+    } catch (e) {
+      out.replaceChildren(failure(e));
+    }
+  };
+  preview.addEventListener("click", () => void run(true));
+  go.addEventListener("click", () => void run(false));
+  return card;
+}
+function modifyResult(res) {
+  const box = h("div", { class: "tool-result" });
+  const would = res.dry_run ? "would change" : "changed";
+  box.append(
+    h(
+      "p",
+      {},
+      `${res.records} record${res.records === 1 ? "" : "s"} ${would} (${res.changed} value${res.changed === 1 ? "" : "s"}); ${res.unchanged} already as set; ${res.skipped} left out by the "only if" boxes.` + (res.dry_run ? " Preview: nothing was written." : "")
+    )
+  );
+  if (res.report?.errors?.length) box.append(h("pre", { class: "errors" }, res.report.errors.join("\n")));
+  if (res.changes.length) {
+    const body = h("tbody");
+    for (const c of res.changes) {
+      body.append(h("tr", {}, ...[c.key.join(" / "), c.column, String(c.before), String(c.after)].map((v) => h("td", {}, v))));
+    }
+    box.append(h("table", { class: "grid changes" }, h("thead", {}, h("tr", {}, ...["Record", "Field", "Before", "After"].map((c) => h("th", {}, c)))), body));
+    if (res.changes.length < res.changed) box.append(h("p", { class: "hint" }, `The first ${res.changes.length} changes are listed.`));
+  }
+  return box;
+}
 function toolsPage(changed2) {
-  return h("div", { class: "tools" }, importer(changed2), deleter(changed2), mergeUsers());
+  const page = h("div", { class: "tools" }, importer(changed2), deleter(changed2), mergeUsers());
+  api.tables().then((tables) => page.append(universalModifier(tables, changed2))).catch((e) => page.append(failure(e)));
+  return page;
 }
 
 // src/main.ts
@@ -1297,9 +1455,9 @@ function input2(field, info) {
   let control;
   if (pick && "options" in pick) {
     const select2 = h2("select", { "data-col": col });
-    const options = { ...pick.options };
-    if (value !== "" && !(Number(value) in options)) options[Number(value)] = `${value} (unknown)`;
-    for (const [n, label] of Object.entries(options)) {
+    const options2 = { ...pick.options };
+    if (value !== "" && !(Number(value) in options2)) options2[Number(value)] = `${value} (unknown)`;
+    for (const [n, label] of Object.entries(options2)) {
       select2.append(h2("option", { value: n }, `${n}: ${label}`));
     }
     select2.value = value;
