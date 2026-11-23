@@ -9,7 +9,7 @@ import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './l
 import { listsPage } from './lists';
 import { mapPage } from './map';
 import { toolsPage } from './tools';
-import { parseStats } from './users';
+import { exportUser, IMPORT_DEFAULTS, importUser, parseStats, type ImportOptions } from './users';
 
 /** The editors' tables, in NMR's menu order. */
 const ORDER = ['Items', 'Monsters', 'Spells', 'Classes', 'Races', 'Shops', 'Rooms', 'Messages', 'Textblocks', 'Actions', 'Users', 'BankBooks', 'Gangs'];
@@ -396,6 +396,8 @@ function toolbar(t: TableInfo): HTMLElement {
   if (state.row && t.name === 'Users') {
     button('Revive', 'NMR\'s Revive Character: HP and Mana to full, then lives, spells cast and where to move them', () => void revive());
     button('Paste Stats', 'NMR\'s Paste Character: read a capture of the game\'s stat output into the fields', () => void pasteStats());
+    button('Export', 'NMR\'s character export: copy this user as text', () => void exportCharacter());
+    button('Import', 'NMR\'s character import: fill this user from exported text', () => void importCharacter());
   }
   bar.append(h('span', { id: 'dirty' }));
   return bar;
@@ -481,24 +483,43 @@ async function revive() {
   }
 }
 
-/** NMR's Paste Character: the capture goes into the fields, to be saved as any edit. */
-async function pasteStats() {
-  const text = h('textarea', { rows: '14', cols: '80', spellcheck: 'false', 'aria-label': 'Stat capture' });
-  const ok = h('button', { type: 'submit', value: 'ok', class: 'primary' }, 'Paste');
-  const cancel = h('button', { type: 'submit', value: 'cancel' }, 'Cancel');
+/** A modal with a text box and buttons; answers the button pressed (or '' when closed). */
+async function textDialog(intro: string, text: HTMLTextAreaElement, buttons: string[], extra?: HTMLElement): Promise<string> {
   const form = h(
     'form',
     { method: 'dialog' },
-    h('p', {}, "Paste a capture of a character's stat output (or MMUD Explorer's Copy Only Stats). Class, race, level, exp, lives, CP, HP, mana and the six stats are read."),
+    h('p', {}, intro),
     text,
-    h('div', { class: 'toolbar' }, ok, cancel),
+    ...(extra ? [extra] : []),
+    h('div', { class: 'toolbar' }, ...buttons.map((b, i) => h('button', { type: 'submit', value: b, class: i === 0 ? 'primary' : '' }, b))),
   );
   const dialog = h('dialog', { class: 'paste-dialog' }, form);
   document.body.append(dialog);
   dialog.showModal();
   const answer = await new Promise<string>((done) => dialog.addEventListener('close', () => done(dialog.returnValue), { once: true }));
   dialog.remove();
-  if (answer !== 'ok' || text.value.trim().length < 10) return;
+  return answer;
+}
+
+const textBox = (label: string, value = '') => {
+  const t = h('textarea', { rows: '14', cols: '80', spellcheck: 'false', 'aria-label': label });
+  t.value = value;
+  return t;
+};
+
+/** Puts values into the editor's fields, unsaved, and says so. */
+function fillFields(values: Record<string, string>, what: string) {
+  for (const [col, v] of Object.entries(values)) if (column(col)) state.edits.set(col, v);
+  renderEditor();
+  const n = Object.keys(values).length;
+  status(n ? `${what}: ${n} fields filled in; save to keep them.` : `${what}: nothing in the text was recognised.`, n ? 'ok' : 'error');
+}
+
+/** NMR's Paste Character: the capture goes into the fields, to be saved as any edit. */
+async function pasteStats() {
+  const text = textBox('Stat capture');
+  const intro = "Paste a capture of a character's stat output (or MMUD Explorer's Copy Only Stats). Class, race, level, exp, lives, CP, HP, mana and the six stats are read.";
+  if ((await textDialog(intro, text, ['Paste', 'Cancel'])) !== 'Paste' || text.value.trim().length < 10) return;
   const { values, race, cls } = parseStats(text.value);
   for (const [table, name, col] of [
     ['Races', race, 'Race'],
@@ -507,10 +528,54 @@ async function pasteStats() {
     if (!name) continue;
     for (const [n, title] of await names(table)) if (title === name) values[col] = String(n);
   }
-  for (const [col, v] of Object.entries(values)) state.edits.set(col, v);
-  renderEditor();
-  const n = Object.keys(values).length;
-  status(n ? `Pasted ${n} fields; save to keep them.` : 'Nothing in the paste was recognised.', n ? 'ok' : 'error');
+  fillFields(values, 'Paste Stats');
+}
+
+/** NMR's user Export: the saved record as NMR's Key:value text, copied to the clipboard. */
+async function exportCharacter() {
+  if (!state.row) return;
+  const text = textBox('Exported character', exportUser(state.row.values));
+  text.readOnly = true;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(text.value);
+    copied = true;
+  } catch {
+    // no clipboard here: the text is shown to copy by hand
+  }
+  const intro = `${copied ? 'Copied to the clipboard. ' : ''}NMR's character export of the saved record: Import it into another user, here or in NMR.`;
+  await textDialog(intro, text, ['Close']);
+}
+
+/** NMR's user Import, with its boxes; the values go into the fields, to be saved. */
+async function importCharacter() {
+  const text = textBox('Character to import');
+  try {
+    text.value = await navigator.clipboard.readText();
+  } catch {
+    // paste by hand
+  }
+  const labels: [keyof ImportOptions, string][] = [
+    ['name', 'Import Character Name'],
+    ['gang', 'Import Gang Name'],
+    ['deets', 'Import Lives, Suicide, Channel, Cash'],
+    ['rooms', 'Import Rooms'],
+    ['clearItems', 'Clear Items First'],
+    ['clearKeys', 'Clear Keys First'],
+    ['clearSpells', 'Clear Spells First'],
+    ['clearAbils', 'Clear Abilities First'],
+  ];
+  const boxes = labels.map(([k, label]) => {
+    const c = h('input', { type: 'checkbox' });
+    c.checked = IMPORT_DEFAULTS[k];
+    return [k, c, h('label', {}, c, ' ', label)] as const;
+  });
+  const extra = h('div', { class: 'import-boxes' }, ...boxes.map(([, , l]) => l));
+  const intro = "Paste a character exported from NMR's or Daydream's user editor.";
+  if ((await textDialog(intro, text, ['Import', 'Cancel'], extra)) !== 'Import') return;
+  const o = { ...IMPORT_DEFAULTS };
+  for (const [k, c] of boxes) o[k] = c.checked;
+  fillFields(importUser(text.value, o), 'Import');
 }
 
 function select(key: Cell[]) {

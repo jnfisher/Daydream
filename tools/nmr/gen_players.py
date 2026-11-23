@@ -60,6 +60,7 @@ for label, base, cur in [
 USERS += [
     num("Max HP", "maxhp", 2),
     num("HP", "hp", 2),
+    num("HP Rolls", "randomhp", 1),
     num("Max Mana", "maxmana", 2),
     num("Mana", "mana", 2),
     num("Max Weight", "maxwgt", 2),
@@ -88,6 +89,7 @@ USERS += [
     num("Weapon", "weapon", 4),
     num("Evil Points", "evil", 2),
     num("Broadcast Channel", "bchannel", 2),
+    num("Edited", "immortal", 1),
     text("Gang", "gang", 20),
     text("Suicide Password", "suicpw", 9),
 ]
