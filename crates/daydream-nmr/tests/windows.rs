@@ -71,3 +71,39 @@ fn stock_through_jet() {
     }
     through_jet(&crate::support::stock_realm());
 }
+
+/// The MME export of the stock world, written through Jet as `daydream mme-export` writes
+/// it, reads back as it went in.
+#[test]
+fn stock_mme_export_through_jet() {
+    if jet::powershell32().is_none() {
+        return;
+    }
+    let realm = Realm::open(&crate::support::stock_realm()).unwrap();
+    let opts = daydream_nmr::mme::MmeOptions {
+        date: "11/23/2026".into(),
+        time: "2:00:00 AM".into(),
+        ..Default::default()
+    };
+    let data =
+        daydream_nmr::mme::export(&realm, daydream_nmr::layout_of_realm(&realm), &opts).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let file = out.path().join("data.mdb");
+    jet::write_mdb(&data, &file).unwrap();
+    let names: Vec<&str> = data.tables.iter().map(|t| t.name.as_str()).collect();
+    let read = mdb::read_tables(&file, &names).unwrap();
+    // a whole number in a Double column may come back as either
+    let numbers = |mut d: NmrData| {
+        for t in &mut d.tables {
+            for row in &mut t.rows {
+                for v in row {
+                    if let Value::Long(x) = v {
+                        *v = Value::Double(f64::from(*x));
+                    }
+                }
+            }
+        }
+        d
+    };
+    assert_same_data(&numbers(as_written(data)), &numbers(read));
+}
