@@ -85,7 +85,43 @@ claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over 
 
 For Claude Desktop, add `{"command": "daydream", "args": ["mcp", "/path/to/realm"]}` under
 `mcpServers` in its config. `daydream serve` also answers MCP over HTTP at
-`http://127.0.0.1:7340/mcp`, on this machine only for now.
+`http://127.0.0.1:7340/mcp`.
+
+### Reaching Daydream from elsewhere
+
+Out of the box `daydream serve` answers this machine only. It refuses requests that come
+through a tunnel or proxy, and refuses to listen anywhere but `127.0.0.1` or `::1`. To use
+the web UI from another machine, or to connect a hosted agent (Claude.ai, ChatGPT, the
+Claude or OpenAI APIs), give it an access token and put HTTPS in front of it with a tunnel
+or reverse proxy. Daydream does not do TLS itself.
+
+```sh
+export DAYDREAM_TOKEN=$(daydream new-token)     # keep it: agents and the browser need it
+daydream serve ./realm                          # still on 127.0.0.1:7340, behind one of:
+
+cloudflared tunnel --url http://127.0.0.1:7340  # Cloudflare Tunnel: prints an https URL
+ngrok http 7340                                 # ngrok
+tailscale funnel 7340                           # Tailscale Funnel
+caddy reverse-proxy --from daydream.example.com --to 127.0.0.1:7340   # your own domain
+```
+
+With a token:
+
+- **The browser** opens the public URL and signs in with the token once (`/login`). The
+  sign-in is a cookie, so other sites cannot use it.
+- **Agents that can send a header** (Claude Code, the Claude and OpenAI APIs' MCP
+  connectors, Claude.ai's connectors where request headers are offered) use
+  `https://<host>/mcp` with `Authorization: Bearer <token>`.
+- **Connectors that take only a URL** (ChatGPT's custom connectors, Claude.ai's with no
+  sign-in) use `https://<host>/mcp/<token>` and "No authentication". The URL is the
+  secret: treat it like a password.
+
+```sh
+claude mcp add --transport http daydream https://<host>/mcp --header "Authorization: Bearer $DAYDREAM_TOKEN"
+```
+
+A token changes when you start Daydream with another one: every connector and browser then
+needs the new one.
 
 `convert` only reads the source files. It writes one `.db` per Btrieve file, in the format of
 wbtrv32 (the `WBTRV32.DLL` replacement MBBSEmu uses), so MBBSEmu and legacy NMR can open the
@@ -95,7 +131,7 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `mcp` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `mcp`, `new-token` |
 | `crates/daydream-mcp` | The MCP server for AI agents: its tools, the undo journal, stdio |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file; one row at a time for the editors (`rows`) |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |

@@ -773,3 +773,152 @@ async fn mcp_answers_over_http_from_this_machine_only() {
     let (_, body) = mcp(None, tools).await;
     assert_eq!(body["result"]["isError"], false);
 }
+
+/// A request through a router, its status, headers and body.
+async fn through(
+    router: axum::Router,
+    req: Request<Body>,
+) -> (StatusCode, axum::http::HeaderMap, String) {
+    let res = router.oneshot(req).await.unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    (status, headers, String::from_utf8_lossy(&body).into_owned())
+}
+
+#[tokio::test]
+async fn without_a_token_only_this_machine_is_answered() {
+    let dir = realm();
+    let at = |host: &str, extra: Option<(&str, &str)>| {
+        let mut req = Request::get("/api/realm").header("host", host);
+        if let Some((k, v)) = extra {
+            req = req.header(k, v);
+        }
+        through(
+            daydream_server::router(dir.path()),
+            req.body(Body::empty()).unwrap(),
+        )
+    };
+    assert_eq!(at("127.0.0.1:7340", None).await.0, StatusCode::OK);
+    assert_eq!(at("localhost:7340", None).await.0, StatusCode::OK);
+    // DNS rebinding: a page's own host name pointed at this machine
+    assert_eq!(at("evil.example", None).await.0, StatusCode::FORBIDDEN);
+    // a tunnel or proxy in front of a token-less server
+    let (status, _, body) = at("127.0.0.1:7340", Some(("x-forwarded-for", "203.0.113.9"))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(body.contains("--token"), "{body}");
+    let cf = at("localhost", Some(("cf-connecting-ip", "203.0.113.9"))).await;
+    assert_eq!(cf.0, StatusCode::FORBIDDEN);
+    // no secret URL without a token
+    let req = Request::post("/mcp/0123456789abcdef")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#))
+        .unwrap();
+    let keyed = through(daydream_server::router(dir.path()), req).await;
+    assert_eq!(keyed.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_token_lets_in_whoever_has_it() {
+    let dir = realm();
+    let token = "0123456789abcdef-token";
+    let router = || {
+        daydream_server::router_with(
+            dir.path(),
+            daydream_server::Options {
+                token: Some(token.into()),
+            },
+        )
+    };
+    let remote = |uri: &str| {
+        Request::get(uri)
+            .header("host", "daydream.example.com")
+            .header("x-forwarded-for", "203.0.113.9")
+    };
+    let realm_with = |k: &str, v: &str| remote("/api/realm").header(k, v).body(Body::empty());
+
+    // nothing without it
+    let (status, headers, _) =
+        through(router(), remote("/api/realm").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(headers["www-authenticate"], "Bearer");
+    let wrong = through(
+        router(),
+        realm_with("authorization", "Bearer nope").unwrap(),
+    )
+    .await;
+    assert_eq!(wrong.0, StatusCode::UNAUTHORIZED);
+    // the page sends a stranger to sign in; its files and the health check stay open
+    let (status, headers, _) = through(router(), remote("/").body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/login");
+    for open in ["/login", "/app.js", "/api/health"] {
+        let (status, _, _) = through(router(), remote(open).body(Body::empty()).unwrap()).await;
+        assert_eq!(status, StatusCode::OK, "{open}");
+    }
+
+    // a header
+    let bearer = format!("Bearer {token}");
+    let ok = through(router(), realm_with("authorization", &bearer).unwrap()).await;
+    assert_eq!(ok.0, StatusCode::OK);
+
+    // signing in sets the cookie, which then lets the web UI in
+    let login = |t: &str| {
+        Request::post("/login")
+            .header("host", "daydream.example.com")
+            .header("x-forwarded-proto", "https")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(format!("token={t}")))
+            .unwrap()
+    };
+    let (status, _, body) = through(router(), login("nope-nope-nope-nope")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(body.contains("not this Daydream"), "{body}");
+    let (status, headers, _) = through(router(), login(token)).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let cookie = headers["set-cookie"].to_str().unwrap();
+    assert!(
+        cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"),
+        "{cookie}"
+    );
+    assert!(cookie.contains("Secure"), "{cookie}");
+    let pair = cookie.split(';').next().unwrap();
+    let ok = through(
+        router(),
+        realm_with("cookie", &format!("theme=dark; {pair}")).unwrap(),
+    )
+    .await;
+    assert_eq!(ok.0, StatusCode::OK);
+    let (status, _, _) = through(
+        router(),
+        remote("/")
+            .header("cookie", pair)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // MCP: a header from any origin (the token stands in for the origin check), or the URL
+    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#;
+    let mcp = |uri: String, auth: Option<&str>| {
+        let mut req = Request::post(uri)
+            .header("host", "daydream.example.com")
+            .header("origin", "https://chatgpt.com")
+            .header("content-type", "application/json");
+        if let Some(a) = auth {
+            req = req.header("authorization", a);
+        }
+        req.body(Body::from(init)).unwrap()
+    };
+    let (status, _, body) = through(router(), mcp("/mcp".into(), Some(&bearer))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("daydream"), "{body}");
+    let (status, _, body) = through(router(), mcp(format!("/mcp/{token}"), None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("serverInfo"), "{body}");
+    let (status, _, _) = through(router(), mcp("/mcp/0123456789abcdef-nope".into(), None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = through(router(), mcp("/mcp".into(), None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

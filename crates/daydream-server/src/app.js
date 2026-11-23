@@ -271,6 +271,9 @@ async function call(method, url, body) {
     headers: body === void 0 ? {} : { "content-type": "application/json" },
     body: body === void 0 ? void 0 : JSON.stringify(body)
   });
+  if (res.status === 401) {
+    location.href = "/login";
+  }
   const text = await res.text();
   let json = null;
   try {
