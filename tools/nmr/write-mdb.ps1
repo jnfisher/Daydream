@@ -112,7 +112,8 @@ public static class DaydreamPlan {
                             default: ty = OleDbType.LongVarWChar; break;
                         }
                         var p = cmd.Parameters.Add("@" + cmd.Parameters.Count, ty);
-                        if (c.Type == "Text") p.Size = c.Size;
+                        // Prepare needs a size for every variable-length parameter
+                        p.Size = c.Type == "Text" ? c.Size : c.Type == "Memo" ? 65535 : 0;
                     }
                     cmd.Prepare();
                     foreach (var row in t.Rows) {
