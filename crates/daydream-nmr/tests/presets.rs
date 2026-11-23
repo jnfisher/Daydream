@@ -459,3 +459,66 @@ fn shops_restock_rooms_combine_and_text_blocks_strip() {
         .is_err()
     );
 }
+
+#[test]
+fn buffer_rooms_fill_the_gaps_and_go_again() {
+    use crate::support::{empty_realm, l, put, t};
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let room = |map, n| {
+        vec![
+            ("Map Number", l(map)),
+            ("Room Number", l(n)),
+            ("Name", t("Real")),
+        ]
+    };
+    let rows = [room(1, 1), room(1, 2), room(1, 5), room(2, 3)];
+    let refs: Vec<&[(&str, Value)]> = rows.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Rooms", &refs);
+    let keys = |realm: &Realm| -> Vec<(i64, i64)> {
+        let r = table(realm, "Rooms");
+        let (m, n_) = (
+            r.position("Map Number").unwrap(),
+            r.position("Room Number").unwrap(),
+        );
+        r.rows
+            .iter()
+            .map(|row| (n(&row[m]) as i64, n(&row[n_]) as i64))
+            .collect()
+    };
+
+    let plan = presets::plan(&realm, &Preset::InsertBufferRooms { map: Some(1) }, Dos).unwrap();
+    assert_eq!(plan.records(), 2);
+    let report = modify::apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(report.inserted, 2, "{report:?}");
+    assert_eq!(
+        keys(&realm),
+        [(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (2, 3)]
+    );
+    let rooms = table(&realm, "Rooms");
+    let row = &rooms.rows[2];
+    let get = |c: &str| row[rooms.position(c).unwrap()].clone();
+    let Value::Text(name) = get("Name") else {
+        panic!()
+    };
+    assert_eq!(name.trim_end_matches('\0'), "Buffer Room 3");
+    assert_eq!(
+        (get("Exit 0"), get("Type 0"), get("Para1 0")),
+        (l(1), l(8), l(1))
+    );
+
+    // every map 1 to 18: map 2 gets rooms 1 and 2; the rest have none
+    let plan = presets::plan(&realm, &Preset::InsertBufferRooms { map: None }, Dos).unwrap();
+    assert_eq!(plan.records(), 2);
+    assert_eq!(plan.notes.len(), 16);
+    modify::apply(&realm, &plan, Dos).unwrap();
+
+    let plan = presets::plan(&realm, &Preset::DeleteBufferRooms { map: Some(1) }, Dos).unwrap();
+    assert_eq!(plan.records(), 2);
+    let report = modify::apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(report.deleted, 2);
+    let plan = presets::plan(&realm, &Preset::DeleteBufferRooms { map: None }, Dos).unwrap();
+    modify::apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(keys(&realm), [(1, 1), (1, 2), (1, 5), (2, 3)]);
+}

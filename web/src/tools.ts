@@ -469,6 +469,9 @@ function fixes(): Fix[] {
   const bossBy = numberInput('2');
   const date = input({ type: 'date', value: '1990-01-01' });
   const strip = input({ type: 'text', class: 'strip' });
+  const padMap = numberInput('1');
+  const unpadMap = numberInput('1');
+  const mapOrAll = (i: HTMLInputElement) => (i.value.trim() === '' ? null : num(i));
 
   // Modify Item Drop Percentages
   const dropMode = pick([['set', 'Set to'], ['add', 'Add (+/-)']]);
@@ -564,6 +567,18 @@ function fixes(): Fix[] {
       hint: 'In every room, items with the same number and uses (on the floor, or hidden) are put in one slot.',
       inputs: [],
       request: () => ['/api/tools/preset', { preset: 'combine_room_items' }],
+    },
+    {
+      title: 'Insert Buffer Rooms',
+      hint: 'Adds a "Buffer Room" for every room number missing below a map\'s last room, so rooms keep loading (and sweeping) past gaps of 50. Leave the map empty for maps 1 to 18.',
+      inputs: [h('label', {}, 'Map ', padMap)],
+      request: () => ['/api/tools/preset', { preset: 'insert_buffer_rooms', map: mapOrAll(padMap) }],
+    },
+    {
+      title: 'Delete Buffer Rooms',
+      hint: 'Deletes every room whose name begins with "Buffer Room". Leave the map empty for every map.',
+      inputs: [h('label', {}, 'Map ', unpadMap)],
+      request: () => ['/api/tools/preset', { preset: 'delete_buffer_rooms', map: mapOrAll(unpadMap) }],
     },
     {
       title: 'Strip Characters off Text Blocks',

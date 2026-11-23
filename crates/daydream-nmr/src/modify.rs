@@ -136,15 +136,18 @@ pub struct Plan {
     pub unchanged: usize,
     /// Things worth a look that the run could not change, as NMR logs them.
     pub notes: Vec<String>,
-    /// The changed rows, whole, for [`apply`].
+    /// The changed and new rows, whole, for [`apply`].
     #[serde(skip)]
-    rows: Option<NmrRows>,
+    pub(crate) rows: Option<NmrRows>,
+    /// The keys of records to delete.
+    #[serde(skip)]
+    pub(crate) deletes: Vec<Vec<Value>>,
 }
 
 impl Plan {
-    /// How many records change.
+    /// How many records change, are added or go.
     pub fn records(&self) -> usize {
-        self.rows.as_ref().map_or(0, |r| r.rows.len())
+        self.rows.as_ref().map_or(0, |r| r.rows.len()) + self.deletes.len()
     }
 }
 
@@ -478,20 +481,31 @@ pub(crate) fn collect(
 
 /// Writes a plan's changed rows to the realm through the strict import.
 pub fn apply(realm: &Realm, plan: &Plan, layout: LayoutSet) -> Result<TableReport, ModifyError> {
-    let Some(rows) = &plan.rows else {
-        return Ok(TableReport::default());
+    let mut report = match &plan.rows {
+        Some(rows) if !rows.rows.is_empty() => {
+            let data = NmrData {
+                tables: vec![rows.clone()],
+            };
+            let opts = ImportOptions {
+                layout,
+                ..ImportOptions::default()
+            };
+            import(realm, &data, &opts)?
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        }
+        _ => TableReport {
+            table: plan.table.clone(),
+            ..TableReport::default()
+        },
     };
-    let data = NmrData {
-        tables: vec![rows.clone()],
-    };
-    let opts = ImportOptions {
-        layout,
-        ..ImportOptions::default()
-    };
-    Ok(import(realm, &data, &opts)?
-        .into_iter()
-        .next()
-        .unwrap_or_default())
+    if !plan.deletes.is_empty() {
+        let d = crate::import::delete(realm, &plan.table, &plan.deletes, layout)?;
+        report.deleted += d.deleted;
+        report.errors.extend(d.errors);
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
