@@ -10,7 +10,7 @@ hand. When you fix a bug in copied code, check whether the upstream copy has it 
 |---|---|---|
 | `crates/daydream-types` | `crates/silvermere-types` | Renamed. Otherwise unchanged. |
 | `crates/daydream-wcc/src/btrieve/` | `crates/silvermere-import/src/btrieve/` | Added `BtrieveFile::default_acs` (wbtrv32 records the file's ACS for every key) and `KeyDataType::code()`. |
-| `crates/daydream-wcc/src/decode/` | `crates/silvermere-import/src/decode/` | `split_room`, `split_monster` and `split_shop` became `to_room`, `to_monster` and `to_shop`: they no longer build silvermere-db's separate state rows. |
+| `crates/daydream-wcc/src/decode/` | `crates/silvermere-import/src/decode/` | `split_room`, `split_monster` and `split_shop` became `to_room`, `to_monster` and `to_shop`: they no longer build silvermere-db's separate state rows. `Text` keeps the member's stored bytes (old bytes after the NUL) so records round-trip byte for byte. |
 | `crates/daydream-wcc/src/{dos_time,json,zip}.rs` | same names in `silvermere-import/src/` | None. |
 | `crates/daydream-wcc/src/stock.rs` | `silvermere-import/src/stock.rs` | The URL override is `DAYDREAM_STOCK_URL`; messages name `daydream`. |
 | `crates/daydream-wcc/tests/{btrieve_fixtures,decode_offsets,stock_vir}.rs`, `tests/fixtures/btrieve/` | `silvermere-import/tests/` | Adjusted for the renames and the `to_*` functions. |
