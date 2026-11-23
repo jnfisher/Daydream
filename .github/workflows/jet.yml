@@ -108,7 +108,7 @@ jobs:
         run: reg import "_nmr\WBTRV32 - Registry Settings.reg"
 
       - name: test (through Jet)
-        run: cargo test -p daydream-nmr --locked --test all -- --nocapture
+        run: cargo test -p daydream-nmr --locked --test all -- --nocapture --skip windows_nmr
 
       - name: test (through Btrieve)
         if: ${{ !cancelled() }}
@@ -118,6 +118,7 @@ jobs:
       # NMR's Database Importer, driven by tools/nmr/nmr-import.ps1: the controls NMR needs
       # come from Microsoft's VB6 SP6 update, extracted once and cached
       - name: VB6 controls cache
+        if: ${{ !cancelled() }}
         id: vb6
         uses: actions/cache@v4
         with:
@@ -125,7 +126,7 @@ jobs:
           key: vb6-kb2708437-v1
 
       - name: VB6 controls (Microsoft's VB6 SP6 cumulative update, extracted)
-        if: steps.vb6.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.vb6.outputs.cache-hit != 'true' }}
         shell: pwsh
         run: |
           $urls = 'https://download.microsoft.com/download/1/1/d/11d5349e-a432-4e17-a595-62d6889519ac/VB60SP6-KB2708437-x86-ENU.msi',
@@ -145,6 +146,7 @@ jobs:
           }
 
       - name: NMR's components
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $sys = "$env:SystemRoot\SysWOW64"
@@ -164,6 +166,7 @@ jobs:
           Write-Output "dao360: $(Test-Path $dao)"
 
       - name: NMR's realm (fresh 1.11p Worldgroup files)
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           7z x "_nmr\_fresh dats.7z" -o_wg -y | Out-Null
