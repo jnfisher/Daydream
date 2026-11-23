@@ -14,12 +14,12 @@ use rusqlite::Connection;
 
 use crate::support::{copy_as, fixture, rows, stock_dir};
 
-struct Oracle {
+pub(crate) struct Oracle {
     converter: PathBuf,
     checkout: PathBuf,
 }
 
-fn oracle() -> Option<Oracle> {
+pub(crate) fn oracle() -> Option<Oracle> {
     let get = |k: &str| {
         std::env::var_os(k)
             .filter(|v| !v.is_empty())
@@ -47,7 +47,7 @@ fn oracle() -> Option<Oracle> {
 }
 
 /// Converts `source` with wbtrv32 and with Daydream and compares the two databases.
-fn compare(oracle: &Oracle, source: &Path) {
+pub(crate) fn compare(oracle: &Oracle, source: &Path) {
     let name = source
         .file_stem()
         .unwrap()
