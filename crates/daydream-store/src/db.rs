@@ -397,7 +397,8 @@ impl WbtrvDb {
         self.check_length(data)?;
         let mut data = data.to_vec();
         let sql = sql_err(&self.path);
-        let tx = self.conn.transaction().map_err(sql)?;
+        // a savepoint, so an insert also works inside a batch ([`WbtrvDb::begin`])
+        let tx = self.conn.savepoint().map_err(sql)?;
         for k in &self.keys {
             let s = k.primary();
             if k.is_composite() || s.data_type != key::ty::AUTO_INC {
@@ -451,6 +452,29 @@ impl WbtrvDb {
             )
             .map_err(sql_err(&self.path))?;
         Ok(())
+    }
+
+    /// Starts a batch: the writes until [`WbtrvDb::commit`] are one transaction, so a
+    /// failed write in a batch of many can be undone by dropping the file unstored
+    /// ([`WbtrvDb::rollback`]) and many writes cost one sync.
+    pub fn begin(&mut self) -> Result<(), StoreError> {
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(sql_err(&self.path))
+    }
+
+    /// Stores the batch begun by [`WbtrvDb::begin`].
+    pub fn commit(&self) -> Result<(), StoreError> {
+        self.conn
+            .execute_batch("COMMIT")
+            .map_err(sql_err(&self.path))
+    }
+
+    /// Drops the batch begun by [`WbtrvDb::begin`].
+    pub fn rollback(&self) -> Result<(), StoreError> {
+        self.conn
+            .execute_batch("ROLLBACK")
+            .map_err(sql_err(&self.path))
     }
 
     /// Removes record `id`.

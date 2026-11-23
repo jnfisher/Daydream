@@ -1,5 +1,6 @@
 // NMR's database tools: the Database Importer, the Database Deleter, Merge Users, the
-// Export to MMUD Explorer (mme.ts) and writing back to the WCC files, laid out as NMR's
+// Export to MMUD Explorer (mme.ts), writing back to the WCC files and to and from a silvermere
+// database, laid out as NMR's
 // forms lay them out, over the server's /api/tools and /api/mme routes.
 
 import { ABILITIES } from './abilities';
@@ -331,6 +332,115 @@ function writeDat(): HTMLElement {
   };
   preview.addEventListener('click', () => void run(true));
   go.addEventListener('click', () => void run(false));
+  return card;
+}
+
+interface SilvermereReport {
+  table: string;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  deleted: number;
+}
+
+const SILVERMERE_KEY = 'daydream.silvermere';
+
+/** The realm in a silvermere database (`daydream silvermere-export` and `silvermere-import`). */
+function silvermere(changed: () => void): HTMLElement {
+  const card = h('section', { class: 'tool' }, h('h2', {}, 'silvermere'));
+  card.append(
+    h(
+      'p',
+      { class: 'hint' },
+      "Write this realm's world (rooms, items, monsters, spells, classes, races, shops, messages, text blocks, actions) straight into a silvermere server's database, or read it back. Players are not touched. Stop silvermere first: Daydream takes its writer lock and refuses while it runs.",
+    ),
+  );
+  let saved = '';
+  try {
+    saved = localStorage.getItem(SILVERMERE_KEY) ?? '';
+  } catch {
+    // private window
+  }
+  const db = input({ type: 'text', placeholder: 'C:\\silvermere\\data\\silvermere.db, or postgres://...', value: saved });
+  const resetState = input({ type: 'checkbox' });
+  const keepExtra = input({ type: 'checkbox' });
+  const noRaw = input({ type: 'checkbox' });
+  const status = h('button', { type: 'button' }, 'Status');
+  const previewOut = h('button', { type: 'button' }, 'Preview export');
+  const goOut = h('button', { type: 'button', class: 'primary' }, 'Export to silvermere');
+  const previewIn = h('button', { type: 'button' }, 'Preview import');
+  const goIn = h('button', { type: 'button' }, 'Import from silvermere');
+  const result = h('div');
+  card.append(
+    h('label', { class: 'path' }, "silvermere's database: its SQLite file (on the machine Daydream runs on) or a URL ", db),
+    h('label', { class: 'check' }, resetState, " Export: rewrite the live state silvermere has (room floors, shop stock, monster kills) from the realm"),
+    h('label', { class: 'check' }, keepExtra, ' Keep the rows the other side does not have, instead of deleting them'),
+    h('label', { class: 'check' }, noRaw, " Export: don't keep the records' bytes (what silvermere does not store is then lost on the way back)"),
+    h('div', { class: 'toolbar' }, status, previewOut, goOut, previewIn, goIn),
+    result,
+  );
+  fetch('/api/silvermere')
+    .then((r) => r.json())
+    .then((c: { database: string | null }) => {
+      if (c.database && !db.value) db.placeholder = `${c.database} (the server's)`;
+    })
+    .catch(() => {});
+  const database = () => {
+    const d = db.value.trim();
+    try {
+      if (d) localStorage.setItem(SILVERMERE_KEY, d);
+    } catch {
+      // private window
+    }
+    return d || null;
+  };
+  const show = (reports: SilvermereReport[], dryRun: boolean, exporting: boolean) => {
+    const table = h('table', { class: 'grid' });
+    const heads = exporting ? ['Table', 'New', 'Rewritten', 'Deleted'] : ['Table', 'Inserted', 'Updated', 'Unchanged', 'Deleted'];
+    table.append(h('thead', {}, h('tr', {}, ...heads.map((c) => h('th', {}, c)))));
+    const body = h('tbody');
+    for (const r of reports) {
+      const cells = exporting ? [r.table, r.inserted, r.updated, r.deleted] : [r.table, r.inserted, r.updated, r.unchanged, r.deleted];
+      body.append(h('tr', {}, ...cells.map((v) => h('td', {}, String(v)))));
+    }
+    table.append(body);
+    result.replaceChildren(h('p', {}, dryRun ? 'Preview: nothing was written.' : 'Done.'), table);
+  };
+  const run = async (exporting: boolean, dryRun: boolean) => {
+    const where = db.value.trim() || 'the server\'s silvermere database';
+    if (!dryRun) {
+      const ask = exporting
+        ? `Write the realm's world into ${where}? silvermere must be stopped.`
+        : `Rewrite the realm's world from ${where}? Records silvermere does not have are deleted${keepExtra.checked ? ' (kept: you asked to keep them)' : ''}. Stop the realm first.`;
+      if (!confirm(ask)) return;
+    }
+    try {
+      const body = exporting
+        ? { database: database(), dry_run: dryRun, reset_state: resetState.checked, keep_extra: keepExtra.checked, no_raw: noRaw.checked }
+        : { database: database(), dry_run: dryRun, keep_extra: keepExtra.checked };
+      const res = await post(exporting ? '/api/silvermere/export' : '/api/silvermere/import', JSON.stringify(body), true);
+      show(res.tables as SilvermereReport[], dryRun, exporting);
+      if (!exporting && !dryRun) changed();
+    } catch (e) {
+      result.replaceChildren(failure(e));
+    }
+  };
+  status.addEventListener('click', async () => {
+    try {
+      const info = await post('/api/silvermere/info', JSON.stringify({ database: database() }), true);
+      const lines = (info.tables as [string, number][]).map(([t, n]) => `${t}: ${n} rows`);
+      result.replaceChildren(
+        h('p', {}, info.running ? `silvermere is running (${info.running}): stop it before exporting or importing.` : 'silvermere is not running.'),
+        h('pre', {}, `${info.url}\n${lines.join('\n')}\nrecord bytes from Daydream: ${info.raw ? 'kept' : 'none'}`),
+      );
+    } catch (e) {
+      result.replaceChildren(failure(e));
+    }
+  });
+  previewOut.addEventListener('click', () => void run(true, true));
+  goOut.addEventListener('click', () => void run(true, false));
+  previewIn.addEventListener('click', () => void run(false, true));
+  goIn.addEventListener('click', () => void run(false, false));
   return card;
 }
 
@@ -746,7 +856,7 @@ function fixesCard(changed: () => void): HTMLElement {
 
 /** The tools page; `changed` runs after a write, so the editors reload what they show. */
 export function toolsPage(changed: () => void): HTMLElement {
-  const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers(), mmeExport(failure), writeDat());
+  const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers(), mmeExport(failure), writeDat(), silvermere(changed));
   api
     .tables()
     .then((tables) => {

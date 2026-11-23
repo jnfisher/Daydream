@@ -9,6 +9,8 @@ name: CI
 #   the pin changes.
 # - wbtrv32's converter (the oracle for the store's differential tests) is built once and
 #   kept, keyed by the commit pinned in tools/wbtrv32/build-oracle.sh.
+# - silvermere's release binary (for the adapter's serve test) is downloaded once and kept,
+#   keyed by the version pinned below; PostgreSQL is a service container.
 # - Changes to prose only (docs, README, LICENSE) do not run it.
 # The differential run against real NMR and Btrieve is the Windows workflow (jet.yml).
 on:
@@ -37,6 +39,9 @@ env:
   CARGO_TERM_COLOR: always
   # incremental builds only help a local tree; in CI they bloat the cache
   CARGO_INCREMENTAL: 0
+  # the silvermere release the adapter's tests serve with (its schema is the one copied into
+  # crates/daydream-silvermere/migrations)
+  SILVERMERE_VERSION: 0.1.18
 
 jobs:
   web:
@@ -66,6 +71,17 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pg
+          POSTGRES_DB: daydream_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DAYDREAM_POSTGRES_URL: postgres://postgres:pg@localhost:5432/daydream_test
     steps:
       - uses: actions/checkout@v4
 
@@ -103,6 +119,23 @@ jobs:
 
       - name: MME reference (NMR's own MME export of the stock world)
         run: tools/mme/reference.sh >> "$GITHUB_ENV"
+
+      - name: silvermere cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/daydream/silvermere
+          key: silvermere-${{ runner.os }}-${{ env.SILVERMERE_VERSION }}
+
+      - name: silvermere (downloaded when not cached)
+        run: |
+          set -euo pipefail
+          dir="$HOME/.cache/daydream/silvermere"
+          name="silvermere-$SILVERMERE_VERSION-x86_64-unknown-linux-musl"
+          if [ ! -x "$dir/$name/silvermere" ]; then
+            mkdir -p "$dir"
+            curl -sSfL --retry 3 "https://github.com/jnfisher/silvermere/releases/download/v$SILVERMERE_VERSION/$name.tar.gz" | tar -C "$dir" -xz
+          fi
+          echo "SILVERMERE_BIN=$dir/$name/silvermere" >> "$GITHUB_ENV"
 
       - name: rustfmt
         run: cargo fmt --all --check

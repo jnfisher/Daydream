@@ -1,5 +1,6 @@
 //! `daydream`: convert a realm's Btrieve files into a Daydream realm, serve it to the
-//! browser, dump its records as JSON, or move it to and from Nightmare Redux's `.mdb`.
+//! browser, dump its records as JSON, move it to and from Nightmare Redux's `.mdb`, or
+//! write it into (and read it from) a silvermere database.
 
 use std::io::Write;
 use std::net::SocketAddr;
@@ -47,6 +48,10 @@ enum Command {
         /// machine only. `daydream new-token` makes one.
         #[arg(long, env = "DAYDREAM_TOKEN", hide_env_values = true)]
         token: Option<String>,
+        /// A silvermere database (its SQLite file or a URL) for the Tools page's silvermere
+        /// card and the MCP server's silvermere tools.
+        #[arg(long, env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
+        silvermere: Option<String>,
     },
     /// Print a new random access token for `serve --token`.
     NewToken,
@@ -196,6 +201,62 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Write REALM's world into a silvermere database (silvermere's own SQLite file or
+    /// PostgreSQL), as `silvermere import` would: rooms, items, monsters, spells, classes,
+    /// races, shops, messages, text blocks and actions. An empty database is given
+    /// silvermere's schema. Stop silvermere first: Daydream takes its writer lock.
+    SilvermereExport {
+        /// The realm directory.
+        realm: PathBuf,
+        /// silvermere's database: the path of its SQLite file (`data/silvermere.db`), or a
+        /// `sqlite:` or `postgres:` URL.
+        #[arg(env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
+        database: String,
+        /// Rewrite the live state of the rows silvermere already has (room floors and
+        /// coins, shop stock, monster kills, items in play) from the realm; by default
+        /// silvermere keeps its own.
+        #[arg(long)]
+        reset_state: bool,
+        /// Keep the rows silvermere has that the realm does not; by default they are deleted.
+        #[arg(long)]
+        keep_extra: bool,
+        /// Don't keep the records' bytes beside silvermere's rows. Without them, what
+        /// silvermere does not store (unknown spans, bytes after a text's end) is lost on
+        /// the way back.
+        #[arg(long)]
+        no_raw: bool,
+        /// Report what would be written without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// The time zone the realm's dates are in, as silvermere's `import --legacy-tz`.
+        #[arg(long, default_value = "UTC")]
+        legacy_tz: String,
+    },
+    /// Rewrite REALM's world from a silvermere database: each record becomes silvermere's
+    /// row, rebuilt over the bytes it was exported from, so an unchanged world comes back
+    /// byte for byte. Stop silvermere and the realm first.
+    SilvermereImport {
+        /// The realm directory.
+        realm: PathBuf,
+        /// silvermere's database: a SQLite file's path, or a `sqlite:` or `postgres:` URL.
+        #[arg(env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
+        database: String,
+        /// Keep the realm's records silvermere does not have; by default they are deleted.
+        #[arg(long)]
+        keep_extra: bool,
+        /// Report what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// The time zone the realm's dates are in.
+        #[arg(long, default_value = "UTC")]
+        legacy_tz: String,
+    },
+    /// Show what a silvermere database holds and whether silvermere is running on it.
+    SilvermereInfo {
+        /// silvermere's database: a SQLite file's path, or a `sqlite:` or `postgres:` URL.
+        #[arg(env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
+        database: String,
+    },
     /// Serve REALM to an AI agent over the Model Context Protocol, on stdin and stdout (for a
     /// local agent such as Claude Code or Claude Desktop). `daydream serve` offers the same
     /// tools over HTTP at `/mcp`. Stop the game first.
@@ -205,6 +266,10 @@ enum Command {
         /// Offer the player tables (users, bank books, gangs) too.
         #[arg(long)]
         players: bool,
+        /// A silvermere database (its SQLite file or a URL): offers the agent tools that
+        /// write the realm into it and read it back, on this database only.
+        #[arg(long, env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
+        silvermere: Option<String>,
     },
     /// Merge another user file's users into REALM's, as NMR's Merge Users does: users REALM
     /// lacks are copied byte for byte, users it has are skipped. Stop the realm first.
@@ -276,7 +341,8 @@ fn main() -> anyhow::Result<()> {
             realm,
             listen,
             token,
-        } => serve(realm, listen, token),
+            silvermere,
+        } => serve(realm, listen, token, silvermere),
         Command::NewToken => {
             println!("{}", daydream_server::auth::new_token());
             Ok(())
@@ -379,10 +445,57 @@ fn main() -> anyhow::Result<()> {
             from,
             dry_run,
         } => merge_users(&realm, &from, dry_run),
-        Command::Mcp { realm, players } => {
+        Command::SilvermereExport {
+            realm,
+            database,
+            reset_state,
+            keep_extra,
+            no_raw,
+            dry_run,
+            legacy_tz,
+        } => {
+            let opts = daydream_silvermere::ExportOptions {
+                state: if reset_state {
+                    daydream_silvermere::State::Reset
+                } else {
+                    daydream_silvermere::State::Keep
+                },
+                delete: !keep_extra,
+                raw: !no_raw,
+                dry_run,
+                legacy_tz: time_zone(&legacy_tz)?,
+            };
+            silvermere_export(&realm, &database, &opts)
+        }
+        Command::SilvermereImport {
+            realm,
+            database,
+            keep_extra,
+            dry_run,
+            legacy_tz,
+        } => {
+            let opts = daydream_silvermere::ImportOptions {
+                delete: !keep_extra,
+                dry_run,
+                legacy_tz: time_zone(&legacy_tz)?,
+            };
+            silvermere_import(&realm, &database, &opts)
+        }
+        Command::SilvermereInfo { database } => silvermere_info(&database),
+        Command::Mcp {
+            realm,
+            players,
+            silvermere,
+        } => {
             Realm::open(&realm)
                 .with_context(|| format!("opening the realm {}", realm.display()))?;
-            let server = daydream_mcp::Server::new(&realm, daydream_mcp::Options { players });
+            let server = daydream_mcp::Server::new(
+                &realm,
+                daydream_mcp::Options {
+                    players,
+                    silvermere,
+                },
+            );
             server.run_stdio(std::io::stdin().lock(), std::io::stdout().lock())?;
             Ok(())
         }
@@ -467,7 +580,12 @@ fn convert(
     Ok(())
 }
 
-fn serve(realm: PathBuf, listen: SocketAddr, token: Option<String>) -> anyhow::Result<()> {
+fn serve(
+    realm: PathBuf,
+    listen: SocketAddr,
+    token: Option<String>,
+    silvermere: Option<String>,
+) -> anyhow::Result<()> {
     use daydream_server::auth;
     let token = token
         .map(|t| t.trim().to_string())
@@ -489,7 +607,7 @@ fn serve(realm: PathBuf, listen: SocketAddr, token: Option<String>) -> anyhow::R
                  `Authorization: Bearer <token>` to /mcp, or use the URL /mcp/<token>"
             );
         }
-        let options = daydream_server::Options { token };
+        let options = daydream_server::Options { token, silvermere };
         axum::serve(listener, daydream_server::router_with(&realm, options))
             .with_graceful_shutdown(async {
                 let _ = tokio::signal::ctrl_c().await;
@@ -686,5 +804,72 @@ fn merge_users(realm: &Path, from: &Path, dry_run: bool) -> anyhow::Result<()> {
         let id = String::from_utf8_lossy(key);
         println!("  skipped {}", id.trim_end_matches('\0'));
     }
+    Ok(())
+}
+
+fn time_zone(name: &str) -> anyhow::Result<jiff::tz::TimeZone> {
+    jiff::tz::TimeZone::get(name).with_context(|| format!("--legacy-tz {name}: no such zone"))
+}
+
+fn silvermere_export(
+    realm: &Path,
+    database: &str,
+    opts: &daydream_silvermere::ExportOptions,
+) -> anyhow::Result<()> {
+    let realm = Realm::open(realm)?;
+    let url = daydream_silvermere::database_url(database);
+    let reports = daydream_silvermere::block_on(daydream_silvermere::export(&realm, &url, opts))?;
+    for r in &reports {
+        let deleted = if opts.delete {
+            format!(", {} deleted", r.deleted)
+        } else {
+            String::new()
+        };
+        println!(
+            "{}: {} new, {} rewritten{deleted}",
+            r.table, r.inserted, r.updated
+        );
+    }
+    if opts.dry_run {
+        println!("(dry run: nothing written)");
+    }
+    Ok(())
+}
+
+fn silvermere_import(
+    realm: &Path,
+    database: &str,
+    opts: &daydream_silvermere::ImportOptions,
+) -> anyhow::Result<()> {
+    let realm = Realm::open(realm)?;
+    let url = daydream_silvermere::database_url(database);
+    let reports = daydream_silvermere::block_on(daydream_silvermere::import(&realm, &url, opts))?;
+    for r in &reports {
+        println!(
+            "{}: {} inserted, {} updated, {} unchanged, {} deleted",
+            r.table, r.inserted, r.updated, r.unchanged, r.deleted
+        );
+    }
+    if opts.dry_run {
+        println!("(dry run: nothing written)");
+    }
+    Ok(())
+}
+
+fn silvermere_info(database: &str) -> anyhow::Result<()> {
+    let url = daydream_silvermere::database_url(database);
+    let info = daydream_silvermere::block_on(daydream_silvermere::info(&url))?;
+    println!("{}", info.url);
+    match &info.running {
+        Some(by) => println!("silvermere is running: {by}"),
+        None => println!("silvermere is not running"),
+    }
+    for (table, n) in &info.tables {
+        println!("{table}: {n} rows");
+    }
+    println!(
+        "record bytes from Daydream: {}",
+        if info.raw { "kept" } else { "none" }
+    );
     Ok(())
 }

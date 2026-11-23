@@ -1,0 +1,149 @@
+//! The realm in a silvermere database (`daydream silvermere-export`, `silvermere-import`):
+//! the Tools page's silvermere card.
+//!
+//! | Route | Does |
+//! |---|---|
+//! | `GET /api/silvermere` | the database `serve --silvermere` was given (password masked), if any |
+//! | `POST /api/silvermere/info` | `{database?}`: what the database holds, and whether silvermere runs on it |
+//! | `POST /api/silvermere/export` | `{database?, dry_run, reset_state, keep_extra, no_raw}`: writes the realm's world into it |
+//! | `POST /api/silvermere/import` | `{database?, dry_run, keep_extra}`: rewrites the realm's world from it |
+//!
+//! `database` is a SQLite file's path or a `sqlite:`/`postgres:` URL; left out, the one the
+//! server was started with. silvermere must be stopped: its writer lock is taken first, and a
+//! running silvermere is a 409.
+
+use std::sync::Arc;
+
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
+use daydream_silvermere::{Error, ExportOptions, ImportOptions, State as LiveState};
+use daydream_store::Realm;
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::{ApiError, AppState, blocking};
+
+impl From<Error> for ApiError {
+    fn from(e: Error) -> Self {
+        let status = match e {
+            Error::Running { .. } | Error::Schema { .. } | Error::NoDatabase(_) => {
+                StatusCode::CONFLICT
+            }
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        ApiError(status, e.to_string())
+    }
+}
+
+fn database(s: &AppState, given: Option<String>) -> Result<String, ApiError> {
+    match given
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty())
+    {
+        Some(d) => Ok(daydream_silvermere::database_url(&d)),
+        None => s.silvermere.clone().ok_or_else(|| {
+            ApiError(
+                StatusCode::BAD_REQUEST,
+                "give silvermere's database (its SQLite file or a URL)".into(),
+            )
+        }),
+    }
+}
+
+pub(crate) async fn configured(State(s): State<Arc<AppState>>) -> Json<Value> {
+    Json(json!({
+        "database": s.silvermere.as_deref().map(daydream_silvermere::redact_url),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct InfoJson {
+    #[serde(default)]
+    database: Option<String>,
+}
+
+pub(crate) async fn info(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<InfoJson>,
+) -> Result<Json<Value>, ApiError> {
+    let url = database(&s, body.database)?;
+    blocking(move || {
+        let info = daydream_silvermere::block_on(daydream_silvermere::info(&url))?;
+        Ok(Json(
+            serde_json::to_value(info).map_err(crate::tools::internal)?,
+        ))
+    })
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExportJson {
+    #[serde(default)]
+    database: Option<String>,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    reset_state: bool,
+    #[serde(default)]
+    keep_extra: bool,
+    #[serde(default)]
+    no_raw: bool,
+}
+
+pub(crate) async fn export(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<ExportJson>,
+) -> Result<Json<Value>, ApiError> {
+    let url = database(&s, body.database)?;
+    blocking(move || {
+        let opts = ExportOptions {
+            state: if body.reset_state {
+                LiveState::Reset
+            } else {
+                LiveState::Keep
+            },
+            delete: !body.keep_extra,
+            raw: !body.no_raw,
+            dry_run: body.dry_run,
+            ..ExportOptions::default()
+        };
+        // the realm is only read, but not while a save is half done
+        let _writing = s.write.lock().map_err(crate::tools::internal)?;
+        let realm = Realm::open(&s.realm_dir)?;
+        let tables =
+            daydream_silvermere::block_on(daydream_silvermere::export(&realm, &url, &opts))?;
+        Ok(Json(json!({ "dry_run": body.dry_run, "tables": tables })))
+    })
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ImportJson {
+    #[serde(default)]
+    database: Option<String>,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    keep_extra: bool,
+}
+
+pub(crate) async fn import(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<ImportJson>,
+) -> Result<Json<Value>, ApiError> {
+    let url = database(&s, body.database)?;
+    blocking(move || {
+        let opts = ImportOptions {
+            delete: !body.keep_extra,
+            dry_run: body.dry_run,
+            ..ImportOptions::default()
+        };
+        let _writing = s.write.lock().map_err(crate::tools::internal)?;
+        let realm = Realm::open(&s.realm_dir)?;
+        let tables =
+            daydream_silvermere::block_on(daydream_silvermere::import(&realm, &url, &opts))?;
+        Ok(Json(json!({ "dry_run": body.dry_run, "tables": tables })))
+    })
+    .await
+}

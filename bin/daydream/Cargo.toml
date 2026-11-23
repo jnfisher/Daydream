@@ -18,6 +18,7 @@ clap.workspace = true
 daydream-mcp.workspace = true
 daydream-nmr.workspace = true
 daydream-server.workspace = true
+daydream-silvermere.workspace = true
 jiff.workspace = true
 daydream-store.workspace = true
 daydream-wcc.workspace = true
