@@ -411,6 +411,7 @@ function toolbar(t: TableInfo): HTMLElement {
     button('Paste Stats', 'NMR\'s Paste Character: read a capture of the game\'s stat output into the fields', () => void pasteStats());
     button('Paste Items', 'NMR\'s Paste Items/Keys/Worn/$$: read a capture of the game\'s inventory into the lists', () => void pasteItems());
     button('Paste Spells', 'NMR\'s Paste Spellbook: read a capture of the game\'s spellbook into the spellbook', () => void pasteSpells());
+    button('Copy User', 'NMR\'s Copy User: this user onto another BBS name, new or existing', () => void copyUser());
     button('Export', 'NMR\'s character export: copy this user as text', () => void exportCharacter());
     button('Import', 'NMR\'s character import: fill this user from exported text', () => void importCharacter());
   }
@@ -760,6 +761,47 @@ async function insert() {
     state.row = null;
     state.names.delete(t.name);
     status(`Inserted ${t.name} ${keyText(key)}.`, 'ok');
+    location.hash = `#/${encodeURIComponent(t.name)}/${encodeURIComponent(JSON.stringify(key))}`;
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** NMR's Copy User: the user (unsaved edits saved first) onto another BBS name. An
+ *  existing user keeps its own first name; a new one asks for one. */
+async function copyUser() {
+  const t = state.table;
+  const row = state.row;
+  if (!t || !row) return;
+  if (
+    !confirm(
+      'Warning, this will have VERY unpredictable results with limited items, gangs, etc and should really only be used to transfer characters between BBS accounts.\n\nAre you sure you want to continue?',
+    )
+  )
+    return;
+  const bbs = (prompt('Enter the BBS Name to copy to (new or existing).\n\nNOTE: enter it EXACTLY, case sensitive!', '') ?? '').trim();
+  if (!bbs) return;
+  if (dirty()) await save();
+  if (dirty()) return;
+  const values: Record<string, Cell> = {};
+  for (const [col, typed] of state.edits) values[col] = toWire(typed);
+  const key: Cell[] = [bbs];
+  try {
+    if (state.rows.some(([k]) => sameKey(k, key))) {
+      const target = await api.row(t.name, key);
+      delete values['BBS Name'];
+      values['First Name'] = String(target.values['First Name'] ?? '').replace(/ /g, '');
+      await api.save(t.name, key, values);
+    } else {
+      const first = (prompt('Enter the new First Name (must be unique)', '') ?? '').replace(/ /g, '');
+      if (!first) return;
+      values['BBS Name'] = bbs;
+      values['First Name'] = first;
+      await api.insert(t.name, values);
+      state.rows = (await api.rows(t.name)).rows;
+    }
+    state.names.delete(t.name);
+    status(`Copied ${keyText(row.key)} to ${bbs}.`, 'ok');
     location.hash = `#/${encodeURIComponent(t.name)}/${encodeURIComponent(JSON.stringify(key))}`;
   } catch (e) {
     fail(e);

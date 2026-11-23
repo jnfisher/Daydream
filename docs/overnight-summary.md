@@ -121,6 +121,15 @@ revisited. Pull requests merged once CI was green.
   - Still deliberately not offered in the UI or CLI: wiring it up (with NMR's options) is the
     next step, and a separate PR so it can be reviewed against the privacy rule.
 
+- **NMR's last user tools** (added to #17). The user editor gains **Paste Items** (NMR's
+  Paste Items/Keys/Worn/$$: an inventory capture read as NMR reads it, items matched by
+  name, keys to the key list, worn items and the weapon by their "(Place)", coins, with
+  NMR's Clear First or Add and its question when two items share a name), **Paste Spells**
+  (a spellbook capture) and **Copy User** (onto a new BBS name with a new first name, or
+  over an existing user, which keeps its own first name). Tried in Chromium on the 1.11p
+  realm. The rows API takes `?columns=` so the editor reads every item's name, type and
+  uses in one call.
+
 ## Decisions taken
 
 1. **The UI is TypeScript, bundled with esbuild into a file the server embeds; the bundle is
@@ -218,8 +227,12 @@ revisited. Pull requests merged once CI was green.
     be within 3 points or 25% of NMR's, and no more than 6% of a column may be over 10%
     off. A tighter test would test NMR's dice, not the formula; the share rule catches a
     sim that drifts as a whole. Measured worst cases are in `tests/mme.rs`.
-23. **The simulation is seeded, so an export is the same every time.** NMR reseeds from
-    the clock; a fixed seed makes Daydream's export reproducible and diffable.
+23. **The simulation is seeded, so an export is the same every time.** NMR's numbers vary
+    from one export to the next; a fixed seed makes Daydream's reproducible and diffable.
+24. **Paste Items and Paste Spells follow NMR's reading exactly, quirks included.** For
+    example, a list that runs onto the next line without a full stop joins the two names,
+    and the Wealth line's total sets copper only when it is the capture's last line. So a
+    capture fills the same lists in both.
 
 ## Known gaps
 
@@ -230,8 +243,6 @@ revisited. Pull requests merged once CI was green.
   even on a Worldgroup realm. They now use the realm's own (#8).
 - Users' inventories are not renumbered by the Record Number Changer, as in NMR (users are
   not among NMR's tables). Worth adding if renumbering items on a live realm matters.
-- NMR's Paste Items (reading an inventory capture) and Copy User are not in. Insert on a
-  user copies it to a new BBS name.
 - The Tools page (#9) imports with Daydream's strict rules only; NMR mode stays a
   command-line and CI option.
 
