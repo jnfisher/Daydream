@@ -21,7 +21,7 @@ revisited. Pull requests merged once CI was green.
 - **M4: the player editors are in** (Users with Revive, Paste Stats and NMR's character
   export/import; Bank Books; Gangs). **The MME export's library is done** (#17): every
   table and column of NMR's export, checked against NMR's own export of the stock world.
-  It is not yet offered in the UI or command line.
+  It is on the command line (`daydream mme-export`), not yet in the web UI.
 
 ## Pull requests
 
@@ -118,8 +118,10 @@ revisited. Pull requests merged once CI was green.
     is random and stops when its average settles, so its own numbers move from one export to
     the next. Daydream's uses VB's own generator with a fixed seed; on the 1.11p realm here all but 3
     of 1,101 AvgDmg values are within 5% of NMR's, and none is more than 6% off.
-  - Still deliberately not offered in the UI or CLI: wiring it up (with NMR's options) is the
-    next step, and a separate PR so it can be reviewed against the privacy rule.
+  - **On the command line as `daydream mme-export`** (added to #17), with NMR's options:
+    Legit by default, `--not-legit` for a custom name, an update URL, the sysop's own
+    exclusions and no rooms. The Windows job writes the stock world's export through Jet
+    and reads it back. Not in the web UI yet: writing the `.mdb` needs Windows' Jet.
 
 - **NMR's last user tools** (added to #17). The user editor gains **Paste Items** (NMR's
   Paste Items/Keys/Worn/$$: an inventory capture read as NMR reads it, items matched by
@@ -233,6 +235,11 @@ revisited. Pull requests merged once CI was green.
     example, a list that runs onto the next line without a full stop joins the two names,
     and the Wealth line's total sets copper only when it is the capture's last line. So a
     capture fills the same lists in both.
+
+25. **The MME export went on the command line once it matched NMR's in every column.** It
+    writes exactly what NMR's export writes, so it reveals nothing NMR's would not; that
+    was the condition for exposing it. Worth your review against the MME privacy rule
+    before it merges.
 
 ## Known gaps
 
