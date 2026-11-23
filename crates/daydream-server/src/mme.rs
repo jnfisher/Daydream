@@ -78,7 +78,7 @@ pub(crate) async fn export(
     Json(body): Json<ExportJson>,
 ) -> Result<Response, ApiError> {
     blocking(move || {
-        let realm = Realm::open(&s.realm_dir)?;
+        let realm = Realm::open(&s.realm_dir()?)?;
         let mut opts = body.options;
         // VB's Date and Time in the US format NMR's users mostly have, as the command line
         let now = jiff::Zoned::now();

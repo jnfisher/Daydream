@@ -10,13 +10,15 @@
 //! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
 //! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) and `dry_run`; as `modify` |
 //! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
-//! | `POST /api/tools/write-dat` | `{wcc, out?, backup, dry_run, force}`; `{files: [{stem, dest, action, records}], backup?}` |
+//! | `POST /api/tools/write-dat` | `{wcc?, out?, backup, dry_run, force}`; `{files: [{stem, dest, action, records}], backup?}` |
 //!
 //! `options` is JSON: `tables` (names, or absent for all), `ranges` (`[{table, map?, from,
 //! to}]`), `skip_existing`, `room_parts` (`all`, `only_items`, `not_items`), `extra_parts`
 //! and `dry_run`. Like the editors, the tools write the realm's files: stop the realm first.
 //! `write-dat` writes the realm back into its Btrieve files (`daydream write-dat`): `wcc`
-//! is the folder the realm was converted from, on the machine the server runs on.
+//! is the folder the realm was converted from, on the machine the server runs on; left out,
+//! the open game's ([`crate::games`]). It is refused while a game runs on the folder, and
+//! with an access token only a WCC game Daydream knows may be named, and `out` not at all.
 
 use std::sync::Arc;
 
@@ -108,8 +110,8 @@ pub(crate) async fn import(
             return Err(bad("send the .mdb (or JSON export) as the request body"));
         }
         let data = read_export(&body)?;
-        let _writing = s.write.lock().map_err(internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let (_writing, dir) = s.lock_write(o.dry_run)?;
+        let realm = Realm::open(&dir)?;
         let opts = ImportOptions {
             skip_existing: o.skip_existing,
             dry_run: o.dry_run,
@@ -156,8 +158,8 @@ pub(crate) async fn delete(
         if body.range.is_none() && !body.all {
             return Err(bad("give a range, or all: true to delete every record"));
         }
-        let _writing = s.write.lock().map_err(internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let (_writing, dir) = s.lock_write(body.dry_run)?;
+        let realm = Realm::open(&dir)?;
         let range = body.range.map(|mut r| {
             r.table = body.table.clone();
             Range::from(r)
@@ -207,8 +209,8 @@ pub(crate) async fn merge_users(
             WbtrvDb::convert(&dat, &p).map_err(|e| bad(format!("not a user file: {e}")))?;
             p
         };
-        let _writing = s.write.lock().map_err(internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let (_writing, dir) = s.lock_write(q.dry_run)?;
+        let realm = Realm::open(&dir)?;
         let into_path = realm
             .files_of(daydream_wcc::tables::Table::Users)
             .next()
@@ -324,8 +326,8 @@ pub(crate) async fn renumber(
     Json(body): Json<RenumberJson>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let _writing = s.write.lock().map_err(internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let (_writing, dir) = s.lock_write(body.dry_run)?;
+        let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         let plans = daydream_nmr::renumber::plan(&realm, &body.run, layout)
             .map_err(|e| bad(e.to_string()))?;
@@ -360,8 +362,8 @@ async fn run_plan(
     + 'static,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let _writing = s.write.lock().map_err(internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let (_writing, dir) = s.lock_write(dry_run)?;
+        let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         let plan = plan(&realm, layout)?;
         let report = if dry_run {
@@ -379,7 +381,9 @@ async fn run_plan(
 /// The body of `write-dat`.
 #[derive(Debug, Deserialize)]
 pub struct WriteDatJson {
-    wcc: String,
+    /// The WCC folder; left out, the open game's.
+    #[serde(default)]
+    wcc: Option<String>,
     #[serde(default)]
     out: Option<String>,
     #[serde(default = "yes")]
@@ -400,15 +404,27 @@ pub(crate) async fn write_dat(
 ) -> Result<Json<Value>, ApiError> {
     use daydream_store::dat::{Action, DatError, WriteOptions};
     blocking(move || {
-        let wcc = std::path::PathBuf::from(body.wcc.trim());
-        if body.wcc.trim().is_empty() || !wcc.is_dir() {
-            return Err(bad(format!("{}: not a folder", wcc.display())));
-        }
+        let wcc = s.wcc_target(body.wcc.as_deref())?;
         let out = body
             .out
             .map(|o| o.trim().to_string())
             .filter(|o| !o.is_empty())
             .map(std::path::PathBuf::from);
+        if out.is_some() && !s.custom_allowed() {
+            return Err(crate::games::not_allowed("writing to another folder"));
+        }
+        if out.is_none() && !body.dry_run {
+            let r = crate::games::running::check(&wcc);
+            if let Some(by) = r.by {
+                return Err(ApiError(
+                    StatusCode::CONFLICT,
+                    format!(
+                        "the game is running on {} ({by}): stop it before writing its files",
+                        wcc.display()
+                    ),
+                ));
+            }
+        }
         let backup = (out.is_none() && body.backup).then(|| {
             let at = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
             wcc.join(format!("daydream-backup-{at}"))
@@ -419,8 +435,9 @@ pub(crate) async fn write_dat(
             dry_run: body.dry_run,
             force: body.force,
         };
-        let _writing = s.write.lock().map_err(internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        // the realm is only read here
+        let (_writing, dir) = s.lock_write(true)?;
+        let realm = Realm::open(&dir)?;
         let written =
             daydream_store::dat::write_dat(&realm, &wcc, &options).map_err(|e| match e {
                 DatError::NoSource { .. }

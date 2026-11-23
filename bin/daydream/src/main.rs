@@ -36,10 +36,11 @@ enum Command {
         #[arg(long, conflicts_with = "from")]
         stock_zip: Option<PathBuf>,
     },
-    /// Serve REALM to the browser.
+    /// Serve REALM to the browser. Without REALM, the game open last; the game picker at
+    /// the top of the page opens another (or the first).
     Serve {
-        /// The realm directory.
-        realm: PathBuf,
+        /// The realm directory: a realm Daydream made, or a game's folder of `WCC*.db` files.
+        realm: Option<PathBuf>,
         /// The address to listen on. Anywhere but this machine's loopback needs --token.
         #[arg(long, default_value = "127.0.0.1:7340", env = "DAYDREAM_LISTEN")]
         listen: SocketAddr,
@@ -52,6 +53,19 @@ enum Command {
         /// card and the MCP server's silvermere tools.
         #[arg(long, env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
         silvermere: Option<String>,
+        #[command(flatten)]
+        games: GameArgs,
+        /// With --token, let the browser open any folder or database URL and write to any
+        /// folder. Without it, a token holder opens only the games Daydream found (in the
+        /// usual places and --search folders) and writes only to the open game.
+        #[arg(long)]
+        allow_any_source: bool,
+    },
+    /// List the games Daydream finds on this machine: MajorMUD's WCC files (Worldgroup,
+    /// The Major BBS, MBBSEmu) and silvermere databases, as the browser's game picker does.
+    Games {
+        #[command(flatten)]
+        games: GameArgs,
     },
     /// Print a new random access token for `serve --token`.
     NewToken,
@@ -285,6 +299,33 @@ enum Command {
 }
 
 /// `Table=FROM-TO` or `Table=MAP:FROM-TO`.
+/// Where games are looked for, and where their working copies are kept.
+#[derive(Debug, clap::Args)]
+struct GameArgs {
+    /// Look for games in this folder too (and a few levels below it). Repeatable.
+    #[arg(long = "search", value_name = "DIR")]
+    search: Vec<PathBuf>,
+    /// Look only in the --search folders, not in the usual places (the drives' top
+    /// folders, the home folder, the current folder, /opt, /srv).
+    #[arg(long)]
+    no_default_search: bool,
+    /// Where working copies of games are kept (default: DAYDREAM_HOME, else the user's
+    /// local data folder, `daydream` in it).
+    #[arg(long, value_name = "DIR")]
+    workspace: Option<PathBuf>,
+}
+
+impl GameArgs {
+    fn config(self, allow_any_source: bool) -> daydream_server::games::Config {
+        daydream_server::games::Config {
+            workspace: self.workspace,
+            search: self.search,
+            default_search: !self.no_default_search,
+            allow_any_source,
+        }
+    }
+}
+
 fn parse_range(s: &str) -> Result<daydream_nmr::Range, String> {
     let (table, rest) = s
         .split_once('=')
@@ -342,7 +383,16 @@ fn main() -> anyhow::Result<()> {
             listen,
             token,
             silvermere,
-        } => serve(realm, listen, token, silvermere),
+            games,
+            allow_any_source,
+        } => serve(
+            realm,
+            listen,
+            token,
+            silvermere,
+            games.config(allow_any_source),
+        ),
+        Command::Games { games } => list_games(games.config(false)),
         Command::NewToken => {
             println!("{}", daydream_server::auth::new_token());
             Ok(())
@@ -581,10 +631,11 @@ fn convert(
 }
 
 fn serve(
-    realm: PathBuf,
+    realm: Option<PathBuf>,
     listen: SocketAddr,
     token: Option<String>,
     silvermere: Option<String>,
+    games: daydream_server::games::Config,
 ) -> anyhow::Result<()> {
     use daydream_server::auth;
     let token = token
@@ -594,27 +645,94 @@ fn serve(
         auth::check_token(t).map_err(anyhow::Error::msg)?;
     }
     auth::check_listen(listen, token.as_deref()).map_err(anyhow::Error::msg)?;
-    Realm::open(&realm).with_context(|| format!("opening the realm {}", realm.display()))?;
+    // no REALM: the game open last, if it is still there
+    let realm = match realm {
+        Some(r) => {
+            Realm::open(&r).with_context(|| format!("opening the realm {}", r.display()))?;
+            Some(r)
+        }
+        None => games
+            .workspace()
+            .last()
+            .map(|l| l.realm_dir)
+            .filter(|d| Realm::open(d).is_ok_and(|r| !r.files().is_empty())),
+    };
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
         let listener = tokio::net::TcpListener::bind(listen)
             .await
             .with_context(|| format!("listening on {listen}"))?;
-        tracing::info!("serving {} on http://{listen}/", realm.display());
+        match &realm {
+            Some(r) => tracing::info!("serving {} on http://{listen}/", r.display()),
+            None => tracing::info!("no game open: choose one in the browser, on http://{listen}/"),
+        }
         if token.is_some() {
             tracing::info!(
                 "access token required: sign in at /login; agents send \
                  `Authorization: Bearer <token>` to /mcp, or use the URL /mcp/<token>"
             );
         }
-        let options = daydream_server::Options { token, silvermere };
-        axum::serve(listener, daydream_server::router_with(&realm, options))
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
-            .await?;
+        let options = daydream_server::Options {
+            token,
+            silvermere,
+            games,
+        };
+        axum::serve(
+            listener,
+            daydream_server::router_with(realm.as_deref(), options),
+        )
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
         Ok(())
     })
+}
+
+fn list_games(games: daydream_server::games::Config) -> anyhow::Result<()> {
+    use daydream_server::games::{Source, discover, running};
+    let ws = games.workspace();
+    let mut roots = discover::Roots::usual(&games.search, games.default_search);
+    roots.skip.push(ws.dir().to_path_buf());
+    let found = discover::discover(&roots);
+    if found.is_empty() {
+        println!("no games found; give a folder to look in with --search");
+    }
+    for f in &found {
+        let state = match &f.source {
+            Source::Wcc { dir } | Source::Db { dir } => match running::check(dir).by {
+                Some(by) => format!("running: {by}"),
+                None => "not running".into(),
+            },
+            Source::Silvermere { .. } => String::new(),
+        };
+        println!(
+            "{:<10} {}  {}\n           {}  (found in {}){}",
+            f.source.kind(),
+            f.source.id(),
+            f.label,
+            f.source.shown(),
+            f.found_by,
+            if state.is_empty() {
+                String::new()
+            } else {
+                format!("; {state}")
+            }
+        );
+    }
+    let copies = ws.copies();
+    if !copies.is_empty() {
+        println!("\nworking copies in {}:", ws.dir().display());
+        for (dir, saved) in copies {
+            println!(
+                "  {}  {} (read {})",
+                dir.display(),
+                saved.source.shown(),
+                saved.pulled
+            );
+        }
+    }
+    Ok(())
 }
 
 fn dump(realm: &std::path::Path, stem: &str) -> anyhow::Result<()> {

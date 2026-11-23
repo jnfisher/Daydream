@@ -29,6 +29,41 @@ cargo run -p daydream -- serve ./realm          # then open http://127.0.0.1:734
 cargo run -p daydream -- dump ./realm WCCITEMS  # every item as a JSON line
 ```
 
+### Choosing the game in the browser
+
+`daydream serve` with no realm opens the game you had open last, or none, and the game
+button at the top of the page (the game picker) opens another. Daydream assumes it runs on
+the machine that hosts the game, and looks for games where they are usually installed: the
+drives' top folders on Windows (`C:\WGSERV`, `C:\MBBSEmu`, `C:\Silvermere`), your home
+folder, the folder it was started in, `/opt` and `/srv`, a few levels down, plus any folder
+given with `--search DIR`. It finds:
+
+| Game | Found by | Edited in | Written back by |
+|---|---|---|---|
+| Worldgroup, The Major BBS (`WCC*.DAT`) | its world files | a working copy, made when first opened | Tools, **Write to WCC files** (no folder to type) |
+| MBBSEmu, or wbtrv32 (`WCC*.db`) | its world files | the game's own files | nothing to do: every save is in the game |
+| silvermere (SQLite or PostgreSQL, such as Neon) | `silvermere.toml`, `silvermere.db`, `SILVERMERE_DATABASE_URL`, `/etc/silvermere/env` | a working copy, read from its database | Tools, **silvermere**, Export |
+
+A folder or database Daydream did not find can be typed in the picker. Working copies are
+kept in `DAYDREAM_HOME` (else `%LOCALAPPDATA%\daydream`, or `~/.local/share/daydream`),
+one per game; **Read again** replaces one with the game as it is now, keeping the old copy
+beside it as `.previous`. `daydream games` lists what the picker would show.
+
+**Stop the game to write into it, not to edit.** Edits go into the working copy while the
+game runs; only writing back needs it stopped, and Daydream refuses while it sees it
+running: a Worldgroup or MBBSEmu process whose program or folder is the game's (on
+Windows, also a WCC file open in another program), or silvermere's writer lock. A game
+edited in its own `.db` files (MBBSEmu) refuses every save while it runs. The game changes
+some of its files as it runs (rooms' floors, shop stock, players), and `write-dat` refuses
+to write over a file that changed since its working copy was read: read the game again
+just before editing, or write with "even over files the game changed".
+
+**With an access token** (Daydream reached from elsewhere, as below), the picker opens only
+the games Daydream found itself, the ones opened before and the one it was started with,
+and the write-back cards write only to the open game. Nobody holding the token can make it
+read or write another folder or database. `serve --allow-any-source` lifts that; adding
+`--search DIR` is the narrower way to offer another game.
+
 To and from Nightmare Redux's `.mdb` export (the tables NMR's Database Export writes and its
 Database Import reads):
 

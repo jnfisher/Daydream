@@ -45,6 +45,8 @@ rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+# which game processes run (the game picker's running check); processes only
+sysinfo = { version = "0.40.4", default-features = false, features = ["system"] }
 # silvermere's database layer (crates/daydream-silvermere), as silvermere runs it; 0.9.1 is
 # the first that accepts rusqlite's libsqlite3-sys 0.40
 sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "postgres", "any", "migrate", "macros"] }

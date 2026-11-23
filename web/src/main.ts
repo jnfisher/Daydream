@@ -6,6 +6,7 @@ import { ABILITIES } from './abilities';
 import { renderAnsi, titleOf, toShown, toWire } from './ansi';
 import { api, type Cell, type ColumnInfo, type Row, type TableInfo } from './api';
 import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './layouts';
+import { games, gamesPage } from './games';
 import { listsPage } from './lists';
 import { mapPage } from './map';
 import { toolsPage } from './tools';
@@ -157,18 +158,19 @@ function renderNav() {
     nav.append(a);
   }
   const map = h('a', { href: '#/map', class: 'tools-link' }, 'Map');
+  if (!state.tables.length) map.hidden = true;
   const lists = h('a', { href: '#/lists' }, 'Lists');
   const tools = h('a', { href: '#/tools' }, 'Tools');
   if (onPage() === 'map') map.classList.add('active');
   if (onPage() === 'lists') lists.classList.add('active');
   if (onPage() === 'tools') tools.classList.add('active');
-  nav.append(map, lists, tools);
+  if (state.tables.length) nav.append(map, lists, tools);
 }
 
-type Page = 'tools' | 'lists' | 'map';
-const PAGES: Page[] = ['tools', 'lists', 'map'];
+type Page = 'tools' | 'lists' | 'map' | 'games';
+const PAGES: Page[] = ['tools', 'lists', 'map', 'games'];
 
-/** The page the hash names other than an editor: Tools, Lists or Map. */
+/** The page the hash names other than an editor: Tools, Lists, Map or the game picker. */
 const onPage = (): Page | null => PAGES.find((p) => location.hash.startsWith(`#/${p}`)) ?? null;
 
 let theMap: ReturnType<typeof mapPage> | null = null;
@@ -186,6 +188,17 @@ function showPage(which: Page | null) {
       }
       // coming back from elsewhere, the rooms may have been edited: load them afresh
       void theMap.show(lastPage !== 'map');
+      continue;
+    }
+    if (id === 'games' && which === 'games') {
+      // what is found, open and running changes: ask afresh every time
+      page.replaceChildren(
+        gamesPage(() => {
+          // another game: the page starts again on it
+          location.hash = '#/';
+          location.reload();
+        }),
+      );
       continue;
     }
     if (which === id && !page.childElementCount) {
@@ -853,6 +866,17 @@ async function route() {
   await openTable(name, parsed);
 }
 
+/** The header's game button: what is open, and the way to the picker. */
+function showGame(current: Awaited<ReturnType<typeof games.list>>['current']) {
+  const el = $('#realm');
+  const label = current?.label ?? current?.realm_dir ?? 'No game open';
+  const a = h('a', { href: '#/games', class: 'game-button', title: current ? `${current.location ?? current.realm_dir}\nChoose another game` : 'Choose a game' }, label, ' ▾');
+  el.replaceChildren(a);
+  if (current?.live) {
+    el.append(h('span', { class: 'badge live', title: 'Saves go straight into the game’s own files' }, 'live files'));
+  }
+}
+
 async function main() {
   $('#filter').addEventListener('input', (e) => {
     state.filter = (e.target as HTMLInputElement).value;
@@ -869,8 +893,15 @@ async function main() {
   });
   window.addEventListener('hashchange', () => void route().catch(fail));
   try {
-    const realm = await api.realm();
-    $('#realm').textContent = realm.dir;
+    const listing = await games.list();
+    showGame(listing.current);
+    if (!listing.current) {
+      // nothing open yet: the picker is the page
+      renderNav();
+      if (onPage() !== 'games') location.hash = '#/games';
+      else await route();
+      return;
+    }
     state.tables = await api.tables();
     renderNav();
     await route();

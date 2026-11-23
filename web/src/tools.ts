@@ -6,6 +6,7 @@
 import { ABILITIES } from './abilities';
 import { toShown, toWire } from './ansi';
 import { api, type Report, type TableInfo } from './api';
+import { games } from './games';
 import { massRoomEditor } from './massroom';
 import { mmeExport } from './mme';
 import { indexChanger } from './indexchanger';
@@ -284,10 +285,31 @@ function writeDat(): HTMLElement {
     h(
       'p',
       { class: 'hint' },
-      'Write this realm back into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Files nobody changed are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first.',
+      'Write this realm back into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Files nobody changed are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first: Daydream refuses while it sees the game running on the folder.',
     ),
   );
-  const wcc = input({ type: 'text', placeholder: 'C:\\WGSERV', value: remembered() });
+  const wcc = input({ type: 'text', placeholder: 'C:\\WGSERV' });
+  // the open game's folder, when it is a WCC game: then the field may stay empty
+  let gameDir: string | null = null;
+  games
+    .list()
+    .then((l) => {
+      if (l.current?.kind === 'wcc') {
+        gameDir = l.current.location ?? null;
+        wcc.placeholder = `${gameDir} (the open game's)`;
+      } else if (l.current?.kind === 'db' && l.current.live) {
+        card.append(h('p', { class: 'hint' }, "The open game's own .db files are being edited: every save is already in the game, so there is nothing to write back."));
+      } else {
+        wcc.value = remembered();
+      }
+      if (!l.custom) {
+        out.disabled = true;
+        out.placeholder = 'not with an access token (start Daydream with --allow-any-source)';
+      }
+    })
+    .catch(() => {
+      wcc.value = remembered();
+    });
   const out = input({ type: 'text', placeholder: 'leave empty to write over the WCC folder' });
   const backup = input({ type: 'checkbox', checked: '' });
   const force = input({ type: 'checkbox' });
@@ -303,7 +325,8 @@ function writeDat(): HTMLElement {
     result,
   );
   const run = async (dryRun: boolean) => {
-    const dir = wcc.value.trim();
+    const typed = wcc.value.trim();
+    const dir = typed || gameDir;
     if (!dir) {
       result.replaceChildren(failure('Give the WCC folder.'));
       return;
@@ -312,10 +335,10 @@ function writeDat(): HTMLElement {
     try {
       const res = await post(
         '/api/tools/write-dat',
-        JSON.stringify({ wcc: dir, out: out.value.trim() || null, backup: backup.checked, force: force.checked, dry_run: dryRun }),
+        JSON.stringify({ wcc: typed || null, out: out.value.trim() || null, backup: backup.checked, force: force.checked, dry_run: dryRun }),
         true,
       );
-      remember(dir);
+      if (typed) remember(typed);
       const files = res.files as WrittenFile[];
       const changed = files.filter((f) => f.action !== 'unchanged');
       const would = dryRun ? 'would be ' : '';
@@ -379,10 +402,19 @@ function silvermere(changed: () => void): HTMLElement {
     h('div', { class: 'toolbar' }, status, previewOut, goOut, previewIn, goIn),
     result,
   );
-  fetch('/api/silvermere')
-    .then((r) => r.json())
-    .then((c: { database: string | null }) => {
-      if (c.database && !db.value) db.placeholder = `${c.database} (the server's)`;
+  Promise.all([fetch('/api/silvermere').then((r) => r.json()), games.list()])
+    .then(([c, l]: [{ database: string | null; custom: boolean }, Awaited<ReturnType<typeof games.list>>]) => {
+      if (l.current?.kind === 'silvermere') {
+        // the open game is this database: what was typed for another is not meant now
+        db.value = '';
+        db.placeholder = `${l.current.location} (the open game's)`;
+      } else if (c.database) {
+        db.placeholder = `${c.database} (the server's)`;
+      }
+      if (!c.custom) {
+        db.value = '';
+        if (!c.database) db.placeholder = 'open a silvermere game first (typing a database needs --allow-any-source)';
+      }
     })
     .catch(() => {});
   const database = () => {
@@ -407,7 +439,7 @@ function silvermere(changed: () => void): HTMLElement {
     result.replaceChildren(h('p', {}, dryRun ? 'Preview: nothing was written.' : 'Done.'), table);
   };
   const run = async (exporting: boolean, dryRun: boolean) => {
-    const where = db.value.trim() || 'the server\'s silvermere database';
+    const where = db.value.trim() || db.placeholder.replace(/ \(.*\)$/, '') || "the server's silvermere database";
     if (!dryRun) {
       const ask = exporting
         ? `Write the realm's world into ${where}? silvermere must be stopped.`

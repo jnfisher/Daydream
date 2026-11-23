@@ -232,3 +232,15 @@ main.login label { display: flex; flex-direction: column; gap: .25rem; }
 main.login input { font: inherit; padding: .35rem .5rem; }
 main.login .error { color: var(--danger); }
 main.login p { color: var(--muted); font-size: .85rem; }
+#games { overflow: auto; padding: 1rem; }
+#games[hidden] { display: none; }
+#realm a.game-button { color: var(--text); text-decoration: none; border: 1px solid var(--line); border-radius: 4px; padding: .1rem .5rem; font-size: .9rem; }
+#realm a.game-button:hover { background: var(--select); }
+.badge { display: inline-block; font-size: .75rem; padding: 0 .4rem; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); margin-left: .4rem; white-space: nowrap; }
+.badge.running { color: var(--danger); border-color: var(--danger); }
+.badge.stopped { color: var(--ok); border-color: var(--ok); }
+.badge.live { color: var(--danger); border-color: var(--danger); }
+.games-list td { vertical-align: top; padding-top: .4rem; padding-bottom: .4rem; }
+.games-list tr.current td { background: var(--select); }
+.games-list .hint { color: var(--muted); font-size: .8rem; margin: 0; }
+.games-list .toolbar { margin: 0; display: flex; gap: .4rem; flex-wrap: wrap; }

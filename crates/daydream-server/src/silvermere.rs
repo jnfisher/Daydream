@@ -3,13 +3,14 @@
 //!
 //! | Route | Does |
 //! |---|---|
-//! | `GET /api/silvermere` | the database `serve --silvermere` was given (password masked), if any |
+//! | `GET /api/silvermere` | the open silvermere game's database, else the one `serve --silvermere` was given (password masked), if any; and whether another may be typed |
 //! | `POST /api/silvermere/info` | `{database?}`: what the database holds, and whether silvermere runs on it |
 //! | `POST /api/silvermere/export` | `{database?, dry_run, reset_state, keep_extra, no_raw}`: writes the realm's world into it |
 //! | `POST /api/silvermere/import` | `{database?, dry_run, keep_extra}`: rewrites the realm's world from it |
 //!
-//! `database` is a SQLite file's path or a `sqlite:`/`postgres:` URL; left out, the one the
-//! server was started with. silvermere must be stopped: its writer lock is taken first, and a
+//! `database` is a SQLite file's path or a `sqlite:`/`postgres:` URL; left out, the open
+//! game's when it is a silvermere one, else the one the server was started with. With an
+//! access token only a database Daydream knows may be named ([`crate::games`]). silvermere must be stopped: its writer lock is taken first, and a
 //! running silvermere is a 409.
 
 use std::sync::Arc;
@@ -37,23 +38,13 @@ impl From<Error> for ApiError {
 }
 
 fn database(s: &AppState, given: Option<String>) -> Result<String, ApiError> {
-    match given
-        .map(|d| d.trim().to_string())
-        .filter(|d| !d.is_empty())
-    {
-        Some(d) => Ok(daydream_silvermere::database_url(&d)),
-        None => s.silvermere.clone().ok_or_else(|| {
-            ApiError(
-                StatusCode::BAD_REQUEST,
-                "give silvermere's database (its SQLite file or a URL)".into(),
-            )
-        }),
-    }
+    s.silvermere_url(given)
 }
 
 pub(crate) async fn configured(State(s): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({
-        "database": s.silvermere.as_deref().map(daydream_silvermere::redact_url),
+        "database": s.silvermere_url(None).ok().as_deref().map(daydream_silvermere::redact_url),
+        "custom": s.custom_allowed(),
     }))
 }
 
@@ -109,8 +100,8 @@ pub(crate) async fn export(
             ..ExportOptions::default()
         };
         // the realm is only read, but not while a save is half done
-        let _writing = s.write.lock().map_err(crate::tools::internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let (_writing, dir) = s.lock_write(true)?;
+        let realm = Realm::open(&dir)?;
         let tables =
             daydream_silvermere::block_on(daydream_silvermere::export(&realm, &url, &opts))?;
         Ok(Json(json!({ "dry_run": body.dry_run, "tables": tables })))
@@ -139,8 +130,8 @@ pub(crate) async fn import(
             dry_run: body.dry_run,
             ..ImportOptions::default()
         };
-        let _writing = s.write.lock().map_err(crate::tools::internal)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let (_writing, dir) = s.lock_write(body.dry_run)?;
+        let realm = Realm::open(&dir)?;
         let tables =
             daydream_silvermere::block_on(daydream_silvermere::import(&realm, &url, &opts))?;
         Ok(Json(json!({ "dry_run": body.dry_run, "tables": tables })))
