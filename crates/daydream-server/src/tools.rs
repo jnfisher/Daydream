@@ -1,11 +1,12 @@
-//! NMR's database tools in the browser: the Database Importer, the Database Deleter and
-//! Merge Users, over the same library calls the command line uses.
+//! NMR's database tools in the browser: the Database Importer, the Database Deleter, Merge
+//! Users and the Universal Modifier, over the same library calls the command line uses.
 //!
 //! | Route | Answer |
 //! |---|---|
 //! | `POST /api/tools/import?options={...}` | body: a `.mdb` or NMR JSON export; the import's reports |
 //! | `POST /api/tools/delete` | `{table, range?, dry_run}`; the deleter's report |
 //! | `POST /api/tools/merge-users?dry_run=` | body: a user file (`.DAT` or `.db`); what was copied |
+//! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify) and `dry_run`; every change, then the write's report |
 //!
 //! `options` is JSON: `tables` (names, or absent for all), `ranges` (`[{table, map?, from,
 //! to}]`), `skip_existing`, `room_parts` (`all`, `only_items`, `not_items`), `extra_parts`
@@ -220,6 +221,50 @@ pub(crate) async fn merge_users(
         Ok(Json(
             json!({ "dry_run": q.dry_run, "copied": r.copied, "skipped": skipped }),
         ))
+    })
+    .await
+}
+
+/// The body of a Universal Modifier run: the run itself, and whether to only preview it.
+#[derive(Debug, Deserialize)]
+pub struct ModifyJson {
+    #[serde(flatten)]
+    modify: daydream_nmr::modify::Modify,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// The most changes an answer lists; the count is always whole.
+const MAX_LISTED: usize = 2000;
+
+pub(crate) async fn modify(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<ModifyJson>,
+) -> Result<Json<Value>, ApiError> {
+    blocking(move || {
+        let _writing = s.write.lock().map_err(internal)?;
+        let realm = Realm::open(&s.realm_dir)?;
+        let layout = daydream_nmr::layout_of_realm(&realm);
+        let plan = daydream_nmr::modify::plan(&realm, &body.modify, layout)
+            .map_err(|e| bad(e.to_string()))?;
+        let report = if body.dry_run {
+            None
+        } else {
+            let r = daydream_nmr::modify::apply(&realm, &plan, layout)
+                .map_err(|e| bad(e.to_string()))?;
+            Some(crate::tables::report_json(&r))
+        };
+        let listed = &plan.changes[..plan.changes.len().min(MAX_LISTED)];
+        Ok(Json(json!({
+            "dry_run": body.dry_run,
+            "table": plan.table,
+            "changed": plan.changes.len(),
+            "records": plan.records(),
+            "skipped": plan.skipped,
+            "unchanged": plan.unchanged,
+            "changes": listed,
+            "report": report,
+        })))
     })
     .await
 }

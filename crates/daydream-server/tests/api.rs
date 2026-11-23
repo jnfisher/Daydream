@@ -471,3 +471,53 @@ async fn users_merge_in() {
         .clone();
     assert_eq!(users["records"], 3);
 }
+
+#[tokio::test]
+async fn the_modifier_previews_then_writes() {
+    let dir = realm();
+    let run = |dry_run: bool| {
+        send(
+            dir.path(),
+            "POST",
+            "/api/tools/modify",
+            serde_json::json!({
+                "table": "Races",
+                "action": {"kind": "math", "columns": ["CP"], "op": "set", "value": 120},
+                "only_if": [{"kind": "column", "column": "Number", "cmp": "ge", "value": 2}],
+                "dry_run": dry_run,
+            }),
+        )
+    };
+    let (status, body) = run(true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["changed"], 1);
+    assert_eq!(body["records"], 1);
+    assert_eq!(body["skipped"], 1);
+    assert_eq!(body["changes"][0]["column"], "CP");
+    assert_eq!(body["changes"][0]["after"], 120);
+    assert!(body["report"].is_null());
+    let (_, row) = get(
+        dir.path(),
+        &format!("/api/tables/Races/row?key={}", key(serde_json::json!([2]))),
+    )
+    .await;
+    assert_eq!(row["values"]["CP"], 0, "a preview writes nothing");
+
+    let (_, body) = run(false).await;
+    assert_eq!(body["report"]["updated"], 1, "{body}");
+    let (_, row) = get(
+        dir.path(),
+        &format!("/api/tables/Races/row?key={}", key(serde_json::json!([2]))),
+    )
+    .await;
+    assert_eq!(row["values"]["CP"], 120);
+
+    let (status, _) = send(
+        dir.path(),
+        "POST",
+        "/api/tools/modify",
+        serde_json::json!({"table": "Races", "action": {"kind": "math", "columns": ["Nope"], "op": "add", "value": 1}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

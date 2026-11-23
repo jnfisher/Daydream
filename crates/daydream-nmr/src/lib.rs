@@ -20,6 +20,7 @@ pub mod export;
 pub mod import;
 pub mod jet;
 pub mod mdb;
+pub mod modify;
 pub mod schema;
 pub mod text;
 
