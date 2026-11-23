@@ -25,7 +25,8 @@ revisited. Pull requests merged once CI was green.
 | #8 | NMR's import options, Database Deleter and Merge Users | merged (squash 4c25fd8) |
 | #9 | The importer, deleter and Merge Users in the browser (Tools) | merged (squash 3435600) |
 | #10 | M3: the Universal Modifier, with a preview | merged (squash f4eb920) |
-| #11 | M3: NMR's one-click fixes (limited items, exp, uses, kill times, drop %) | open |
+| #11 | M3: NMR's one-click fixes (limited items, exp, uses, kill times, drop %) | merged (squash c2536d0) |
+| #12 | M3: NMR's lists, the Mass Room Editor, and the rest of its fixes | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -45,6 +46,13 @@ revisited. Pull requests merged once CI was green.
   and Exp Multi, Set / Reset Last Killed Times, and Modify Item Drop Percentages with NMR's
   form and defaults. Records NMR would log for a look (an item with uses but no recharge
   ability, a drop of a missing item) are listed under the preview.
+- **NMR's lists, the Mass Room Editor and the rest of the fixes** (#12). A Lists page has the
+  Limited Items List (copies on floors, hidden, in shops and carried by users; over the limit
+  in red), Find an Item, the Control Room List, the Monster Group / Index List and the
+  NPC / Room List, each record linking to its editor. The Tools page gains the Mass Room
+  Editor (NMR's groups of fields over a map's room range, values taken from a room) and the
+  fixes Restock All Shops, Combine Like Items on Floor, Strip Characters off Text Blocks and
+  Insert / Delete Buffer Rooms.
 
 ## Decisions taken
 
@@ -105,6 +113,13 @@ revisited. Pull requests merged once CI was green.
     (Exp Multiplier × 2 where Game Limit = 1); here it is a fix with its own "times" box, and
     the modifier can do the same with other settings.
 
+15. **The Mass Room Editor sets only the exits that are checked.** NMR's loop sets all ten
+    exits whenever any one is checked, which its form does not suggest. Its Delete Range is
+    left to the Database Deleter, which deletes the whole range (NMR's stops one room short).
+16. **Insert Buffer Rooms does what NMR's prompt says** (a room for every missing number
+    below a map's last room). NMR's loop walks every map's rooms from the start of the file,
+    so on maps after the first it can stop at the first room that already exists.
+
 ## Known gaps
 
 - The read-only per-file API (`/api/files/...`) decodes records in the DOS layout only, so on
@@ -117,4 +132,9 @@ revisited. Pull requests merged once CI was green.
 
 ## Needs John
 
-- Nothing blocking. Worth a look when convenient: the item editor's layout against NMR's.
+- Nothing blocking. Worth a look when convenient:
+  - The item editor's layout against NMR's.
+  - **No Limited Items keeps item 1749 ("yellow bone portal"), as NMR does.** In the 1.11p
+    data there are two yellow bone portals, 1749 and 1807, and only 1807 is placed in the
+    world, so this fix makes the placed one unlimited. Kept as NMR has it; adding 1807 is a
+    one-line change.

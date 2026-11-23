@@ -2,7 +2,9 @@
 // out as NMR's forms lay them out, over the server's /api/tools routes.
 
 import { ABILITIES } from './abilities';
+import { toShown, toWire } from './ansi';
 import { api, type Report, type TableInfo } from './api';
+import { massRoomEditor } from './massroom';
 
 /** The tables NMR's importer and deleter list, in its order. */
 const TABLES = ['Items', 'Monsters', 'Spells', 'Shops', 'Races', 'Classes', 'Rooms', 'Actions', 'Messages', 'Textblocks'];
@@ -412,6 +414,9 @@ function universalModifier(tables: TableInfo[], changed: () => void): HTMLElemen
   return card;
 }
 
+/** A value as a record reads it: text up to its NUL, with ESC shown. */
+const shownCell = (v: unknown) => (typeof v === 'string' ? toShown(v.split('\0')[0]!) : String(v));
+
 function modifyResult(res: any): HTMLElement {
   const box = h('div', { class: 'tool-result' });
   const would = res.dry_run ? 'would change' : 'changed';
@@ -420,7 +425,7 @@ function modifyResult(res: any): HTMLElement {
       'p',
       {},
       `${res.records} record${res.records === 1 ? '' : 's'} ${would} (${res.changed} value${res.changed === 1 ? '' : 's'}); ` +
-        `${res.unchanged} already as set; ${res.skipped} left out by the "only if" boxes.` +
+        `${res.unchanged} already as set; ${res.skipped} left out by its conditions.` +
         (res.dry_run ? ' Preview: nothing was written.' : ''),
     ),
   );
@@ -429,7 +434,7 @@ function modifyResult(res: any): HTMLElement {
   if (res.changes.length) {
     const body = h('tbody');
     for (const c of res.changes) {
-      body.append(h('tr', {}, ...[c.key.join(' / '), c.column, String(c.before), String(c.after)].map((v) => h('td', {}, v))));
+      body.append(h('tr', {}, ...[c.key.join(' / '), c.column, shownCell(c.before), shownCell(c.after)].map((v) => h('td', {}, v))));
     }
     box.append(h('table', { class: 'grid changes' }, h('thead', {}, h('tr', {}, ...['Record', 'Field', 'Before', 'After'].map((c) => h('th', {}, c)))), body));
     if (res.changes.length < res.changed) box.append(h('p', { class: 'hint' }, `The first ${res.changes.length} changes are listed.`));
@@ -463,6 +468,10 @@ function fixes(): Fix[] {
   const divBy = numberInput('2');
   const bossBy = numberInput('2');
   const date = input({ type: 'date', value: '1990-01-01' });
+  const strip = input({ type: 'text', class: 'strip' });
+  const padMap = numberInput('1');
+  const unpadMap = numberInput('1');
+  const mapOrAll = (i: HTMLInputElement) => (i.value.trim() === '' ? null : num(i));
 
   // Modify Item Drop Percentages
   const dropMode = pick([['set', 'Set to'], ['add', 'Add (+/-)']]);
@@ -548,6 +557,39 @@ function fixes(): Fix[] {
       request: () => ['/api/tools/preset', { preset: 'reset_kill_times' }],
     },
     {
+      title: 'Restock All Shops',
+      hint: 'Every shop item\'s stock to its max, where its regen number, regen % and regen time are all set. Gang shops are left alone.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'restock_shops' }],
+    },
+    {
+      title: 'Combine Like Items on Floor',
+      hint: 'In every room, items with the same number and uses (on the floor, or hidden) are put in one slot.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'combine_room_items' }],
+    },
+    {
+      title: 'Insert Buffer Rooms',
+      hint: 'Adds a "Buffer Room" for every room number missing below a map\'s last room, so rooms keep loading (and sweeping) past gaps of 50. Leave the map empty for maps 1 to 18.',
+      inputs: [h('label', {}, 'Map ', padMap)],
+      request: () => ['/api/tools/preset', { preset: 'insert_buffer_rooms', map: mapOrAll(padMap) }],
+    },
+    {
+      title: 'Delete Buffer Rooms',
+      hint: 'Deletes every room whose name begins with "Buffer Room". Leave the map empty for every map.',
+      inputs: [h('label', {}, 'Map ', unpadMap)],
+      request: () => ['/api/tools/preset', { preset: 'delete_buffer_rooms', map: mapOrAll(unpadMap) }],
+    },
+    {
+      title: 'Strip Characters off Text Blocks',
+      hint: 'Takes this text off the end of every text block part that ends with it. Use it for strange characters at the end of every text block. ESC is ␛.',
+      inputs: [h('label', {}, 'Text ', strip)],
+      request: () => {
+        if (!strip.value) throw new Error('Give the text to take off the end.');
+        return ['/api/tools/preset', { preset: 'strip_textblocks', text: toWire(strip.value) }];
+      },
+    },
+    {
       title: 'Modify Item Drop Percentages',
       hint: 'Change the drop % of monsters\' item drops, by the kind of item. A drop already at the value is left alone, as NMR leaves it.',
       inputs: [
@@ -621,7 +663,12 @@ export function toolsPage(changed: () => void): HTMLElement {
   const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers());
   api
     .tables()
-    .then((tables) => page.append(universalModifier(tables, changed), fixesCard(changed)))
+    .then((tables) => {
+      page.append(universalModifier(tables, changed));
+      const rooms = tables.find((t) => t.name === 'Rooms');
+      if (rooms) page.append(massRoomEditor(rooms, (url, body) => post(url, body, true), modifyResult, changed));
+      page.append(fixesCard(changed));
+    })
     .catch((e) => page.append(failure(e)));
   return page;
 }

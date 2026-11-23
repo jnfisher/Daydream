@@ -83,6 +83,9 @@ pub enum Action {
         #[serde(default)]
         limit: Option<(Cmp, f64)>,
     },
+    /// Set each column to its value: NMR's Mass Room Editor (and any table's). Text and
+    /// numbers alike; a key column cannot be set.
+    Set { values: Vec<(String, Value)> },
 }
 
 /// An "only if" box.
@@ -133,15 +136,18 @@ pub struct Plan {
     pub unchanged: usize,
     /// Things worth a look that the run could not change, as NMR logs them.
     pub notes: Vec<String>,
-    /// The changed rows, whole, for [`apply`].
+    /// The changed and new rows, whole, for [`apply`].
     #[serde(skip)]
-    rows: Option<NmrRows>,
+    pub(crate) rows: Option<NmrRows>,
+    /// The keys of records to delete.
+    #[serde(skip)]
+    pub(crate) deletes: Vec<Vec<Value>>,
 }
 
 impl Plan {
-    /// How many records change.
+    /// How many records change, are added or go.
     pub fn records(&self) -> usize {
-        self.rows.as_ref().map_or(0, |r| r.rows.len())
+        self.rows.as_ref().map_or(0, |r| r.rows.len()) + self.deletes.len()
     }
 }
 
@@ -156,6 +162,8 @@ pub enum ModifyError {
     NotNumber { table: String, column: String },
     #[error("{0} has no abilities")]
     NoAbilities(String),
+    #[error("{0} is part of the record's key and cannot be set")]
+    KeyColumn(String),
     #[error("can't divide by zero")]
     DivideByZero,
     #[error(transparent)]
@@ -288,6 +296,25 @@ pub fn plan(realm: &Realm, m: &Modify, layout: LayoutSet) -> Result<Plan, Modify
         Action::ChangeAbility { op, value, .. } if *op == Op::Div && *value == 0.0 => {
             return Err(ModifyError::DivideByZero);
         }
+        Action::Set { values } => {
+            let keys = t.index.as_ref().map(|i| i.columns).unwrap_or(&[]);
+            for (c, v) in values {
+                let col = t.column(c).ok_or_else(|| no_column(c))?;
+                if keys.contains(&c.as_str()) {
+                    return Err(ModifyError::KeyColumn(c.clone()));
+                }
+                let text = matches!(
+                    col.ty,
+                    schema::ColumnType::Text(_) | schema::ColumnType::Memo
+                );
+                if !text && schema::number(v).is_err() {
+                    return Err(ModifyError::NotNumber {
+                        table: t.name.to_string(),
+                        column: c.clone(),
+                    });
+                }
+            }
+        }
         _ if slots.is_empty() => return Err(ModifyError::NoAbilities(t.name.to_string())),
         _ => {}
     }
@@ -370,6 +397,21 @@ pub fn plan(realm: &Realm, m: &Modify, layout: LayoutSet) -> Result<Plan, Modify
                     }
                 }
             }
+            Action::Set { values } => {
+                for (c, v) in values {
+                    let i = rows.position(c).expect("checked");
+                    new[i] = match (v, &row[i]) {
+                        // the same text up to the record's NUL is no change
+                        (Value::Text(to), Value::Text(was))
+                            if was.split('\0').next() == Some(to) =>
+                        {
+                            row[i].clone()
+                        }
+                        (Value::Text(_) | Value::Null, _) => v.clone(),
+                        _ => cell(&row[i], num(v)),
+                    };
+                }
+            }
         }
         Step::Row(new)
     };
@@ -439,20 +481,31 @@ pub(crate) fn collect(
 
 /// Writes a plan's changed rows to the realm through the strict import.
 pub fn apply(realm: &Realm, plan: &Plan, layout: LayoutSet) -> Result<TableReport, ModifyError> {
-    let Some(rows) = &plan.rows else {
-        return Ok(TableReport::default());
+    let mut report = match &plan.rows {
+        Some(rows) if !rows.rows.is_empty() => {
+            let data = NmrData {
+                tables: vec![rows.clone()],
+            };
+            let opts = ImportOptions {
+                layout,
+                ..ImportOptions::default()
+            };
+            import(realm, &data, &opts)?
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        }
+        _ => TableReport {
+            table: plan.table.clone(),
+            ..TableReport::default()
+        },
     };
-    let data = NmrData {
-        tables: vec![rows.clone()],
-    };
-    let opts = ImportOptions {
-        layout,
-        ..ImportOptions::default()
-    };
-    Ok(import(realm, &data, &opts)?
-        .into_iter()
-        .next()
-        .unwrap_or_default())
+    if !plan.deletes.is_empty() {
+        let d = crate::import::delete(realm, &plan.table, &plan.deletes, layout)?;
+        report.deleted += d.deleted;
+        report.errors.extend(d.errors);
+    }
+    Ok(report)
 }
 
 #[cfg(test)]

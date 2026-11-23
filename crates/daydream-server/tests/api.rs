@@ -535,3 +535,20 @@ async fn presets_are_checked_before_they_run() {
     let (status, _) = preset(serde_json::json!({"preset": "no_such_fix"})).await;
     assert!(status.is_client_error());
 }
+
+#[tokio::test]
+async fn the_lists_answer() {
+    let dir = realm();
+    for uri in [
+        "/api/reports/limited-items",
+        "/api/reports/find-item?item=1&users=false",
+        "/api/reports/control-rooms",
+        "/api/reports/monster-groups",
+        "/api/reports/npc-rooms",
+    ] {
+        let (status, body) = get(dir.path(), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    let (status, _) = get(dir.path(), "/api/reports/find-item").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

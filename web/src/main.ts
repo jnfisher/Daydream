@@ -6,6 +6,7 @@ import { ABILITIES } from './abilities';
 import { renderAnsi, titleOf, toShown, toWire } from './ansi';
 import { api, type Cell, type ColumnInfo, type Row, type TableInfo } from './api';
 import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './layouts';
+import { listsPage } from './lists';
 import { toolsPage } from './tools';
 
 /** The editors' tables, in NMR's menu order. */
@@ -137,29 +138,37 @@ function renderNav() {
   );
   for (const t of ordered) {
     const a = h('a', { href: `#/${encodeURIComponent(t.name)}` }, t.name);
-    if (t === state.table && !onTools()) a.classList.add('active');
+    if (t === state.table && !onPage()) a.classList.add('active');
     nav.append(a);
   }
-  const tools = h('a', { href: '#/tools', class: 'tools-link' }, 'Tools');
-  if (onTools()) tools.classList.add('active');
-  nav.append(tools);
+  const lists = h('a', { href: '#/lists', class: 'tools-link' }, 'Lists');
+  const tools = h('a', { href: '#/tools' }, 'Tools');
+  if (onPage() === 'lists') lists.classList.add('active');
+  if (onPage() === 'tools') tools.classList.add('active');
+  nav.append(lists, tools);
 }
 
-const onTools = () => location.hash.startsWith('#/tools');
+/** The page the hash names other than an editor: Tools or Lists. */
+const onPage = (): 'tools' | 'lists' | null =>
+  location.hash.startsWith('#/tools') ? 'tools' : location.hash.startsWith('#/lists') ? 'lists' : null;
 
-function showTools(on: boolean) {
-  ($('main') as HTMLElement).hidden = on;
-  const page = $('#tools');
-  page.hidden = !on;
-  if (on && !page.childElementCount) {
-    page.append(
-      toolsPage(() => {
-        // the realm changed under the editors: reload what they show
-        state.table = null;
-        state.row = null;
-        state.names.clear();
-      }),
-    );
+function showPage(which: 'tools' | 'lists' | null) {
+  ($('main') as HTMLElement).hidden = which !== null;
+  for (const id of ['tools', 'lists'] as const) {
+    const page = $(`#${id}`);
+    page.hidden = which !== id;
+    if (which === id && !page.childElementCount) {
+      page.append(
+        id === 'lists'
+          ? listsPage()
+          : toolsPage(() => {
+              // the realm changed under the editors: reload what they show
+              state.table = null;
+              state.row = null;
+              state.names.clear();
+            }),
+      );
+    }
   }
 }
 
@@ -516,8 +525,8 @@ async function remove() {
 // ---- routing -----------------------------------------------------------------
 
 async function route() {
-  showTools(onTools());
-  if (onTools()) {
+  showPage(onPage());
+  if (onPage()) {
     renderNav();
     return;
   }

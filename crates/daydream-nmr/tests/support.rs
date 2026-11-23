@@ -243,3 +243,44 @@ pub fn add_cases(data: &mut NmrData) -> Vec<Cases> {
     }
     out
 }
+
+/// Rows of `name`, every column zero or empty but those given.
+pub fn put(realm: &Realm, name: &str, rows: &[&[(&str, daydream_nmr::Value)]]) {
+    let t = daydream_nmr::schema::table(name).unwrap();
+    let rows = rows
+        .iter()
+        .map(|given| {
+            t.columns
+                .iter()
+                .map(|c| match given.iter().find(|(n, _)| *n == c.name) {
+                    Some((_, v)) => v.clone(),
+                    None => match c.ty {
+                        daydream_nmr::schema::ColumnType::Long => daydream_nmr::Value::Long(0),
+                        daydream_nmr::schema::ColumnType::Double => {
+                            daydream_nmr::Value::Double(0.0)
+                        }
+                        _ => daydream_nmr::Value::Text(String::new()),
+                    },
+                })
+                .collect()
+        })
+        .collect();
+    let data = NmrData {
+        tables: vec![daydream_nmr::NmrRows {
+            name: t.name.into(),
+            columns: t.columns.iter().map(|c| c.name.to_string()).collect(),
+            rows,
+        }],
+    };
+    let report =
+        daydream_nmr::import(realm, &data, &daydream_nmr::ImportOptions::default()).unwrap();
+    assert!(report.iter().all(|r| r.errors.is_empty()), "{report:?}");
+}
+
+pub fn l(n: i32) -> daydream_nmr::Value {
+    daydream_nmr::Value::Long(n)
+}
+
+pub fn t(s: &str) -> daydream_nmr::Value {
+    daydream_nmr::Value::Text(s.into())
+}

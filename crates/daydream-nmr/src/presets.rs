@@ -16,7 +16,7 @@ use daydream_types::records::LayoutSet;
 
 use crate::data::NmrRows;
 use crate::export::export_table;
-use crate::modify::{Cmp, ModifyError, Plan, Step, cell, collect, num, slots};
+use crate::modify::{Change, Cmp, ModifyError, Plan, Step, cell, collect, num, slots};
 use crate::schema::{self, NmrTable, Value};
 
 /// The largest experience NMR writes on 1.11j and later.
@@ -89,6 +89,25 @@ pub enum Preset {
     SetKillTimes { year: i32, month: u32, day: u32 },
     /// Monsters: NMR's drop % form.
     ItemDropPct(DropPct),
+    /// Shops: each item's stock to its max, where its regen number, regen % and regen
+    /// time are all set; gang shops (type 11) are left alone.
+    RestockShops,
+    /// Text blocks: `text` taken off the end of every part that ends with it.
+    StripTextblocks { text: String },
+    /// Rooms: items of the same number and uses, on the floor or hidden, put in one slot.
+    CombineRoomItems,
+    /// Rooms: a "Buffer Room" for every room number missing below a map's last room, on
+    /// `map`, or on maps 1 to 18 when none is given.
+    InsertBufferRooms {
+        #[serde(default)]
+        map: Option<i64>,
+    },
+    /// Rooms: every room whose name begins with "Buffer Room" deleted, on `map`, or on every
+    /// map when none is given.
+    DeleteBufferRooms {
+        #[serde(default)]
+        map: Option<i64>,
+    },
 }
 
 /// Why a fix cannot run.
@@ -335,6 +354,208 @@ pub fn plan(realm: &Realm, preset: &Preset, layout: LayoutSet) -> Result<Plan, P
             }))
         }
         Preset::ItemDropPct(o) => drop_pct(realm, o, layout),
+        Preset::RestockShops => {
+            let (t, rows) = load(realm, "Shops", layout)?;
+            let ty = at(&rows, "Type")?;
+            let slots = (0..20)
+                .map(|x| {
+                    Ok([
+                        at(&rows, &format!("Item {x}"))?,
+                        at(&rows, &format!("Regen Number{x}"))?,
+                        at(&rows, &format!("Regen %{x}"))?,
+                        at(&rows, &format!("Regen Time {x}"))?,
+                        at(&rows, &format!("Normal {x}"))?,
+                        at(&rows, &format!("Max {x}"))?,
+                    ])
+                })
+                .collect::<Result<Vec<_>, PresetError>>()?;
+            Ok(collect(t, &rows, |row| {
+                if num(&row[ty]) == 11.0 {
+                    return Step::Skip;
+                }
+                let mut new = row.to_vec();
+                for &[item, rnum, rpct, rtime, now, max] in &slots {
+                    if [item, rnum, rpct, rtime]
+                        .iter()
+                        .all(|&c| num(&row[c]) > 0.0)
+                    {
+                        new[now] = cell(&row[now], num(&row[max]));
+                    }
+                }
+                Step::Row(new)
+            }))
+        }
+        Preset::StripTextblocks { text } => {
+            if text.is_empty() {
+                return Err(bad("give the text to take off the end"));
+            }
+            let (t, rows) = load(realm, "Textblocks", layout)?;
+            let data = at(&rows, "Data")?;
+            Ok(collect(t, &rows, |row| {
+                let mut new = row.to_vec();
+                if let Value::Text(d) = &row[data]
+                    && let Some(kept) = d.strip_suffix(text.as_str())
+                {
+                    new[data] = Value::Text(kept.to_string());
+                }
+                Step::Row(new)
+            }))
+        }
+        Preset::InsertBufferRooms { map } => insert_buffer_rooms(realm, *map, layout),
+        Preset::DeleteBufferRooms { map } => {
+            let (t, rows) = load(realm, "Rooms", layout)?;
+            let (m, r, name) = (
+                at(&rows, "Map Number")?,
+                at(&rows, "Room Number")?,
+                at(&rows, "Name")?,
+            );
+            let mut plan = Plan {
+                table: t.name.to_string(),
+                ..Plan::default()
+            };
+            for row in &rows.rows {
+                if map.is_some_and(|want| num(&row[m]) as i64 != want) {
+                    continue;
+                }
+                if text(&row[name]).to_uppercase().starts_with("BUFFER ROOM") {
+                    let key = vec![row[m].clone(), row[r].clone()];
+                    plan.changes.push(Change {
+                        key: key.clone(),
+                        column: "(deleted)".into(),
+                        before: row[name].clone(),
+                        after: Value::Null,
+                    });
+                    plan.deletes.push(key);
+                } else {
+                    plan.unchanged += 1;
+                }
+            }
+            Ok(plan)
+        }
+        Preset::CombineRoomItems => {
+            let (t, rows) = load(realm, "Rooms", layout)?;
+            let family = |stem: &str, n: usize| -> Result<Vec<[usize; 3]>, PresetError> {
+                (0..n)
+                    .map(|x| {
+                        Ok([
+                            at(&rows, &format!("{stem} {x}"))?,
+                            at(&rows, &format!("{stem} {x} USES"))?,
+                            at(&rows, &format!("{stem} {x} QTY"))?,
+                        ])
+                    })
+                    .collect()
+            };
+            let (floor, hidden) = (family("Room Item", 17)?, family("Hidden Item", 15)?);
+            Ok(collect(t, &rows, |row| {
+                let mut new = row.to_vec();
+                for slots in [&floor, &hidden] {
+                    combine(&mut new, slots);
+                }
+                Step::Row(new)
+            }))
+        }
+    }
+}
+
+/// NMR's `mnuRoomPad_Click`: a room for each number missing from 1 to the map's last
+/// room, all zero but its name, ANSI map, first description line and one exit (to room 1,
+/// type 8, parameter 1), as NMR makes them.
+fn insert_buffer_rooms(
+    realm: &Realm,
+    map: Option<i64>,
+    layout: LayoutSet,
+) -> Result<Plan, PresetError> {
+    let (t, rows) = load(realm, "Rooms", layout)?;
+    let (m, r) = (at(&rows, "Map Number")?, at(&rows, "Room Number")?);
+    let maps: Vec<i64> = match map {
+        Some(m) if m > 0 => vec![m],
+        Some(m) => return Err(bad(format!("no map {m}"))),
+        None => (1..=18).collect(),
+    };
+    let blank: Vec<Value> = t
+        .columns
+        .iter()
+        .map(|c| match c.ty {
+            schema::ColumnType::Long => Value::Long(0),
+            schema::ColumnType::Double => Value::Double(0.0),
+            _ => Value::Text(String::new()),
+        })
+        .collect();
+    let set = |row: &mut Vec<Value>, column: &str, v: Value| -> Result<(), PresetError> {
+        let i = at(&rows, column)?;
+        row[i] = v;
+        Ok(())
+    };
+    let mut plan = Plan {
+        table: t.name.to_string(),
+        ..Plan::default()
+    };
+    let mut new_rows = Vec::new();
+    for map in maps {
+        let have: std::collections::BTreeSet<i64> = rows
+            .rows
+            .iter()
+            .filter(|row| num(&row[m]) as i64 == map)
+            .map(|row| num(&row[r]) as i64)
+            .collect();
+        let Some(&last) = have.last() else {
+            plan.notes.push(format!("Map {map} has no rooms"));
+            continue;
+        };
+        for n in (1..last).filter(|n| !have.contains(n)) {
+            let mut row = blank.clone();
+            let name = format!("Buffer Room {n}");
+            set(&mut row, "Map Number", Value::Long(map as i32))?;
+            set(&mut row, "Room Number", Value::Long(n as i32))?;
+            set(&mut row, "Name", Value::Text(name.clone()))?;
+            set(&mut row, "AnsiMap", Value::Text("WCCMAP01.ANS".into()))?;
+            set(
+                &mut row,
+                "Desc 0",
+                Value::Text(
+                    "This is just a buffer room to keep the rooms scanning on load.".into(),
+                ),
+            )?;
+            set(&mut row, "Exit 0", Value::Long(1))?;
+            set(&mut row, "Type 0", Value::Long(8))?;
+            set(&mut row, "Para1 0", Value::Long(1))?;
+            plan.changes.push(Change {
+                key: vec![Value::Long(map as i32), Value::Long(n as i32)],
+                column: "(new)".into(),
+                before: Value::Null,
+                after: Value::Text(name),
+            });
+            new_rows.push(row);
+        }
+    }
+    plan.rows = Some(NmrRows {
+        name: rows.name.clone(),
+        columns: rows.columns.clone(),
+        rows: new_rows,
+    });
+    Ok(plan)
+}
+
+/// NMR's `mnuRoomsCombineItems_Click`: while two slots hold the same item with the same
+/// uses, the later-found one's quantity (less one, as slots hold it) moves to the first.
+fn combine(row: &mut [Value], slots: &[[usize; 3]]) {
+    'again: loop {
+        for (x, &[ix, ux, qx]) in slots.iter().enumerate() {
+            if num(&row[ix]) <= 0.0 {
+                continue;
+            }
+            for (y, &[iy, uy, qy]) in slots.iter().enumerate() {
+                if y != x && num(&row[iy]) == num(&row[ix]) && num(&row[uy]) == num(&row[ux]) {
+                    let q = num(&row[qx]) + num(&row[qy]) + 1.0;
+                    row[qx] = cell(&row[qx], q);
+                    for c in [iy, uy, qy] {
+                        row[c] = cell(&row[c], 0.0);
+                    }
+                    continue 'again;
+                }
+            }
+        }
+        return;
     }
 }
 
