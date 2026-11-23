@@ -202,3 +202,96 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
     let problems: Vec<String> = files.iter().flat_map(|f| compare(f, &out)).collect();
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+/// Each 16-byte row of `bytes` that is not all zeros, as hex, with its offset.
+fn nonzero_rows(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for (i, row) in bytes.chunks(16).enumerate() {
+        if row.iter().any(|&b| b != 0) {
+            let hex: Vec<String> = row.iter().map(|b| format!("{b:02x}")).collect();
+            out.push_str(&format!("    {:06x} {}\n", i * 16, hex.join(" ")));
+        }
+    }
+    out
+}
+
+/// Has Btrieve clone the smaller stock files (empty, and with every record inserted) and
+/// prints what it wrote: the FCR pages whole, and every page's first 16 bytes. This is the
+/// reference the `.DAT` writer (M5) is built against.
+#[test]
+fn btrieve_clones_the_stock_files() {
+    let Some(engine) = engine() else { return };
+    let dir = stock_data::dir();
+    let tmp = tempfile::tempdir().unwrap();
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.to_ascii_uppercase().ends_with(".VIR") {
+            continue;
+        }
+        if std::fs::metadata(&path).unwrap().len() > 256 * 1024 {
+            continue;
+        }
+        let stem = name.trim_end_matches(".VIR").trim_end_matches(".vir");
+        let copy = tmp.path().join(format!("{stem}.DAT"));
+        std::fs::copy(&path, &copy).unwrap();
+        files.push(copy);
+    }
+    files.sort();
+    let out = tmp.path().join("clones");
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/btrieve/btrieve-clone.ps1");
+    let result = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&script)
+        .arg(&out)
+        .arg(&engine)
+        .args(&files)
+        .output()
+        .unwrap();
+    println!("{}", String::from_utf8_lossy(&result.stdout).trim());
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for f in &files {
+        let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
+        for (what, path) in [
+            ("original", f.clone()),
+            ("empty", out.join(format!("{stem}.EMPTY.DAT"))),
+            ("full", out.join(format!("{stem}.FULL.DAT"))),
+        ] {
+            let bytes = std::fs::read(&path).unwrap();
+            let page = usize::from(u16::from_le_bytes([bytes[8], bytes[9]]));
+            let fcr_pages = if bytes[..4] == *b"FC\0\0" { 2 } else { 1 };
+            println!(
+                "== {stem} {what}: {} bytes, {} pages of {page}",
+                bytes.len(),
+                bytes.len() / page
+            );
+            for p in 0..fcr_pages {
+                println!("  FCR page {p}:");
+                print!("{}", nonzero_rows(&bytes[p * page..(p + 1) * page]));
+            }
+            for (p, chunk) in bytes.chunks(page).enumerate().skip(fcr_pages) {
+                let hex: Vec<String> = chunk[..16].iter().map(|b| format!("{b:02x}")).collect();
+                println!("  page {p}: {}", hex.join(" "));
+            }
+            if what != "original" {
+                // Daydream must read Btrieve's own files, indexes included
+                let mut file = open(&path);
+                let report = file.verify_indexes().unwrap_or_else(|e| panic!("{e}"));
+                println!("  indexes: {report:?}");
+            }
+        }
+    }
+}
