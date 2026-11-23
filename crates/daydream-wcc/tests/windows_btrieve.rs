@@ -281,9 +281,15 @@ fn nonzero_rows(bytes: &[u8]) -> String {
 /// Has Btrieve clone the smaller stock files (empty, and with every record inserted) and
 /// prints what it wrote: the FCR pages whole, and every page's first 16 bytes. This is the
 /// reference the `.DAT` writer (M5) is built against.
+/// The rooms file, cloned only when the clones are kept.
+const KEPT_ROOMS: &str = "WCCMP001.VIR";
+
 #[test]
 fn btrieve_clones_the_stock_files() {
     let Some(engine) = engine() else { return };
+    // DAYDREAM_BTRIEVE_KEEP=DIR: keep Btrieve's filled clones of the files past 30 page
+    // tables there (CI uploads them), as test files for other readers
+    let keep = std::env::var_os("DAYDREAM_BTRIEVE_KEEP").map(PathBuf::from);
     let dir = stock_data::dir();
     let tmp = tempfile::tempdir().unwrap();
     let mut files = Vec::new();
@@ -296,11 +302,14 @@ fn btrieve_clones_the_stock_files() {
         // the small files; the message file, whose 512-byte pages need more than 30 page
         // tables filled (past which Btrieve leaves a 4096-byte gap); and the text file, the
         // variable-length one
+        // and, when they are to be kept, the rooms file, whose 1536-byte pages make the gap
+        // a fraction of a page
         let big = std::fs::metadata(&path).unwrap().len() > 256 * 1024;
         if big
             && !["WCCMSG.VIR", "WCCTEXT.VIR"]
                 .iter()
                 .any(|n| name.eq_ignore_ascii_case(n))
+            && !(keep.is_some() && name.eq_ignore_ascii_case(KEPT_ROOMS))
         {
             continue;
         }
@@ -312,6 +321,13 @@ fn btrieve_clones_the_stock_files() {
     files.sort();
     let out = tmp.path().join("clones");
     script("btrieve-clone.ps1", &[&out, &engine], &files);
+    if let Some(keep) = &keep {
+        std::fs::create_dir_all(keep).unwrap();
+        for stem in ["WCCMP001", "WCCMSG"] {
+            let name = format!("{stem}.FULL.DAT");
+            std::fs::copy(out.join(&name), keep.join(&name)).unwrap();
+        }
+    }
     let mut unread = Vec::new();
     for f in &files {
         let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
