@@ -16,6 +16,7 @@
 
 pub mod db;
 pub mod key;
+pub mod merge;
 pub mod realm;
 
 pub use db::{ConvertReport, Fingerprint, Metadata, StoreError, WbtrvDb};

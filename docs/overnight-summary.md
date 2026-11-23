@@ -20,8 +20,14 @@ revisited. Pull requests merged once CI was green.
 | PR | What | State |
 |---|---|---|
 | #5 | M1 gate: real NMR in CI | merged (before the night began) |
-| #6 | M2: editor API and web UI, item editor as NMR's | merged 04:22Z (squash df539c4) |
-| #7 | M2: every other editor laid out as NMR's, ANSI preview | open |
+| #6 | M2: editor API and web UI, item editor as NMR's | merged (squash df539c4) |
+| #7 | M2: every other editor laid out as NMR's, ANSI preview | merged (squash 163fa0c) |
+| #8 | NMR's import options, Database Deleter and Merge Users | open |
+
+- **NMR's import options and tools are in** (library and command line): which tables, a
+  range per table (rooms by map), Skip or Update, a room's items only or all but them, the
+  deletion of text block parts the file no longer has, NMR's Database Deleter (all or a
+  range) and its Merge Users.
 
 ## Decisions taken
 
@@ -55,11 +61,23 @@ revisited. Pull requests merged once CI was green.
 8. **PRs B and C went up together** (#7): both were UI layouts on the same code, so one CI run
    (the Windows job is the slow one) covered them.
 
+9. **Text block parts past the file's last are deleted on a command-line import, not on a
+   save in the browser.** NMR always deletes them; the browser saves one part at a time, so
+   there it would wipe the other parts. `--keep-extra-parts` turns it off on the command line.
+   NMR mode keeps NMR's quirk of leaving the last text block's parts alone.
+10. **The importer's logging options are not copied.** NMR writes a log at three levels;
+    Daydream's import returns a report per table (inserted, updated, unchanged, skipped,
+    deleted, errors), which the command line prints.
+
 ## Known gaps
 
 - The read-only per-file API (`/api/files/...`) decodes records in the DOS layout only, so on
   a Worldgroup realm it errors (`1072 bytes, expected 1061`). The editors do not use it; it
   will learn the realm's layout.
+- Found and fixed on the way: `daydream nmr-export` and `nmr-import` used the DOS layouts
+  even on a Worldgroup realm. They now use the realm's own (#8).
+- No browser UI for the import options, the deleter or the merge yet; they are on the
+  command line.
 
 ## Needs John
 
