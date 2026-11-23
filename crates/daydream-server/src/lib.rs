@@ -6,7 +6,8 @@
 //! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the MCP
 //! server for AI agents at `/mcp` ([`mcp`]), and the
 //! routes below serve each file's records
-//! decoded (every member by name, `unk_*` spans included), read only.
+//! decoded (every member by name, `unk_*` spans included), read only. Who may use it is
+//! settled in [`auth`]: this machine only, unless it was given an access token.
 //!
 //! | Route | Answer |
 //! |---|---|
@@ -34,6 +35,7 @@ use daydream_wcc::decode::base64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod auth;
 pub mod mcp;
 pub mod mme;
 pub mod reports;
@@ -51,17 +53,34 @@ pub struct AppState {
     write: Mutex<()>,
     /// The MCP server at `/mcp`.
     mcp: daydream_mcp::Server,
+    /// The access token, when the server takes requests from other machines ([`auth`]).
+    token: Option<String>,
+}
+
+/// How the server is run.
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// The access token ([`auth`]). Without one, only this machine is answered.
+    pub token: Option<String>,
+}
+
+/// The router for the realm in `realm_dir`, answering this machine only.
+pub fn router(realm_dir: &Path) -> Router {
+    router_with(realm_dir, Options::default())
 }
 
 /// The router for the realm in `realm_dir`.
-pub fn router(realm_dir: &Path) -> Router {
+pub fn router_with(realm_dir: &Path, options: Options) -> Router {
     let state = Arc::new(AppState {
         realm_dir: realm_dir.to_path_buf(),
         write: Mutex::new(()),
         mcp: daydream_mcp::Server::new(realm_dir, daydream_mcp::Options::default()),
+        token: options.token,
     });
     Router::new()
         .route("/", get(index))
+        .route("/login", get(auth::login_form).post(auth::login))
+        .route("/mcp/{token}", post(mcp::post_keyed).get(mcp::get))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
         .route("/api/health", get(health))
@@ -103,6 +122,10 @@ pub fn router(realm_dir: &Path) -> Router {
             "/api/tools/merge-users",
             post(tools::merge_users).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::guard,
+        ))
         .with_state(state)
 }
 

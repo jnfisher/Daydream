@@ -449,6 +449,7 @@ dependencies = [
  "daydream-store",
  "daydream-types",
  "daydream-wcc",
+ "getrandom 0.2.17",
  "jiff",
  "serde",
  "serde_json",
