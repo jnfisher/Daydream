@@ -8,6 +8,18 @@ use daydream_store::{Metadata, WbtrvDb};
 use serde_json::Value;
 use tower::ServiceExt;
 
+/// The router for `dir` as this machine's browser reaches it: with a local `Host`.
+fn app(dir: &std::path::Path) -> axum::Router {
+    daydream_server::router(dir).layer(axum::middleware::map_request(
+        |mut req: Request<Body>| async move {
+            req.headers_mut()
+                .entry("host")
+                .or_insert(axum::http::HeaderValue::from_static("127.0.0.1:7340"));
+            req
+        },
+    ))
+}
+
 /// A realm with two races (numbers 1 and 2) and wbtrv32's MBBSEMU test file.
 fn realm() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -53,7 +65,7 @@ fn number_key() -> Vec<Key> {
 }
 
 async fn get(dir: &std::path::Path, uri: &str) -> (StatusCode, Value) {
-    let res = daydream_server::router(dir)
+    let res = app(dir)
         .oneshot(Request::get(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
@@ -149,7 +161,7 @@ async fn send(dir: &std::path::Path, method: &str, uri: &str, body: Value) -> (S
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
-    let res = daydream_server::router(dir).oneshot(req).await.unwrap();
+    let res = app(dir).oneshot(req).await.unwrap();
     let status = res.status();
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
@@ -347,7 +359,7 @@ async fn the_ui_is_served() {
         ("/app.js", "text/javascript"),
         ("/app.css", "text/css"),
     ] {
-        let res = daydream_server::router(dir.path())
+        let res = app(dir.path())
             .oneshot(Request::get(uri).body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -359,7 +371,7 @@ async fn the_ui_is_served() {
 
 async fn post_bytes(dir: &std::path::Path, uri: &str, body: Vec<u8>) -> (StatusCode, Value) {
     let req = Request::post(uri).body(Body::from(body)).unwrap();
-    let res = daydream_server::router(dir).oneshot(req).await.unwrap();
+    let res = app(dir).oneshot(req).await.unwrap();
     let status = res.status();
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
@@ -748,7 +760,7 @@ async fn mcp_answers_over_http_from_this_machine_only() {
         let req = req.body(Body::from(body.to_string())).unwrap();
         let path = dir.path().to_path_buf();
         async move {
-            let res = daydream_server::router(&path).oneshot(req).await.unwrap();
+            let res = app(&path).oneshot(req).await.unwrap();
             let status = res.status();
             let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
             (
@@ -794,10 +806,7 @@ async fn without_a_token_only_this_machine_is_answered() {
         if let Some((k, v)) = extra {
             req = req.header(k, v);
         }
-        through(
-            daydream_server::router(dir.path()),
-            req.body(Body::empty()).unwrap(),
-        )
+        through(app(dir.path()), req.body(Body::empty()).unwrap())
     };
     assert_eq!(at("127.0.0.1:7340", None).await.0, StatusCode::OK);
     assert_eq!(at("localhost:7340", None).await.0, StatusCode::OK);
@@ -814,7 +823,7 @@ async fn without_a_token_only_this_machine_is_answered() {
         .header("content-type", "application/json")
         .body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#))
         .unwrap();
-    let keyed = through(daydream_server::router(dir.path()), req).await;
+    let keyed = through(app(dir.path()), req).await;
     assert_eq!(keyed.0, StatusCode::NOT_FOUND);
 }
 
@@ -921,4 +930,114 @@ async fn a_token_lets_in_whoever_has_it() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _, _) = through(router(), mcp("/mcp".into(), None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// Every route the router has, read from its source so a new route is swept too, with its
+/// `{parameters}` filled in.
+fn every_route() -> Vec<String> {
+    let src = include_str!("../src/lib.rs");
+    let mut routes = Vec::new();
+    for (i, _) in src.match_indices(".route(") {
+        let rest = src[i + ".route(".len()..].trim_start();
+        let path = rest.strip_prefix('"').unwrap().split('"').next().unwrap();
+        let filled: Vec<String> = path
+            .split('/')
+            .map(|seg| {
+                if seg.starts_with('{') {
+                    "x".to_string()
+                } else {
+                    seg.to_string()
+                }
+            })
+            .collect();
+        routes.push(filled.join("/"));
+    }
+    assert!(routes.len() > 30, "found only {routes:?}");
+    assert!(routes.iter().any(|r| r == "/api/tools/write-dat"));
+    routes
+}
+
+const METHODS: [&str; 4] = ["GET", "POST", "PUT", "DELETE"];
+
+/// Without a token, no route answers anything but this machine, by any method: not a page
+/// whose host name was pointed here, not a proxy or tunnel, not a request naming no host.
+#[tokio::test]
+async fn without_a_token_every_route_refuses_other_machines() {
+    let dir = realm();
+    let strangers: [&[(&str, &str)]; 5] = [
+        &[("host", "evil.example")],
+        &[("host", "localhost.evil.example:7340")],
+        &[
+            ("host", "127.0.0.1:7340"),
+            ("x-forwarded-for", "203.0.113.9"),
+        ],
+        &[("host", "localhost"), ("forwarded", "for=203.0.113.9")],
+        &[],
+    ];
+    for route in every_route() {
+        for method in METHODS {
+            for headers in strangers {
+                let mut req = Request::builder()
+                    .method(method)
+                    .uri(&route)
+                    .header("content-type", "application/json");
+                for (k, v) in headers {
+                    req = req.header(*k, *v);
+                }
+                let req = req.body(Body::from("{}")).unwrap();
+                let (status, _, _) = through(daydream_server::router(dir.path()), req).await;
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{method} {route} with {headers:?}"
+                );
+            }
+        }
+    }
+}
+
+/// With a token, no route but the page's files, the sign-in page and the health check
+/// answers a request without it, or with a wrong one.
+#[tokio::test]
+async fn with_a_token_every_route_asks_for_it() {
+    let dir = realm();
+    let token = "0123456789abcdef-token";
+    let open = ["/app.js", "/app.css", "/login", "/api/health"];
+    let wrong: [&[(&str, &str)]; 4] = [
+        &[],
+        &[("authorization", "Bearer 0123456789abcdef-wrong")],
+        &[("authorization", "Basic MDEyMzQ1Njc4OWFiY2RlZi10b2tlbg==")],
+        &[("cookie", "daydream_token=0123456789abcdef-wrong")],
+    ];
+    for route in every_route() {
+        if open.contains(&route.as_str()) {
+            continue;
+        }
+        for method in METHODS {
+            for headers in wrong {
+                let mut req = Request::builder()
+                    .method(method)
+                    .uri(&route)
+                    .header("host", "daydream.example.com")
+                    .header("content-type", "application/json");
+                for (k, v) in headers {
+                    req = req.header(*k, *v);
+                }
+                let req = req.body(Body::from("{}")).unwrap();
+                let router = daydream_server::router_with(
+                    dir.path(),
+                    daydream_server::Options {
+                        token: Some(token.into()),
+                    },
+                );
+                let (status, _, _) = through(router, req).await;
+                let expected = if route == "/" {
+                    StatusCode::SEE_OTHER
+                } else {
+                    StatusCode::UNAUTHORIZED
+                };
+                assert_eq!(status, expected, "{method} {route} with {headers:?}");
+            }
+        }
+    }
 }

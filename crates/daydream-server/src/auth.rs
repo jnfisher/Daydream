@@ -3,7 +3,9 @@
 //! Without an access token, Daydream answers this machine only: a request must name a local
 //! host (`localhost`, `127.0.0.1`, `[::1]`) and carry no proxy's forwarding header, so a
 //! tunnel or reverse proxy in front of a token-less server gets nothing through, and a web
-//! page cannot reach it by DNS rebinding.
+//! page cannot reach it by DNS rebinding. A raw port forward (`ssh -R`, `socat`) adds no
+//! header and could pass a hand-written `Host: localhost`: never forward the port of a
+//! server without a token.
 //!
 //! With a token (`daydream serve --token`), every route but the page's own files, `/login`
 //! and `/api/health` asks for it, in one of three ways:
@@ -93,10 +95,11 @@ fn same(a: &str, b: &str) -> bool {
             == 0
 }
 
-/// Whether a `Host` header names this machine (no header: a request made in process).
+/// Whether a `Host` header names this machine. A request with none is not taken as local:
+/// every HTTP/1.1 client sends one, and an HTTP/1.0 request could come from anywhere.
 fn local_host(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(header::HOST) else {
-        return true;
+        return false;
     };
     let Ok(host) = host.to_str() else {
         return false;

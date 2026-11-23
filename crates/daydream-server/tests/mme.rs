@@ -12,6 +12,18 @@ use daydream_wcc::tables::FILES;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// The router for `dir` as this machine's browser reaches it: with a local `Host`.
+fn app(dir: &std::path::Path) -> axum::Router {
+    daydream_server::router(dir).layer(axum::middleware::map_request(
+        |mut req: Request<Body>| async move {
+            req.headers_mut()
+                .entry("host")
+                .or_insert(axum::http::HeaderValue::from_static("127.0.0.1:7340"));
+            req
+        },
+    ))
+}
+
 /// An empty `.db` for every NMR table, then two rooms on map 1 (one of them NMR's default
 /// exclusion 1/164) and one on map 2.
 fn realm() -> tempfile::TempDir {
@@ -74,7 +86,7 @@ fn realm() -> tempfile::TempDir {
 }
 
 async fn send(dir: &std::path::Path, req: Request<Body>) -> (StatusCode, String, Vec<u8>) {
-    let res = daydream_server::router(dir).oneshot(req).await.unwrap();
+    let res = app(dir).oneshot(req).await.unwrap();
     let status = res.status();
     let disposition = res
         .headers()

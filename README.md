@@ -90,10 +90,14 @@ For Claude Desktop, add `{"command": "daydream", "args": ["mcp", "/path/to/realm
 ### Reaching Daydream from elsewhere
 
 Out of the box `daydream serve` answers this machine only. It refuses requests that come
-through a tunnel or proxy, and refuses to listen anywhere but `127.0.0.1` or `::1`. To use
+through a tunnel or proxy, and refuses to listen anywhere but `127.0.0.1` or `::1`. A raw
+port forward (`ssh -R`, `socat`) adds nothing to tell it apart from this machine, so never
+forward Daydream's port without a token. To use
 the web UI from another machine, or to connect a hosted agent (Claude.ai, ChatGPT, the
 Claude or OpenAI APIs), give it an access token and put HTTPS in front of it with a tunnel
-or reverse proxy. Daydream does not do TLS itself.
+or reverse proxy, which brings the certificate (the tunnels hand you an `https` URL; Caddy
+gets one from Let's Encrypt for your domain). Daydream does not do TLS itself. Never serve
+the token over plain HTTP: it is a password for the realm.
 
 ```sh
 export DAYDREAM_TOKEN=$(daydream new-token)     # keep it: agents and the browser need it
