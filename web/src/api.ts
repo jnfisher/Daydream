@@ -52,6 +52,10 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 401) {
+    // the server has an access token, and this browser's sign-in is gone
+    location.href = '/login';
+  }
   const text = await res.text();
   let json: unknown = null;
   try {

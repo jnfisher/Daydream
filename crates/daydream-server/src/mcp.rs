@@ -4,15 +4,17 @@
 //! | Route | Answer |
 //! |---|---|
 //! | `POST /mcp` | a JSON-RPC message; its answer, or `202` for a notification |
+//! | `POST /mcp/{token}` | the same, for a client that takes only a URL (with an access token) |
 //! | `GET /mcp` | `405`: the server sends nothing unasked |
 //!
-//! A request whose `Origin` is not this machine is refused, so a web page in the user's
-//! browser cannot reach the realm through it (DNS rebinding).
+//! Without an access token, a request whose `Origin` is not this machine is refused, so a
+//! web page in the user's browser cannot reach the realm through it (DNS rebinding). With
+//! one, [`crate::auth`] has already checked the request.
 
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
@@ -39,7 +41,8 @@ pub(crate) async fn post(
     headers: HeaderMap,
     Json(msg): Json<Value>,
 ) -> Response {
-    if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok())
+    if s.token.is_none()
+        && let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok())
         && !local_origin(origin)
     {
         return (
@@ -54,6 +57,19 @@ pub(crate) async fn post(
         Ok(None) => StatusCode::ACCEPTED.into_response(),
         Err(e) => e.into_response(),
     }
+}
+
+/// `/mcp/{token}`: [`crate::auth`] has matched the token; without one, there is no such route.
+pub(crate) async fn post_keyed(
+    state: State<Arc<AppState>>,
+    Path(_token): Path<String>,
+    headers: HeaderMap,
+    msg: Json<Value>,
+) -> Response {
+    if state.token.is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    post(state, headers, msg).await
 }
 
 pub(crate) async fn get() -> StatusCode {

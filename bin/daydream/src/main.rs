@@ -39,10 +39,17 @@ enum Command {
     Serve {
         /// The realm directory.
         realm: PathBuf,
-        /// The address to listen on. Keep it on localhost: there is no login yet.
+        /// The address to listen on. Anywhere but this machine's loopback needs --token.
         #[arg(long, default_value = "127.0.0.1:7340", env = "DAYDREAM_LISTEN")]
         listen: SocketAddr,
+        /// The access token, for reaching Daydream from other machines (through a tunnel
+        /// or reverse proxy, which brings HTTPS). Without one, Daydream answers this
+        /// machine only. `daydream new-token` makes one.
+        #[arg(long, env = "DAYDREAM_TOKEN", hide_env_values = true)]
+        token: Option<String>,
     },
+    /// Print a new random access token for `serve --token`.
+    NewToken,
     /// Write a file's records as JSON lines, decoded where Daydream knows the record type.
     Dump {
         /// The realm directory.
@@ -265,7 +272,15 @@ fn main() -> anyhow::Result<()> {
             stock,
             stock_zip,
         } => convert(from, &realm, stock || stock_zip.is_some(), stock_zip),
-        Command::Serve { realm, listen } => serve(realm, listen),
+        Command::Serve {
+            realm,
+            listen,
+            token,
+        } => serve(realm, listen, token),
+        Command::NewToken => {
+            println!("{}", daydream_server::auth::new_token());
+            Ok(())
+        }
         Command::Dump { realm, stem } => dump(&realm, &stem),
         Command::NmrExport {
             realm,
@@ -452,7 +467,15 @@ fn convert(
     Ok(())
 }
 
-fn serve(realm: PathBuf, listen: SocketAddr) -> anyhow::Result<()> {
+fn serve(realm: PathBuf, listen: SocketAddr, token: Option<String>) -> anyhow::Result<()> {
+    use daydream_server::auth;
+    let token = token
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    if let Some(t) = &token {
+        auth::check_token(t).map_err(anyhow::Error::msg)?;
+    }
+    auth::check_listen(listen, token.as_deref()).map_err(anyhow::Error::msg)?;
     Realm::open(&realm).with_context(|| format!("opening the realm {}", realm.display()))?;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
@@ -460,7 +483,14 @@ fn serve(realm: PathBuf, listen: SocketAddr) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("listening on {listen}"))?;
         tracing::info!("serving {} on http://{listen}/", realm.display());
-        axum::serve(listener, daydream_server::router(&realm))
+        if token.is_some() {
+            tracing::info!(
+                "access token required: sign in at /login; agents send \
+                 `Authorization: Bearer <token>` to /mcp, or use the URL /mcp/<token>"
+            );
+        }
+        let options = daydream_server::Options { token };
+        axum::serve(listener, daydream_server::router_with(&realm, options))
             .with_graceful_shutdown(async {
                 let _ = tokio::signal::ctrl_c().await;
             })
@@ -475,11 +505,13 @@ fn dump(realm: &std::path::Path, stem: &str) -> anyhow::Result<()> {
         bail!("{} has no {stem}.db", realm.dir().display());
     };
     let db = WbtrvDb::open_read_only(&file.path)?;
+    // a Worldgroup 3 realm's files hold the aligned layouts
+    let layout = daydream_nmr::layout_of_realm(&realm);
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
     for (id, data) in db.records()? {
         let value = match file.table {
             Some(t) => serde_json::Value::Object(
-                t.to_json(u32::try_from(id)?, &data)
+                t.to_json_as(u32::try_from(id)?, &data, layout)
                     .with_context(|| format!("{} record {id}", file.stem))?,
             ),
             None => serde_json::json!({
