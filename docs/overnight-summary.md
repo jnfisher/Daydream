@@ -23,7 +23,8 @@ revisited. Pull requests merged once CI was green.
 | #6 | M2: editor API and web UI, item editor as NMR's | merged (squash df539c4) |
 | #7 | M2: every other editor laid out as NMR's, ANSI preview | merged (squash 163fa0c) |
 | #8 | NMR's import options, Database Deleter and Merge Users | merged (squash 4c25fd8) |
-| #9 | The importer, deleter and Merge Users in the browser (Tools) | open |
+| #9 | The importer, deleter and Merge Users in the browser (Tools) | merged (squash 3435600) |
+| #10 | M3: the Universal Modifier, with a preview | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -31,6 +32,12 @@ revisited. Pull requests merged once CI was green.
   range) and its Merge Users. In the browser they are on a Tools page laid out as NMR's
   Database Importer (per table: import it or not, All or a From/To range, Map for rooms),
   with Preview First on each tool.
+
+- **M3 has started with the Universal Modifier** (#10): one change applied to many records,
+  as NMR's: a field (or a numbered family such as every `Item Drop %`), or give, take or
+  change an ability, over a range, with up to three "only if" boxes. Preview lists every
+  value that would change, before and after; Start writes them. It is the fourth card on
+  the Tools page.
 
 ## Decisions taken
 
@@ -71,6 +78,12 @@ revisited. Pull requests merged once CI was green.
 10. **The importer's logging options are not copied.** NMR writes a log at three levels;
     Daydream's import returns a report per table (inserted, updated, unchanged, skipped,
     deleted, errors), which the command line prints.
+
+11. **The modifier always previews before it writes, and writes through the strict import.**
+    NMR's "Only Log Changes" becomes Preview, which lists each changed value (the first
+    2,000 are shown; the count is whole). Start writes only the changed rows, so the
+    records it does not change keep their bytes. The arithmetic follows NMR's `DoMath`
+    exactly, including VB's rounding of halves to even.
 
 ## Known gaps
 
