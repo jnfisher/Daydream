@@ -8,13 +8,17 @@
 //! It covers the record tables' own values, the rooms and their exits as MME shows them,
 //! the version row, the walk that marks what is in the game and where it comes from
 //! (`walk`: `In Game`, `Obtained From`, `References`, `Learned From`, `Casted By`,
-//! `Summoned By`, `Assigned To`, `TBInfo`), and the lairs and their averages (`lairs`).
-//! Still to come: NMR's monster attack simulation (`AvgDmg*`, `AttTrue%`, and from them
-//! `ScriptValue`); until then those columns hold 0, as NMR writes them before it.
+//! `Summoned By`, `Assigned To`, `TBInfo`), NMR's monster attack simulation (`sim`:
+//! `AvgDmg*` and `AttTrue%`), and from it each monster's `ScriptValue` and the lairs and
+//! their averages (`lairs`).
+//!
+//! All of it is NMR's value for value but the simulated columns: the simulation is random,
+//! so they sit within the spread of NMR's own runs rather than on one run's numbers.
 
 use std::collections::HashMap;
 
 mod lairs;
+mod sim;
 mod walk;
 
 use daydream_store::Realm;
@@ -842,9 +846,51 @@ pub fn export(realm: &Realm, layout: LayoutSet, o: &MmeOptions) -> Result<NmrDat
     let textblocks = Src::load(realm, "Textblocks", layout)?;
     let world = walk::World::read(&rooms, &shops, &monsters, &spells, &items, &textblocks);
     let mut lairs = walk::locate(&mut data, &world, &excl, o.hide_excluded);
+    simulate(
+        named(&mut data, "Monsters"),
+        &sim::Book::read(&monsters, &spells, &items),
+    );
     lairs.script_values(named(&mut data, "Monsters"));
     lairs.export(named(&mut data, "Lairs"), &world.lair_rooms());
     Ok(data)
+}
+
+/// The attack simulation of each monster, in the monsters file's order, into the MME
+/// Monsters table.
+fn simulate(t: &mut NmrRows, book: &sim::Book) {
+    let col = |c: &str| t.position(c).unwrap_or_else(|| panic!("Monsters has {c}"));
+    let number = col("Number");
+    let at: Vec<usize> = ["AvgDmg", "AvgDmgPhys", "AvgDmgSpell"]
+        .into_iter()
+        .chain((0..5).map(|x| {
+            [
+                "AttTrue%-0",
+                "AttTrue%-1",
+                "AttTrue%-2",
+                "AttTrue%-3",
+                "AttTrue%-4",
+            ][x]
+        }))
+        .map(col)
+        .collect();
+    let rows: HashMap<i64, usize> = t
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (num(&r[number]), i))
+        .collect();
+    let mut s = sim::Sim::new();
+    for m in &book.monsters {
+        let r = s.monster(book, m);
+        let Some(&i) = rows.get(&m.number) else {
+            continue;
+        };
+        let row = &mut t.rows[i];
+        let values = [r.avg, r.phys, r.spell].into_iter().chain(r.att_true);
+        for (&c, v) in at.iter().zip(values) {
+            row[c] = Value::Double(v);
+        }
+    }
 }
 
 fn named<'a>(data: &'a mut NmrData, name: &str) -> &'a mut NmrRows {

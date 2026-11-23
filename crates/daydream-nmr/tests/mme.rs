@@ -10,9 +10,10 @@ use daydream_types::records::LayoutSet::Dos;
 
 use crate::support::{empty_realm, l, put, t};
 
-/// Columns NMR fills from its monster attack simulation, which Daydream does not compute
-/// yet; and the export's date and time.
-const NOT_YET: &[&str] = &[
+/// Columns NMR fills from its monster attack simulation. NMR draws from VB's `Rnd` and runs
+/// each monster until its average settles, so a second run of NMR itself gives slightly
+/// different numbers: these are compared within [`close`], not exactly.
+const SIMULATED: &[&str] = &[
     "AvgDmg",
     "AvgDmgPhys",
     "AvgDmgSpell",
@@ -22,9 +23,40 @@ const NOT_YET: &[&str] = &[
     "AttTrue%-2",
     "AttTrue%-3",
     "AttTrue%-4",
-    "Date",
-    "Time",
 ];
+
+/// The export's date and time.
+const NOT_COMPARED: &[&str] = &["Date", "Time"];
+
+fn number(v: &Value) -> Option<f64> {
+    match v {
+        Value::Long(x) => Some(f64::from(*x)),
+        Value::Double(x) => Some(*x),
+        _ => None,
+    }
+}
+
+/// How far a simulated value is from NMR's, relative to NMR's (or to 1, for values under 1).
+fn relative(a: &Value, b: &Value) -> f64 {
+    match (number(a), number(b)) {
+        (Some(x), Some(y)) => (x - y).abs() / y.abs().max(1.0),
+        _ => f64::INFINITY,
+    }
+}
+
+/// A simulated value close enough to NMR's: within 3 (points of damage or of a percentage,
+/// where the values are small) or within 25%. Measured against NMR's export of the stock
+/// world, the widest gaps are 3.1 points at 23% and 1.8 points at 35%.
+fn close(a: &Value, b: &Value) -> bool {
+    match (number(a), number(b)) {
+        (Some(x), Some(y)) => (x - y).abs() <= 3.0 || relative(a, b) <= 0.25,
+        _ => a == b,
+    }
+}
+
+/// At most this share of a simulated column may be more than 10% off NMR's (measured: under
+/// 4.5%), so that a sim that drifts as a whole fails even while each value is [`close`].
+const DRIFT: f64 = 0.06;
 
 fn key(t: &NmrRows, r: &[Value]) -> String {
     let cols: &[&str] = match t.name.as_str() {
@@ -41,18 +73,14 @@ fn key(t: &NmrRows, r: &[Value]) -> String {
 
 /// A value as Jet gives it back: a Long and a Double of the same number are the same.
 fn same(a: &Value, b: &Value) -> bool {
-    let n = |v: &Value| match v {
-        Value::Long(x) => Some(f64::from(*x)),
-        Value::Double(x) => Some(*x),
-        _ => None,
-    };
-    match (n(a), n(b)) {
+    match (number(a), number(b)) {
         (Some(x), Some(y)) => x == y,
         _ => a == b,
     }
 }
 
-/// Every difference between `ours` and `theirs`, but in `skip`'s columns.
+/// Every difference between `ours` and `theirs`, but in `skip`'s columns; the
+/// [`SIMULATED`] ones are compared within [`close`] and [`DRIFT`].
 fn differences(ours: &NmrData, theirs: &NmrData, skip: &[&str]) -> Vec<String> {
     let mut out = Vec::new();
     for t in &ours.tables {
@@ -70,6 +98,7 @@ fn differences(ours: &NmrData, theirs: &NmrData, skip: &[&str]) -> Vec<String> {
         let theirs: HashMap<String, &Vec<Value>> =
             th.rows.iter().map(|r| (key(th, r), r)).collect();
         let ours: HashMap<String, &Vec<Value>> = t.rows.iter().map(|r| (key(t, r), r)).collect();
+        let mut drift: HashMap<&str, usize> = HashMap::new();
         for k in theirs.keys().filter(|k| !ours.contains_key(*k)) {
             out.push(format!("{} {k}: only in the reference", t.name));
         }
@@ -79,12 +108,33 @@ fn differences(ours: &NmrData, theirs: &NmrData, skip: &[&str]) -> Vec<String> {
                 continue;
             };
             for (i, c) in t.columns.iter().enumerate() {
-                if !skip.contains(&c.as_str()) && !same(&r[i], &tr[i]) {
+                if skip.contains(&c.as_str()) {
+                    continue;
+                }
+                let simulated = SIMULATED.contains(&c.as_str());
+                if simulated && relative(&r[i], &tr[i]) > 0.1 {
+                    *drift.entry(c).or_default() += 1;
+                }
+                let ok = if simulated {
+                    close(&r[i], &tr[i])
+                } else {
+                    same(&r[i], &tr[i])
+                };
+                if !ok {
                     out.push(format!(
                         "{} {k} {c}: ours {:?}, NMR's {:?}",
                         t.name, r[i], tr[i]
                     ));
                 }
+            }
+        }
+        for (c, n) in drift {
+            if n as f64 > DRIFT * t.rows.len() as f64 {
+                out.push(format!(
+                    "{} {c}: {n} of {} values more than 10% off NMR's",
+                    t.name,
+                    t.rows.len()
+                ));
             }
         }
     }
@@ -100,7 +150,7 @@ fn the_export_matches_nmrs_own_of_the_stock_world() {
     let ours = mme::export(&realm, Dos, &MmeOptions::default()).unwrap();
     let names: Vec<&str> = ours.tables.iter().map(|t| t.name.as_str()).collect();
     let theirs = daydream_nmr::mdb::read_tables(std::path::Path::new(&reference), &names).unwrap();
-    let diff = differences(&ours, &theirs, NOT_YET);
+    let diff = differences(&ours, &theirs, NOT_COMPARED);
     assert!(
         diff.is_empty(),
         "{} differences:\n{}",

@@ -317,13 +317,13 @@ struct Tb {
 }
 
 /// The source rows, read through NMR's columns.
-struct Reader<'a> {
+pub(super) struct Reader<'a> {
     src: &'a Src,
     at: HashMap<String, usize>,
 }
 
 impl<'a> Reader<'a> {
-    fn new(src: &'a Src) -> Self {
+    pub(super) fn new(src: &'a Src) -> Self {
         Reader {
             src,
             at: src
@@ -336,18 +336,18 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn rows(&self) -> impl Iterator<Item = Row<'_>> {
+    pub(super) fn rows(&self) -> impl Iterator<Item = Row<'_>> {
         self.src.rows.rows.iter().map(|r| Row { r, at: &self.at })
     }
 }
 
-struct Row<'a> {
+pub(super) struct Row<'a> {
     r: &'a [Value],
     at: &'a HashMap<String, usize>,
 }
 
 impl Row<'_> {
-    fn n(&self, c: &str) -> i64 {
+    pub(super) fn n(&self, c: &str) -> i64 {
         num(&self.r[*self.at.get(c).unwrap_or_else(|| panic!("no column {c}"))])
     }
 
