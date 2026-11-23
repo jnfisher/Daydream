@@ -58,7 +58,8 @@ jobs:
       - name: Cache key (stock package sha256)
         id: keys
         shell: bash
-        run: echo "stock=$(sed -n 's/^pub const SHA256: &str = "\(.*\)";/\1/p' crates/daydream-wcc/src/stock.rs)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "stock=$(sed -n 's/^pub const SHA256: &str = "\(.*\)";/\1/p' crates/daydream-wcc/src/stock.rs)" >> "$GITHUB_OUTPUT"
 
       - name: Stock data cache
         uses: actions/cache@v4
