@@ -26,6 +26,14 @@
 //!   Btrieve buffer, which a failed Get Equal leaves alone), or from zeros for the first.
 //!   A new room starts from zeros: only `ImportRooms` clears the buffer.
 //! - A text block is always re-encrypted, and stored at its full length.
+//!
+//! The options of NMR's Database Importer are [`ImportOptions`]' too: which tables, a range
+//! of record numbers per table (for rooms, of one map), "Skip" or "Update" for records the
+//! realm has, a room's items only or all but its items, and deleting the parts of a text
+//! block past the last part the file has (NMR always does; [`ImportOptions::extra_parts`]).
+//! NMR mode keeps NMR's ways with a range too: it starts at the range's first record when
+//! the file has it, stops at the first row past the range, and leaves the parts of the last
+//! text block it met alone.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -54,6 +62,42 @@ pub struct ImportOptions {
     /// Do exactly what NMR's import does (see the module docs), not Daydream's stricter
     /// rules.
     pub like_nmr: bool,
+    /// Only these tables (NMR's "Databases to Import"); `None` is all of them.
+    pub tables: Option<Vec<String>>,
+    /// Only these records of a table (NMR's range boxes); a table without one imports all.
+    pub ranges: Vec<Range>,
+    /// Which of a room's columns to import (NMR's "Only Items" and "Not Items").
+    pub room_parts: RoomParts,
+    /// Delete the parts of an imported text block beyond the last part the file has, as NMR
+    /// does, so a text that got shorter loses its old tail.
+    pub extra_parts: bool,
+}
+
+/// Records of one table by number: `from..=to` of the first index column, and for rooms
+/// only those of map `map`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Range {
+    pub table: String,
+    pub map: Option<i64>,
+    pub from: i64,
+    pub to: i64,
+}
+
+/// Which of a room's columns an import writes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RoomParts {
+    #[default]
+    All,
+    /// Only the visible and hidden items (`Room Item n`, `Hidden Item n`, with their uses
+    /// and quantities).
+    OnlyItems,
+    /// Everything but those.
+    NotItems,
+}
+
+/// Whether a room column is one of the items "Only Items" means.
+fn is_room_item(column: &str) -> bool {
+    column.starts_with("Room Item ") || column.starts_with("Hidden Item ")
 }
 
 /// What an import did to one table.
@@ -79,6 +123,8 @@ pub enum ImportError {
     MissingColumn { table: String, column: String },
     #[error("{table}: the realm has no file for these records")]
     NoFile { table: String },
+    #[error("{table}: its records are not numbered, so they take no range")]
+    Range { table: String },
 }
 
 /// Applies every table of `data` NMR knows to the realm.
@@ -93,6 +139,11 @@ pub fn import(
             continue;
         };
         let Some(table) = t.table else { continue };
+        if let Some(only) = &opts.tables
+            && !only.iter().any(|n| n.eq_ignore_ascii_case(t.name))
+        {
+            continue;
+        }
         reports.push(import_table(realm, t, table, rows, opts)?);
     }
     Ok(reports)
@@ -150,6 +201,65 @@ pub fn delete(
     for (k, f) in keys.iter().zip(found) {
         if !f {
             report.errors.push(format!("{}: no record {k:?}", t.name));
+        }
+    }
+    Ok(report)
+}
+
+/// Removes every record of NMR table `table`, or with `range` only those in it, as NMR's
+/// Database Deleter does ("All", or From and To, and for rooms a map).
+pub fn delete_range(
+    realm: &Realm,
+    table: &str,
+    range: Option<&Range>,
+    layout: LayoutSet,
+    dry_run: bool,
+) -> Result<TableReport, ImportError> {
+    let t = schema::table(table).ok_or_else(|| ImportError::NoFile {
+        table: table.to_string(),
+    })?;
+    let mut report = TableReport {
+        table: t.name.to_string(),
+        ..TableReport::default()
+    };
+    let Some(kind) = t.table else {
+        return Ok(report);
+    };
+    let index_cols = index_columns(t);
+    if range.is_some() && !matches!(t.columns[index_cols[0]].ty, schema::ColumnType::Long) {
+        return Err(ImportError::Range {
+            table: t.name.to_string(),
+        });
+    }
+    let layout = layout_of(kind, layout);
+    let num = |v: &Value| schema::number(v).map_or(0, |n| n as i64);
+    for file in realm.files_of(kind) {
+        let mut doomed = Vec::new();
+        {
+            let db = WbtrvDb::open_read_only(&file.path)?;
+            for (id, mut raw) in db.records()? {
+                let Some(r) = range else {
+                    doomed.push(id);
+                    continue;
+                };
+                raw.resize(layout.len.max(raw.len()), 0);
+                let row = row_of(t, layout, &raw);
+                let (map, number) = if kind == Table::Rooms {
+                    (Some(num(&row[index_cols[0]])), num(&row[index_cols[1]]))
+                } else {
+                    (None, num(&row[index_cols[0]]))
+                };
+                if r.map.is_none_or(|m| Some(m) == map) && (r.from..=r.to).contains(&number) {
+                    doomed.push(id);
+                }
+            }
+        }
+        report.deleted += doomed.len();
+        if !doomed.is_empty() && !dry_run {
+            let mut db = WbtrvDb::open(&file.path)?;
+            for id in doomed {
+                db.delete(id)?;
+            }
         }
     }
     Ok(report)
@@ -250,14 +360,74 @@ fn import_table(
     } else {
         &rows.rows
     };
+    let range = opts
+        .ranges
+        .iter()
+        .find(|r| r.table.eq_ignore_ascii_case(t.name));
+    if range.is_some() && !matches!(t.columns[index_cols[0]].ty, schema::ColumnType::Long) {
+        return Err(ImportError::Range {
+            table: t.name.to_string(),
+        });
+    }
+    let room_parts = if table == Table::Rooms {
+        opts.room_parts
+    } else {
+        RoomParts::All
+    };
+    // text block parts: the last part of each number the file has, in the order met
+    let mut parts: Vec<(i64, i64)> = Vec::new();
     // NMR's Btrieve buffer: the record of the row before
     let mut last: Option<Vec<u8>> = None;
-    for (n, row) in rows.iter().enumerate() {
-        let key = key_of(
-            index_cols
-                .iter()
-                .map(|&i| at[i].map(|a| row[a].clone()).unwrap_or(Value::Null)),
-        );
+    // NMR seeks to the range's first record and starts there, or from the top when the
+    // file lacks it
+    let start = match range {
+        Some(r) if opts.like_nmr => {
+            let seek: Vec<KeyPart> = match table {
+                Table::Rooms => vec![KeyPart::Number(r.map.unwrap_or(0)), KeyPart::Number(r.from)],
+                Table::TextBlocks => vec![KeyPart::Number(r.from), KeyPart::Number(0)],
+                _ => vec![KeyPart::Number(r.from)],
+            };
+            rows.iter()
+                .position(|row| {
+                    key_of(
+                        index_cols
+                            .iter()
+                            .map(|&i| at[i].map(|a| row[a].clone()).unwrap_or(Value::Null)),
+                    ) == seek
+                })
+                .unwrap_or(0)
+        }
+        _ => 0,
+    };
+    report.skipped += start;
+    for (n, row) in rows.iter().enumerate().skip(start) {
+        let cell = |i: usize| at[i].map(|a| row[a].clone()).unwrap_or(Value::Null);
+        let key = key_of(index_cols.iter().map(|&i| cell(i)));
+        let num = |i: usize| schema::number(&cell(i)).map_or(0, |n| n as i64);
+        if let Some(r) = range {
+            // rooms: the map, then the room number
+            let (map, number) = if table == Table::Rooms {
+                (Some(num(index_cols[0])), num(index_cols[1]))
+            } else {
+                (None, num(index_cols[0]))
+            };
+            if number > r.to && opts.like_nmr && r.map.is_none_or(|m| Some(m) == map) {
+                // NMR stops at the first row past the range (its rows are in order)
+                report.skipped += rows.len() - n;
+                break;
+            }
+            if r.map.is_some_and(|m| Some(m) != map) || number < r.from || number > r.to {
+                report.skipped += 1;
+                // NMR still counts a skipped row as the text block it last met
+                if table == Table::TextBlocks && opts.like_nmr {
+                    parts.push((num(index_cols[0]), num(index_cols[1])));
+                }
+                continue;
+            }
+        }
+        if table == Table::TextBlocks {
+            parts.push((num(index_cols[0]), num(index_cols[1])));
+        }
         let (fi, id, before, stored_len) = match existing.get(&key) {
             Some((fi, id, raw, len)) => {
                 if opts.skip_existing {
@@ -276,7 +446,7 @@ fn import_table(
             }
         };
         let mut record = before.clone();
-        let applied = apply(t, layout, &at, row, &mut record, opts.like_nmr);
+        let applied = apply(t, layout, &at, row, &mut record, opts.like_nmr, room_parts);
         if opts.like_nmr {
             last = Some(record.clone());
         }
@@ -324,7 +494,66 @@ fn import_table(
             Err(e) => report.errors.push(format!("{} row {}: {e}", t.name, n + 1)),
         }
     }
+    if table == Table::TextBlocks && opts.extra_parts {
+        drop_extra_parts(&mut targets, &existing, &parts, opts, &mut report)?;
+    }
     Ok(report)
+}
+
+/// Deletes the text block parts past the last part of each number the import met. NMR does
+/// it when it reaches the next number, so it never does it for the last number of the file
+/// and deletes only parts that follow on one from another; NMR mode does the same, and
+/// otherwise every later part of every number goes.
+fn drop_extra_parts(
+    targets: &mut [Target],
+    existing: &HashMap<Vec<KeyPart>, (usize, i64, Vec<u8>, usize)>,
+    parts: &[(i64, i64)],
+    opts: &ImportOptions,
+    report: &mut TableReport,
+) -> Result<(), ImportError> {
+    let mut last: Vec<(i64, i64)> = Vec::new();
+    for &(number, part) in parts {
+        match last.last_mut() {
+            Some((n, p)) if *n == number => *p = part,
+            _ => last.push((number, part)),
+        }
+    }
+    if opts.like_nmr {
+        last.pop();
+    }
+    let key = |n: i64, p: i64| vec![KeyPart::Number(n), KeyPart::Number(p)];
+    let mut doomed: Vec<(usize, i64)> = Vec::new();
+    for (number, part) in last {
+        if opts.like_nmr {
+            let mut p = part + 1;
+            while let Some((fi, id, ..)) = existing.get(&key(number, p)) {
+                doomed.push((*fi, *id));
+                p += 1;
+            }
+        } else {
+            for (k, (fi, id, ..)) in existing {
+                if let [KeyPart::Number(n), KeyPart::Number(p)] = k.as_slice()
+                    && *n == number
+                    && *p > part
+                {
+                    doomed.push((*fi, *id));
+                }
+            }
+        }
+    }
+    doomed.sort_unstable();
+    doomed.dedup();
+    for (fi, id) in doomed {
+        if !opts.dry_run {
+            let target = &mut targets[fi];
+            if target.db.is_none() {
+                target.db = Some(WbtrvDb::open(&target.path)?);
+            }
+            target.db.as_mut().unwrap().delete(id)?;
+        }
+        report.deleted += 1;
+    }
+    Ok(())
 }
 
 /// A WCCTEXT record's stored image: the fixed part and the text through its terminator,
@@ -345,8 +574,20 @@ fn apply(
     row: &[Value],
     record: &mut [u8],
     like_nmr: bool,
+    room_parts: RoomParts,
 ) -> Result<(), (&'static str, ValueError)> {
     for (c, a) in t.columns.iter().zip(at) {
+        let wanted = match room_parts {
+            RoomParts::All => true,
+            // the key goes in either way
+            RoomParts::OnlyItems => {
+                is_room_item(c.name) || c.name == "Map Number" || c.name == "Room Number"
+            }
+            RoomParts::NotItems => !is_room_item(c.name),
+        };
+        if !wanted {
+            continue;
+        }
         let value = match a {
             Some(a) => row[*a].clone(),
             None if c.optional => Value::Long(1),

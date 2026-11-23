@@ -25,5 +25,5 @@ pub mod text;
 
 pub use data::{NmrData, NmrRows};
 pub use export::{ExportOptions, export, export_table, layout_of_realm};
-pub use import::{ImportOptions, TableReport, delete, import};
+pub use import::{ImportOptions, Range, RoomParts, TableReport, delete, delete_range, import};
 pub use schema::Value;

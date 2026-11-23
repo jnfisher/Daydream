@@ -21,6 +21,7 @@ jiff.workspace = true
 daydream-store.workspace = true
 daydream-wcc.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

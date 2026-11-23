@@ -52,7 +52,7 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `delete`, `merge-users` |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
