@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use daydream_wcc::btrieve::build::{BuildError, build};
-use daydream_wcc::btrieve::{BtrieveFile, KeyDataType, OpenOptions, RecordAddress, Version};
+use daydream_wcc::btrieve::{
+    BtrieveFile, KeyAttributes, KeyDataType, OpenOptions, RecordAddress, Version,
+};
 
 use crate::stock as stock_data;
 
@@ -49,6 +51,7 @@ fn index_by_position(
 fn rebuilt(source: &BtrieveFile, data: &[Vec<u8>]) -> BtrieveFile {
     let bytes = build(source, data, 0x6B04_459B).unwrap_or_else(|e| panic!("{e}"));
     let mut file = OpenOptions::new()
+        .variable_length(true)
         .open_bytes("rebuilt.dat", bytes)
         .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(file.header.version, Version::V6);
@@ -66,6 +69,7 @@ fn rebuilt(source: &BtrieveFile, data: &[Vec<u8>]) -> BtrieveFile {
 /// index holds the same records under each value as the source's.
 fn rebuild(path: &Path) {
     let mut source = OpenOptions::new()
+        .variable_length(true)
         .open(path)
         .unwrap_or_else(|e| panic!("{e}"));
     let before = records(&mut source);
@@ -123,6 +127,14 @@ fn a_rebuilt_fixture_holds_the_same_records_and_indexes() {
 }
 
 #[test]
+fn a_local_file_rebuilds() {
+    // DAYDREAM_REBUILD=FILE.DAT: a quick check of any file on hand
+    if let Some(path) = std::env::var_os("DAYDREAM_REBUILD") {
+        rebuild(Path::new(&path));
+    }
+}
+
+#[test]
 fn every_stock_file_rebuilds() {
     let dir = stock_data::dir();
     let mut names: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -132,14 +144,6 @@ fn every_stock_file_rebuilds() {
         .collect();
     names.sort();
     for path in names {
-        let source = OpenOptions::new()
-            .variable_length(true)
-            .open(&path)
-            .unwrap();
-        if source.header.is_variable_length() {
-            continue; // WCCTEXT: not yet
-        }
-        drop(source);
         rebuild(&path);
     }
 }
@@ -185,5 +189,38 @@ fn a_unique_key_with_two_records_is_refused() {
     assert!(matches!(
         build(&source, &data, 0),
         Err(BuildError::Length { index: 1, .. })
+    ));
+}
+
+#[test]
+fn variable_length_records_get_their_tails_back() {
+    let mut source = OpenOptions::new()
+        .variable_length(true)
+        .open(&fixture("VARIABLE.DAT"))
+        .unwrap();
+    // its keys' duplicates made repeating: the builder does not yet link duplicates in a
+    // variable-length file (WCCTEXT has none)
+    for s in source.keys.iter_mut().flat_map(|k| k.segments.iter_mut()) {
+        if s.attributes.has(KeyAttributes::DUPLICATES) {
+            s.attributes.0 |= KeyAttributes::REPEATING_DUPLICATES;
+        }
+    }
+    let mut data = synthetic(&source, 300);
+    for (i, r) in data.iter_mut().enumerate() {
+        // no tail, short tails and one that fills a 512-byte variable page
+        let tail = if i == 7 { 492 } else { (i * 37) % 300 };
+        r.extend((0..tail).map(|b| (b * 13 + i) as u8));
+    }
+    let file = rebuilt(&source, &data);
+    assert!(file.header.is_variable_length());
+    data[3].extend([0; 493]);
+    assert!(matches!(
+        build(&source, &data, 0),
+        Err(BuildError::Length {
+            index: 3,
+            min: 8,
+            max: 500,
+            ..
+        })
     ));
 }

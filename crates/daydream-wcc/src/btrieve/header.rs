@@ -69,6 +69,10 @@ pub struct Header {
     pub(crate) kat_offset: u64,
     /// Head of the v5 deleted-record chain (FCR +0x10), `0xFFFF_FFFF` when empty.
     pub(crate) deleted_record_pointer: u32,
+    /// The word after `usrflgs` (FCR +0x108), unread here: Btrieve carries it from a
+    /// variable-length file into its clone (0x66 in WCCTEXT), so the `.DAT` builder does
+    /// too (Daydream addition).
+    pub(crate) fcr_108: u16,
 }
 
 impl Header {
@@ -206,6 +210,7 @@ pub(crate) fn parse_fcr(
         fcr_offset,
         kat_offset: fcr_offset + u64::from(u16_at(fcr, 0x78)),
         deleted_record_pointer: hi_lo_at(fcr, 0x10),
+        fcr_108: u16_at(fcr, 0x108),
     };
     check_record_geometry(&header)?;
     Ok(header)

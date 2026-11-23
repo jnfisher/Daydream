@@ -36,12 +36,15 @@ use std::cmp::Ordering;
 
 use super::BtrieveFile;
 use super::btree::{self, Tree};
+use super::header::RecordType;
 use super::index::{compare, is_null};
 use super::keys::{KEY_DEF_LENGTH, Key, KeyAttributes};
 use super::pat::{kind, physical_offset};
 
 /// Bytes in front of a data page's first slot.
 const DATA_HEADER: usize = 6;
+/// Bytes in front of a variable page's first fragment.
+const VAR_HEADER: usize = 12;
 /// Bytes in front of an index page's first entry: the page header and the last child.
 const INDEX_HEADER: usize = 12;
 /// Where the key definitions start in the FCR.
@@ -54,11 +57,15 @@ const NONE: [u8; 4] = [0xFF; 4];
 pub enum BuildError {
     #[error("{0}")]
     Unsupported(String),
-    #[error("record {index}: {len} bytes for {expected}-byte records")]
+    /// A record's length is outside what the file holds: exactly the record length for a
+    /// fixed-length file, and up to what one variable page holds past it for a
+    /// variable-length one.
+    #[error("record {index}: {len} bytes, where this file holds {min} to {max}")]
     Length {
         index: usize,
         len: usize,
-        expected: usize,
+        min: usize,
+        max: usize,
     },
     #[error("records {first} and {second} have the same value for key {key}, which is unique")]
     Duplicate {
@@ -153,7 +160,9 @@ impl Plan {
 
 /// Builds a Btrieve 6 file with `file`'s page length, record length and keys holding
 /// `records` in the order given. `created` is the creation time the FCR records (Unix
-/// seconds). Variable-length files and keys with a collating sequence are refused.
+/// seconds). A record of a variable-length file is its fixed part and then its variable
+/// part, which must fit one variable page. Keys with a collating sequence, and
+/// variable-length files with blank truncation or linked duplicates, are refused.
 pub fn build(
     file: &BtrieveFile,
     records: &[impl AsRef<[u8]>],
@@ -161,8 +170,9 @@ pub fn build(
 ) -> Result<Vec<u8>, BuildError> {
     let unsupported = |s: String| Err(BuildError::Unsupported(s));
     let h = &file.header;
-    if h.is_variable_length() {
-        return unsupported("variable-length records are not supported yet".into());
+    let variable = h.is_variable_length();
+    if variable && h.record_type != RecordType::Variable {
+        return unsupported(format!("{:?} records", h.record_type));
     }
     let page_length = usize::from(h.page_length);
     let Some((kat, max_segments)) = kat_layout(page_length) else {
@@ -185,20 +195,31 @@ pub fn build(
         ));
     }
     let record_length = usize::from(h.record_length);
+    let max_tail = page_length - VAR_HEADER - 4 - 4;
     for (index, r) in records.iter().enumerate() {
         let len = r.as_ref().len();
-        if len != record_length {
+        let max = if variable {
+            record_length + max_tail
+        } else {
+            record_length
+        };
+        if !(record_length..=max).contains(&len) {
             return Err(BuildError::Length {
                 index,
                 len,
-                expected: record_length,
+                min: record_length,
+                max,
             });
         }
     }
 
     let linked: Vec<bool> = keys.iter().map(is_linked).collect();
     let linked_count = linked.iter().filter(|&&l| l).count();
-    let physical_len = record_length + 2 + 8 * linked_count;
+    if variable && linked_count > 0 {
+        return unsupported("variable-length records with linked duplicates".into());
+    }
+    let vrecptr = if variable { 4 } else { 0 };
+    let physical_len = record_length + 2 + vrecptr + 8 * linked_count;
     if physical_len > page_length - DATA_HEADER {
         return unsupported(format!(
             "{physical_len}-byte slots do not fit a {page_length}-byte page"
@@ -227,7 +248,8 @@ pub fn build(
         });
     }
 
-    // logical pages: the index pages key by key, then the data pages
+    // logical pages: the index pages key by key, the data pages, then a variable page for
+    // each record with a variable part
     let mut next: u32 = 1;
     for index in &mut indexes {
         index.logical = (0..index.tree.pages.len() as u32)
@@ -238,7 +260,16 @@ pub fn build(
     let per_page = (page_length - DATA_HEADER) / physical_len;
     let data_pages = records.len().div_ceil(per_page).max(1) as u32;
     let pages_per_pat = (page_length / 4 - 2) as u32;
-    let page_count = next + data_pages;
+    let first_variable = next + data_pages;
+    let mut variable_pages = Vec::with_capacity(records.len());
+    let mut v = first_variable;
+    for r in records {
+        variable_pages.push((r.as_ref().len() > record_length).then(|| {
+            v += 1;
+            v - 1
+        }));
+    }
+    let page_count = v;
     let plan = Plan {
         page_length,
         physical_len,
@@ -258,8 +289,11 @@ pub fn build(
             kinds[l as usize] = kind::INDEX_BIT | k as u8;
         }
     }
-    for l in plan.first_data..page_count {
+    for l in plan.first_data..first_variable {
         kinds[l as usize] = kind::DATA;
+    }
+    for l in first_variable..page_count {
+        kinds[l as usize] = kind::VARIABLE;
     }
     write_pats(&mut out, &plan, &kinds);
 
@@ -281,9 +315,16 @@ pub fn build(
         .filter(|(l, _)| **l)
         .map(|(_, i)| i)
         .enumerate()
-        .map(|(n, i)| (record_length + 2 + 8 * n, i))
+        .map(|(n, i)| (record_length + 2 + vrecptr + 8 * n, i))
         .collect();
-    let free = write_data(&mut out, &plan, records, &tails);
+    let free = write_data(
+        &mut out,
+        &plan,
+        records,
+        record_length,
+        variable.then_some(&variable_pages[..]),
+        &tails,
+    );
 
     write_fcr(
         &mut out,
@@ -420,6 +461,8 @@ fn write_data(
     out: &mut [u8],
     plan: &Plan,
     records: &[impl AsRef<[u8]>],
+    record_length: usize,
+    variable_pages: Option<&[Option<u32>]>,
     tails: &[(usize, &Index)],
 ) -> u32 {
     let len = plan.page_length;
@@ -435,8 +478,17 @@ fn write_data(
     };
     for (i, r) in records.iter().enumerate() {
         let at = slot_at(i);
+        let r = r.as_ref();
         put(out, at, &[1, 0]);
-        put(out, at + 2, r.as_ref());
+        put(out, at + 2, &r[..record_length]);
+        if let Some(pages) = variable_pages {
+            // the pointer to the variable part: [high][low][mid][fragment]
+            let pointer = pages[i].map_or(NONE, |l| [(l >> 16) as u8, l as u8, (l >> 8) as u8, 0]);
+            put(out, at + 2 + record_length, &pointer);
+            if let Some(l) = pages[i] {
+                write_variable(out, plan, l, &r[record_length..]);
+            }
+        }
     }
     // linked duplicates: each record's previous and next in its value's chain
     for &(offset, index) in tails {
@@ -472,6 +524,23 @@ fn write_data(
     }
 }
 
+/// A variable page holding one fragment, as Btrieve writes each record's variable part:
+/// the page id and a zero usage count, a no-page pointer and a fragment count of 1 (bytes
+/// 6 to 11), the fragment (its no-next pointer, then the bytes) and, at the page's end,
+/// the fragment offset table counting down: fragment 0's start, then where it ends.
+fn write_variable(out: &mut [u8], plan: &Plan, l: u32, bytes: &[u8]) {
+    let len = plan.page_length;
+    let at = plan.offset(plan.physical(l));
+    let page = &mut out[at..at + len];
+    put(page, 0, &page_pointer(l, kind::VARIABLE));
+    put(page, 6, &NONE);
+    put_u16(page, 10, 1);
+    put(page, VAR_HEADER, &NONE);
+    put(page, VAR_HEADER + 4, bytes);
+    put_u16(page, len - 2, VAR_HEADER as u16);
+    put_u16(page, len - 4, (VAR_HEADER + 4 + bytes.len()) as u16);
+}
+
 /// The FCR fields that are not in the plan.
 struct Fcr {
     records: u32,
@@ -505,6 +574,9 @@ fn write_fcr(out: &mut [u8], plan: &Plan, file: &BtrieveFile, indexes: &[Index],
     put(fcr, 0x22, &[0xFF, 0xFF]);
     put_u16(fcr, 0x24, 1);
     put(fcr, 0x26, &hi_lo(plan.page_count));
+    if h.is_variable_length() {
+        put(fcr, 0x38, &NONE);
+    }
     fcr[0x4B] = 6;
     let in_last_pat = plan.page_count - plan.pages_per_pat * (plan.pats - 1);
     put_u16(fcr, 0x4C, plan.pats as u16);
@@ -523,6 +595,8 @@ fn write_fcr(out: &mut [u8], plan: &Plan, file: &BtrieveFile, indexes: &[Index],
     put_u16(fcr, 0x78, f.kat as u16);
     put(fcr, 0x98, &NONE);
     put(fcr, 0x9C, &hi_lo(f.free));
+    put_u16(fcr, 0x106, h.usrflgs);
+    put_u16(fcr, 0x108, h.fcr_108);
     for i in 0..5 {
         let at = 0xA0 + 12 * i;
         let end = (at + 12).min(0xD4);

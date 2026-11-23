@@ -194,8 +194,8 @@ fn dump(engine: &Path, files: &[PathBuf], out: &Path) {
     script("btrieve-dump.ps1", &[out, engine], files);
 }
 
-// One engine run over every case: each stock file as an untouched copy, and each
-// fixed-length one again as a copy Daydream rewrote and as a file Daydream rebuilt (each a
+// One engine run over every case: each stock file as an untouched copy and as a file
+// Daydream rebuilt, and each fixed-length one as a copy Daydream rewrote (each a
 // separate file, so the engine has nothing of it cached). Then Btrieve churns a copy of
 // each rebuilt file, and a second run reads those.
 #[test]
@@ -215,18 +215,19 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
         let stem = name.trim_end_matches(".VIR").trim_end_matches(".vir");
         let copy = tmp.path().join(format!("{stem}.DAT"));
         std::fs::copy(dir.join(&name), &copy).unwrap();
+        // the in-place writer refuses variable-length files; the builder takes them
         if !open(&copy).header.is_variable_length() {
             let rewritten = tmp.path().join(format!("{stem}_W.DAT"));
             std::fs::copy(&copy, &rewritten).unwrap();
             rewrite_non_key_bytes(&rewritten);
             files.push(rewritten);
-            let bytes = build(&open(&copy), &payloads(&copy), 0x6B04_459B)
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
-            for (suffix, list) in [("R", &mut files), ("C", &mut churned)] {
-                let rebuilt = tmp.path().join(format!("{stem}_{suffix}.DAT"));
-                std::fs::write(&rebuilt, &bytes).unwrap();
-                list.push(rebuilt);
-            }
+        }
+        let bytes = build(&open(&copy), &payloads(&copy), 0x6B04_459B)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        for (suffix, list) in [("R", &mut files), ("C", &mut churned)] {
+            let rebuilt = tmp.path().join(format!("{stem}_{suffix}.DAT"));
+            std::fs::write(&rebuilt, &bytes).unwrap();
+            list.push(rebuilt);
         }
         files.push(copy);
     }
@@ -367,9 +368,6 @@ fn btrieve_clones_the_stock_files() {
     let mut differ = Vec::new();
     for f in &files {
         let source = open(f);
-        if source.header.is_variable_length() {
-            continue;
-        }
         let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
         let theirs = std::fs::read(out.join(format!("{stem}.EMPTY.DAT"))).unwrap();
         let created = u32::from_le_bytes(theirs[0x56..0x5A].try_into().unwrap());
