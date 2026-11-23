@@ -22,7 +22,7 @@ revisited. Pull requests merged once CI was green.
 | #5 | M1 gate: real NMR in CI | merged (before the night began) |
 | #6 | M2: editor API and web UI, item editor as NMR's | merged (squash df539c4) |
 | #7 | M2: every other editor laid out as NMR's, ANSI preview | merged (squash 163fa0c) |
-| #8 | NMR's import options, Database Deleter and Merge Users | open |
+| #8 | NMR's import options, Database Deleter and Merge Users | merged (squash 4c25fd8) |
 | #9 | The importer, deleter and Merge Users in the browser (Tools) | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
