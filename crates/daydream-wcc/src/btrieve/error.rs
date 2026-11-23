@@ -44,6 +44,13 @@ pub enum BtrieveError {
         key: u16,
         reason: String,
     },
+    /// A key's index tree does not match the records (Daydream addition).
+    #[error("{}: index of key {key}: {reason}", file.display())]
+    Index {
+        file: PathBuf,
+        key: u16,
+        reason: String,
+    },
 }
 
 /// A format fault found by one of the pure decoders, before the file name is attached.
@@ -56,6 +63,7 @@ pub(crate) enum Fault {
     Corrupt { page: u32, reason: String },
     InvalidAcs(String),
     BadKey { key: u16, reason: String },
+    Index { key: u16, reason: String },
 }
 
 impl Fault {
@@ -80,6 +88,7 @@ impl Fault {
             Fault::Corrupt { page, reason } => BtrieveError::Corrupt { file, page, reason },
             Fault::InvalidAcs(reason) => BtrieveError::InvalidAcs { file, reason },
             Fault::BadKey { key, reason } => BtrieveError::BadKey { file, key, reason },
+            Fault::Index { key, reason } => BtrieveError::Index { file, key, reason },
         }
     }
 }

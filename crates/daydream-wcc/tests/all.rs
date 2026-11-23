@@ -8,6 +8,7 @@ mod support {
 use support::stock;
 
 mod btrieve_fixtures;
+mod btrieve_write;
 mod decode_offsets;
 mod roundtrip;
 mod stock_vir;
