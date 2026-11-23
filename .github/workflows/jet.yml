@@ -1,0 +1,76 @@
+name: NMR .mdb through Jet
+
+# Writes NMR-format .mdb files through Windows' own Jet 4.0 engine (as NMR does), reads them
+# back with Daydream's pure-Rust reader and imports them into a copy of the realm: a random
+# realm covering every column, and the stock 1.11p world. It needs a Windows runner, which
+# is slower than the main CI, so it runs only when the code it covers changes, nightly, and
+# by hand.
+on:
+  pull_request:
+    paths:
+      - "crates/daydream-nmr/**"
+      - "crates/daydream-store/**"
+      - "crates/daydream-types/**"
+      - "crates/daydream-wcc/**"
+      - "tools/nmr/**"
+      - "Cargo.lock"
+      - ".github/workflows/jet.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/daydream-nmr/**"
+      - "crates/daydream-store/**"
+      - "crates/daydream-types/**"
+      - "crates/daydream-wcc/**"
+      - "tools/nmr/**"
+      - "Cargo.lock"
+      - ".github/workflows/jet.yml"
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jet-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  jet:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      DAYDREAM_STOCK_CACHE: ${{ github.workspace }}\..\stock-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain (from rust-toolchain.toml)
+        shell: bash
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache key (stock package sha256)
+        id: keys
+        shell: bash
+        run: echo "stock=$(sed -n 's/^pub const SHA256: &str = "\(.*\)";/\1/p' crates/daydream-wcc/src/stock.rs)" >> "$GITHUB_OUTPUT"
+
+      - name: Stock data cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DAYDREAM_STOCK_CACHE }}\WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip
+          key: stock-${{ steps.keys.outputs.stock }}
+
+      - name: Jet is there
+        shell: pwsh
+        run: |
+          $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+          & $ps32 -NoProfile -Command "[IntPtr]::Size; (New-Object -ComObject ADOX.Catalog).GetType().FullName"
+
+      - name: test (through Jet)
+        run: cargo test -p daydream-nmr --locked --test all -- --nocapture
