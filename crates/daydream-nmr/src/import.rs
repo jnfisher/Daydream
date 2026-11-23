@@ -64,6 +64,8 @@ pub struct TableReport {
     pub updated: usize,
     pub unchanged: usize,
     pub skipped: usize,
+    /// Records removed by [`delete`].
+    pub deleted: usize,
     /// One line per row that could not be imported.
     pub errors: Vec<String>,
 }
@@ -94,6 +96,76 @@ pub fn import(
         reports.push(import_table(realm, t, table, rows, opts)?);
     }
     Ok(reports)
+}
+
+/// Removes the records of NMR table `table` whose index values are `keys` (each in the
+/// order of the table's index columns, as NMR's Delete Records tool picks them). A key no
+/// record has is reported as an error.
+pub fn delete(
+    realm: &Realm,
+    table: &str,
+    keys: &[Vec<Value>],
+    layout: LayoutSet,
+) -> Result<TableReport, ImportError> {
+    let t = schema::table(table).ok_or_else(|| ImportError::NoFile {
+        table: table.to_string(),
+    })?;
+    let mut report = TableReport {
+        table: t.name.to_string(),
+        ..TableReport::default()
+    };
+    let Some(kind) = t.table else {
+        return Ok(report);
+    };
+    let wanted: HashMap<Vec<KeyPart>, usize> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (key_of(k.iter().cloned()), i))
+        .collect();
+    let mut found = vec![false; keys.len()];
+    let layout = layout_of(kind, layout);
+    let index_cols = index_columns(t);
+    for file in realm.files_of(kind) {
+        let mut doomed = Vec::new();
+        {
+            let db = WbtrvDb::open_read_only(&file.path)?;
+            for (id, mut raw) in db.records()? {
+                raw.resize(layout.len.max(raw.len()), 0);
+                let row = row_of(t, layout, &raw);
+                let key = key_of(index_cols.iter().map(|&i| row[i].clone()));
+                if let Some(&i) = wanted.get(&key) {
+                    found[i] = true;
+                    doomed.push(id);
+                }
+            }
+        }
+        if !doomed.is_empty() {
+            let mut db = WbtrvDb::open(&file.path)?;
+            for id in doomed {
+                db.delete(id)?;
+                report.deleted += 1;
+            }
+        }
+    }
+    for (k, f) in keys.iter().zip(found) {
+        if !f {
+            report.errors.push(format!("{}: no record {k:?}", t.name));
+        }
+    }
+    Ok(report)
+}
+
+/// The positions of a table's index columns among its columns.
+fn index_columns(t: &NmrTable) -> Vec<usize> {
+    t.index
+        .as_ref()
+        .map(|i| {
+            i.columns
+                .iter()
+                .map(|c| t.columns.iter().position(|col| col.name == *c).unwrap())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A row's identity: its index columns, numbers as they are and text as [`key_text`].
@@ -142,16 +214,7 @@ fn import_table(
             return Err(missing(c.name));
         }
     }
-    let index_cols: Vec<usize> = t
-        .index
-        .as_ref()
-        .map(|i| {
-            i.columns
-                .iter()
-                .map(|c| t.columns.iter().position(|col| col.name == *c).unwrap())
-                .collect()
-        })
-        .unwrap_or_default();
+    let index_cols = index_columns(t);
 
     // the realm's records by key
     let mut targets: Vec<Target> = realm

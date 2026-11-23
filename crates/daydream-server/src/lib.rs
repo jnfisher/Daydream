@@ -1,9 +1,9 @@
 //! The Daydream server: serves a realm's records over HTTP to the web UI.
 //!
-//! It runs on the sysop's own machine and opens in the browser. For M1 it is read only: it
-//! lists the realm's files and serves each record decoded into the JSON the editors will
-//! use (every member by name, `unk_*` spans included). Editing arrives with the editors in
-//! M2, through [`daydream_store::WbtrvDb`]'s writes.
+//! It runs on the sysop's own machine and opens in the browser. `/` is the web UI (built
+//! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
+//! editors work on NMR's tables through the routes in [`tables`]; the routes below serve
+//! each file's records decoded (every member by name, `unk_*` spans included), read only.
 //!
 //! | Route | Answer |
 //! |---|---|
@@ -16,10 +16,11 @@
 //! bytes in base64.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
+use axum::http::header;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -28,6 +29,8 @@ use daydream_wcc::decode::base64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod tables;
+
 /// The largest page of records one request returns.
 pub const MAX_PAGE: i64 = 1000;
 
@@ -35,16 +38,30 @@ pub const MAX_PAGE: i64 = 1000;
 #[derive(Debug)]
 pub struct AppState {
     realm_dir: PathBuf,
+    /// Held by every write, so two saves never interleave.
+    write: Mutex<()>,
 }
 
 /// The router for the realm in `realm_dir`.
 pub fn router(realm_dir: &Path) -> Router {
     let state = Arc::new(AppState {
         realm_dir: realm_dir.to_path_buf(),
+        write: Mutex::new(()),
     });
     Router::new()
         .route("/", get(index))
+        .route("/app.js", get(app_js))
+        .route("/app.css", get(app_css))
         .route("/api/health", get(health))
+        .route("/api/tables", get(tables::tables))
+        .route("/api/tables/{table}/rows", get(tables::rows))
+        .route(
+            "/api/tables/{table}/row",
+            get(tables::row)
+                .put(tables::update)
+                .post(tables::insert)
+                .delete(tables::remove),
+        )
         .route("/api/realm", get(realm))
         .route("/api/files/{stem}/records", get(records))
         .route("/api/files/{stem}/records/{id}", get(record))
@@ -82,6 +99,20 @@ async fn blocking<T: Send + 'static>(
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("index.html"))
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("app.js"),
+    )
+}
+
+async fn app_css() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        include_str!("app.css"),
+    )
 }
 
 async fn health() -> Json<Value> {

@@ -116,3 +116,210 @@ async fn missing_things_are_404() {
         StatusCode::NOT_FOUND
     );
 }
+
+async fn send(dir: &std::path::Path, method: &str, uri: &str, body: Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let res = daydream_server::router(dir).oneshot(req).await.unwrap();
+    let status = res.status();
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// `?key=` for a key.
+fn key(k: Value) -> String {
+    let text = k.to_string();
+    let mut out = String::new();
+    for b in text.bytes() {
+        match b {
+            b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'-' | b'_' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn the_tables_are_nmrs() {
+    let dir = realm();
+    let (status, body) = get(dir.path(), "/api/tables").await;
+    assert_eq!(status, StatusCode::OK);
+    let tables = body["tables"].as_array().unwrap();
+    assert!(tables.iter().all(|t| t["name"] != "Info"));
+    let races = tables.iter().find(|t| t["name"] == "Races").unwrap();
+    assert_eq!(races["key"], serde_json::json!(["Number"]));
+    assert_eq!(races["title"], "Name");
+    assert_eq!(races["columns"][1]["name"], "Name");
+    assert_eq!(races["columns"][1]["type"], "text");
+    assert_eq!(races["columns"][1]["size"], 29);
+    let rooms = tables.iter().find(|t| t["name"] == "Rooms").unwrap();
+    assert_eq!(
+        rooms["key"],
+        serde_json::json!(["Map Number", "Room Number"])
+    );
+}
+
+#[tokio::test]
+async fn rows_list_their_keys_and_titles() {
+    let dir = realm();
+    let (status, body) = get(dir.path(), "/api/tables/races/rows").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["table"], "Races");
+    assert_eq!(
+        body["rows"],
+        serde_json::json!([[[1], "Human"], [[2], "Dwarf"]])
+    );
+    let (status, body) = get(
+        dir.path(),
+        &format!("/api/tables/Races/row?key={}", key(serde_json::json!([2]))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["key"], serde_json::json!([2]));
+    assert_eq!(body["values"]["Name"], "Dwarf");
+    assert_eq!(body["values"]["Number"], 2);
+}
+
+#[tokio::test]
+async fn a_save_changes_only_what_it_names() {
+    let dir = realm();
+    let k = key(serde_json::json!([1]));
+    let uri = format!("/api/tables/Races/row?key={k}");
+    let before = std::fs::read(dir.path().join("WCCRACE.db")).unwrap();
+    let (status, report) = send(
+        dir.path(),
+        "PUT",
+        &uri,
+        serde_json::json!({"values": {"Name": "Human"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["unchanged"], 1);
+    assert_eq!(
+        std::fs::read(dir.path().join("WCCRACE.db")).unwrap(),
+        before
+    );
+
+    let (status, report) = send(
+        dir.path(),
+        "PUT",
+        &uri,
+        serde_json::json!({"values": {"Name": "Elf", "Min INT": "40"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["updated"], 1);
+    let (_, body) = get(dir.path(), &uri).await;
+    assert_eq!(body["values"]["Name"], "Elf");
+    assert_eq!(body["values"]["Min INT"], 40);
+    // the other record is untouched
+    let (_, body) = get(dir.path(), "/api/files/WCCRACE/records/2").await;
+    assert_eq!(body["name"], "Dwarf");
+}
+
+#[tokio::test]
+async fn bad_saves_are_refused() {
+    let dir = realm();
+    let uri = format!("/api/tables/Races/row?key={}", key(serde_json::json!([1])));
+    let put = |body: Value| send(dir.path(), "PUT", &uri, body);
+    assert_eq!(
+        put(serde_json::json!({"values": {"Number": 5}})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        put(serde_json::json!({"values": {"Nope": 5}})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        put(serde_json::json!({"values": {"Min INT": "lots"}}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let long = "x".repeat(30);
+    assert_eq!(
+        put(serde_json::json!({"values": {"Name": long}})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    // too big for NMR's Integer
+    let (status, body) = put(serde_json::json!({"values": {"Min INT": 70000}})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let missing = format!("/api/tables/Races/row?key={}", key(serde_json::json!([9])));
+    assert_eq!(get(dir.path(), &missing).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get(dir.path(), "/api/tables/Info/rows").await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(dir.path(), "/api/tables/Races/row?key=%5B1,2%5D")
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn records_insert_and_delete() {
+    let dir = realm();
+    let (status, report) = send(
+        dir.path(),
+        "POST",
+        "/api/tables/Races/row",
+        serde_json::json!({"values": {"Number": 3, "Name": "Gnome"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{report}");
+    assert_eq!(report["inserted"], 1);
+    let (_, body) = get(dir.path(), "/api/tables/Races/rows").await;
+    assert_eq!(body["rows"][2], serde_json::json!([[3], "Gnome"]));
+
+    let again = send(
+        dir.path(),
+        "POST",
+        "/api/tables/Races/row",
+        serde_json::json!({"values": {"Number": 3}}),
+    )
+    .await;
+    assert_eq!(again.0, StatusCode::CONFLICT);
+    let keyless = send(
+        dir.path(),
+        "POST",
+        "/api/tables/Races/row",
+        serde_json::json!({"values": {}}),
+    )
+    .await;
+    assert_eq!(keyless.0, StatusCode::BAD_REQUEST);
+
+    let uri = format!("/api/tables/Races/row?key={}", key(serde_json::json!([3])));
+    let (status, report) = send(dir.path(), "DELETE", &uri, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["deleted"], 1);
+    assert_eq!(
+        send(dir.path(), "DELETE", &uri, Value::Null).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, body) = get(dir.path(), "/api/tables/Races/rows").await;
+    assert_eq!(body["rows"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn the_ui_is_served() {
+    let dir = realm();
+    for (uri, kind) in [
+        ("/", "text/html"),
+        ("/app.js", "text/javascript"),
+        ("/app.css", "text/css"),
+    ] {
+        let res = daydream_server::router(dir.path())
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "{uri}");
+        let ty = res.headers()["content-type"].to_str().unwrap().to_string();
+        assert!(ty.starts_with(kind), "{uri}: {ty}");
+    }
+}

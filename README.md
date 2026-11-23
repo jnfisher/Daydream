@@ -3,9 +3,10 @@
 A modern, cross-platform, web-based editor for MajorMUD 1.11p game data, built to replace
 Nightmare Redux (NMR).
 
-**Status: milestone M1 (foundation) in progress.** Daydream converts a realm's Btrieve files
-into its store, serves the records, decoded, to the browser, and moves a realm to and from
-NMR's `.mdb` export format. The editors arrive in M2.
+**Status: milestone M2 (the editors) in progress.** Daydream converts a realm's Btrieve files
+into its store, moves a realm to and from NMR's `.mdb` export format (real NMR imports what
+Daydream exports, byte for byte, in CI), and edits every table in the browser. The item
+editor is laid out as NMR's; the other tables use a generic layout until theirs land.
 The design is in [docs/approach.md](docs/approach.md).
 
 ## Goals
@@ -53,7 +54,8 @@ same files.
 |---|---|
 | `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file |
-| `crates/daydream-server` | The HTTP API the web UI uses |
+| `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
+| `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
 | `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns |
 | `crates/daydream-wcc` | The Btrieve reader and the 1.11p record decoders and encoders |
 | `crates/daydream-types` | Record types, enums, ids and byte layouts |
@@ -81,6 +83,13 @@ cargo test --workspace
 CI runs everything on each pull request that touches code, with the dependency builds, the
 stock package and the wbtrv32 build cached. A Windows job writes real `.mdb` files through
 Jet, reads them back and imports them; it runs when the code it covers changes, and nightly.
+
+The web UI's bundle (`crates/daydream-server/src/app.js`) is committed, so building the
+server needs no node. After changing `web/src`, rebuild it:
+
+```sh
+cd web && npm ci && npm run check && npm run build
+```
 
 ## License
 

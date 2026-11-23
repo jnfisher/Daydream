@@ -102,43 +102,68 @@ fn full_record(
 pub fn export(realm: &Realm, opts: &ExportOptions) -> Result<NmrData, ExportError> {
     let mut data = NmrData::default();
     for t in TABLES {
-        let mut rows = Vec::new();
-        match t.table {
-            Some(table) => {
-                let layout = layout_of(table, opts.layout);
-                for file in realm.files_of(table) {
-                    let db = WbtrvDb::open_read_only(&file.path)?;
-                    for (id, raw) in db.records()? {
-                        let record = full_record(
-                            &file.stem,
-                            id,
-                            raw,
-                            layout.len,
-                            table.is_variable_length(),
-                        )?;
-                        rows.push(row_of(t, layout, &record));
-                    }
-                }
-                sort_by_index(t, &mut rows);
-            }
-            None => rows.push(vec![
-                Value::Text(NMR_VERSION.to_string()),
-                Value::Text(DAT_VERSION.to_string()),
-                Value::Text(opts.date.clone()),
-                Value::Text(opts.time.clone()),
-                Value::Text(opts.custom.clone()),
-            ]),
-        }
-        data.tables.push(NmrRows {
-            name: t.name.to_string(),
-            columns: t.columns.iter().map(|c| c.name.to_string()).collect(),
-            rows,
-        });
+        let rows = match t.table {
+            Some(_) => export_table(realm, t, opts.layout)?,
+            None => NmrRows {
+                name: t.name.to_string(),
+                columns: t.columns.iter().map(|c| c.name.to_string()).collect(),
+                rows: vec![vec![
+                    Value::Text(NMR_VERSION.to_string()),
+                    Value::Text(DAT_VERSION.to_string()),
+                    Value::Text(opts.date.clone()),
+                    Value::Text(opts.time.clone()),
+                    Value::Text(opts.custom.clone()),
+                ]],
+            },
+        };
+        data.tables.push(rows);
     }
     if opts.zero_runtime {
         zero_runtime(&mut data);
     }
     Ok(data)
+}
+
+/// One world table of the realm as NMR exports it (no runtime zeroing), rows in index
+/// order. The `Info` table has no records and comes back empty.
+pub fn export_table(
+    realm: &Realm,
+    t: &NmrTable,
+    layout: LayoutSet,
+) -> Result<NmrRows, ExportError> {
+    let mut rows = Vec::new();
+    if let Some(table) = t.table {
+        let layout = layout_of(table, layout);
+        for file in realm.files_of(table) {
+            let db = WbtrvDb::open_read_only(&file.path)?;
+            for (id, raw) in db.records()? {
+                let record =
+                    full_record(&file.stem, id, raw, layout.len, table.is_variable_length())?;
+                rows.push(row_of(t, layout, &record));
+            }
+        }
+        sort_by_index(t, &mut rows);
+    }
+    Ok(NmrRows {
+        name: t.name.to_string(),
+        columns: t.columns.iter().map(|c| c.name.to_string()).collect(),
+        rows,
+    })
+}
+
+/// The record layouts of a realm's files: Worldgroup 3 when it holds any Worldgroup file
+/// (`WCCITEM2`, ...), else DOS.
+pub fn layout_of_realm(realm: &Realm) -> LayoutSet {
+    let wg = realm.files().iter().any(|f| {
+        daydream_wcc::tables::WORLDGROUP_FILES
+            .iter()
+            .any(|w| w.stem == f.stem)
+    });
+    if wg {
+        LayoutSet::Worldgroup
+    } else {
+        LayoutSet::Dos
+    }
 }
 
 /// The rows of a table sorted by its index columns, as NMR walks the Btrieve file.
