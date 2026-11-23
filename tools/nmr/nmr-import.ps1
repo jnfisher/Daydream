@@ -226,11 +226,12 @@ $result = 1
 try {
     Mark 'start NMR'
 
-    # Ready when the main window is up, enabled, and nothing else is (the splash is gone)
+    # Ready when the main window is up and enabled, and no form or message box (the splash) is
     $main = Wait-For 'the main window' $proc {
         $top = [W]::TopLevel([uint32]$proc.Id)
         $m = $top | Where-Object { [W]::Class($_) -eq 'ThunderRT6MDIForm' } | Select-Object -First 1
-        if ($m -and $top.Count -eq 1 -and [W]::IsWindowEnabled($m)) { $m }
+        $other = $top | Where-Object { [W]::Class($_) -in '#32770', 'ThunderRT6FormDC' }
+        if ($m -and -not $other -and [W]::IsWindowEnabled($m)) { $m }
     }
     Mark "NMR open ($([W]::Text($main)))"
 
