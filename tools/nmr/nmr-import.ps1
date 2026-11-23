@@ -242,16 +242,14 @@ try {
     $importer = Wait-For 'the Database Importer' $proc {
         [W]::Children($main) | Where-Object { [W]::Text($_) -eq 'Database Importer' } | Select-Object -First 1
     } 30
-    $importer = [IntPtr]$importer
-    $controls = [W]::Children($importer)
-    $button = { param($caption) $controls | Where-Object { [W]::Class($_) -like '*CommandButton' -and [W]::Text($_) -eq $caption } | Select-Object -First 1 }
-    $list = $controls | Where-Object { [W]::Class($_) -like '*FileListBox' } | Select-Object -First 1
-    if (-not $list) {
-        $controls | ForEach-Object { Write-Host ("  control {0} '{1}'" -f [W]::Class($_), [W]::Text($_)) }
-        Shot 'no file list'
-        throw 'the importer has no file list'
-    }
+    # The form shows before Form_Load has made all its controls; wait for the file list
+    $list = Wait-For 'the importer''s file list' $proc {
+        [W]::Children([IntPtr]$importer) | Where-Object { [W]::Class($_) -like '*FileListBox' } | Select-Object -First 1
+    } 30
     $list = [IntPtr]$list
+    Start-Sleep -Milliseconds 500
+    $controls = [W]::Children([IntPtr]$importer)
+    $button = { param($caption) $controls | Where-Object { [W]::Class($_) -like '*CommandButton' -and [W]::Text($_) -eq $caption } | Select-Object -First 1 }
     $name = Split-Path $Mdb -Leaf
     Wait-For "$name in the file list" $proc { ([W]::ListItems($list)) -contains $name } 10 | Out-Null
     $items = @([W]::ListItems($list))
