@@ -195,3 +195,9 @@ select.change-list { width: 100%; font: 13px/1.3 ui-monospace, "Cascadia Mono", 
 .map-pad button.has-exit { border-color: var(--accent); color: var(--accent); }
 .map-build-form .num { width: 5rem; }
 .map-build-form label { margin-right: .75rem; }
+
+/* NMR's Paste Character */
+.paste-dialog textarea {
+  width: min(70ch, 80vw);
+  font-family: ui-monospace, monospace;
+}

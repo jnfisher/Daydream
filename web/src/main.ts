@@ -9,6 +9,7 @@ import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './l
 import { listsPage } from './lists';
 import { mapPage } from './map';
 import { toolsPage } from './tools';
+import { parseStats } from './users';
 
 /** The editors' tables, in NMR's menu order. */
 const ORDER = ['Items', 'Monsters', 'Spells', 'Classes', 'Races', 'Shops', 'Rooms', 'Messages', 'Textblocks', 'Actions', 'Users', 'BankBooks', 'Gangs'];
@@ -394,6 +395,7 @@ function toolbar(t: TableInfo): HTMLElement {
   }
   if (state.row && t.name === 'Users') {
     button('Revive', 'NMR\'s Revive Character: HP and Mana to full, then lives, spells cast and where to move them', () => void revive());
+    button('Paste Stats', 'NMR\'s Paste Character: read a capture of the game\'s stat output into the fields', () => void pasteStats());
   }
   bar.append(h('span', { id: 'dirty' }));
   return bar;
@@ -477,6 +479,38 @@ async function revive() {
   } catch (e) {
     fail(e);
   }
+}
+
+/** NMR's Paste Character: the capture goes into the fields, to be saved as any edit. */
+async function pasteStats() {
+  const text = h('textarea', { rows: '14', cols: '80', spellcheck: 'false', 'aria-label': 'Stat capture' });
+  const ok = h('button', { type: 'submit', value: 'ok', class: 'primary' }, 'Paste');
+  const cancel = h('button', { type: 'submit', value: 'cancel' }, 'Cancel');
+  const form = h(
+    'form',
+    { method: 'dialog' },
+    h('p', {}, "Paste a capture of a character's stat output (or MMUD Explorer's Copy Only Stats). Class, race, level, exp, lives, CP, HP, mana and the six stats are read."),
+    text,
+    h('div', { class: 'toolbar' }, ok, cancel),
+  );
+  const dialog = h('dialog', { class: 'paste-dialog' }, form);
+  document.body.append(dialog);
+  dialog.showModal();
+  const answer = await new Promise<string>((done) => dialog.addEventListener('close', () => done(dialog.returnValue), { once: true }));
+  dialog.remove();
+  if (answer !== 'ok' || text.value.trim().length < 10) return;
+  const { values, race, cls } = parseStats(text.value);
+  for (const [table, name, col] of [
+    ['Races', race, 'Race'],
+    ['Classes', cls, 'Class'],
+  ] as const) {
+    if (!name) continue;
+    for (const [n, title] of await names(table)) if (title === name) values[col] = String(n);
+  }
+  for (const [col, v] of Object.entries(values)) state.edits.set(col, v);
+  renderEditor();
+  const n = Object.keys(values).length;
+  status(n ? `Pasted ${n} fields; save to keep them.` : 'Nothing in the paste was recognised.', n ? 'ok' : 'error');
 }
 
 function select(key: Cell[]) {

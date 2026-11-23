@@ -2897,6 +2897,73 @@ function toolsPage(changed2) {
   return page;
 }
 
+// src/users.ts
+function nextNumber(text, at) {
+  let start = at;
+  let y = at;
+  for (; y < text.length; y++) {
+    const c = text[y];
+    if (c === "*") start = y + 1;
+    else if (!/[0-9 ]/.test(c)) break;
+  }
+  if (y <= start) return "";
+  const digits = text.slice(start, y).replace(/ /g, "");
+  return digits === "" ? "0" : String(Number(digits));
+}
+function nameAfter(text, label, next) {
+  const i = text.indexOf(label);
+  if (i < 0) return "";
+  const x = i + label.length;
+  let y = text.indexOf(next, x);
+  if (y > x + 15 || y >= 0 && text.slice(x, y).trim().includes("\n")) y = -1;
+  if (y < 0) y = text.indexOf("\r", x);
+  if (y < 0) y = text.indexOf("\n", x);
+  return y > x ? text.slice(x, y).trim() : "";
+}
+function parseStats(text) {
+  const values = {};
+  const take = (label, columns, min = 1) => {
+    const i = text.indexOf(label);
+    if (i < 0) return;
+    const n = nextNumber(text, i + label.length);
+    if (n === "" || Number(n) < min) return;
+    for (const c of columns) values[c] = n;
+  };
+  for (const [label, stat] of [
+    ["Intellect: ", "INT"],
+    ["Willpower: ", "WIL"],
+    ["Strength: ", "STR"],
+    ["Health: ", "HEA"],
+    ["Agility: ", "AGL"],
+    ["Charm: ", "CHM"]
+  ]) {
+    take(label, [`Base ${stat}`, stat]);
+  }
+  const exp = text.indexOf("Exp: ");
+  if (exp >= 0) {
+    const n = nextNumber(text, exp + 5);
+    if (n !== "") {
+      const e = Number(n);
+      values["Exp Billions"] = String(Math.floor(e / 1e9));
+      values["Exp"] = String(e % 1e9);
+    }
+  }
+  take("Level: ", ["Level"]);
+  take("Hits: ", ["HP"]);
+  take("Mana: ", ["Mana"]);
+  take("Kai: ", ["Mana"]);
+  take("Lives/CP:", ["Lives"]);
+  const cp = text.indexOf("CP:");
+  if (cp >= 0) {
+    const slash = text.indexOf("/", cp + 3);
+    if (slash >= 0 && slash + 1 < text.length) {
+      const n = nextNumber(text, slash + 1);
+      if (n !== "") values["CP"] = n;
+    }
+  }
+  return { values, race: nameAfter(text, "Race: ", "Exp:"), cls: nameAfter(text, "Class: ", "Level:") };
+}
+
 // src/main.ts
 var ORDER = ["Items", "Monsters", "Spells", "Classes", "Races", "Shops", "Rooms", "Messages", "Textblocks", "Actions", "Users", "BankBooks", "Gangs"];
 var LIST_LIMIT = 500;
@@ -3222,6 +3289,7 @@ function toolbar(t2) {
   }
   if (state.row && t2.name === "Users") {
     button("Revive", "NMR's Revive Character: HP and Mana to full, then lives, spells cast and where to move them", () => void revive());
+    button("Paste Stats", "NMR's Paste Character: read a capture of the game's stat output into the fields", () => void pasteStats());
   }
   bar.append(h8("span", { id: "dirty" }));
   return bar;
@@ -3298,6 +3366,36 @@ async function revive() {
   } catch (e) {
     fail(e);
   }
+}
+async function pasteStats() {
+  const text = h8("textarea", { rows: "14", cols: "80", spellcheck: "false", "aria-label": "Stat capture" });
+  const ok = h8("button", { type: "submit", value: "ok", class: "primary" }, "Paste");
+  const cancel = h8("button", { type: "submit", value: "cancel" }, "Cancel");
+  const form = h8(
+    "form",
+    { method: "dialog" },
+    h8("p", {}, "Paste a capture of a character's stat output (or MMUD Explorer's Copy Only Stats). Class, race, level, exp, lives, CP, HP, mana and the six stats are read."),
+    text,
+    h8("div", { class: "toolbar" }, ok, cancel)
+  );
+  const dialog = h8("dialog", { class: "paste-dialog" }, form);
+  document.body.append(dialog);
+  dialog.showModal();
+  const answer = await new Promise((done) => dialog.addEventListener("close", () => done(dialog.returnValue), { once: true }));
+  dialog.remove();
+  if (answer !== "ok" || text.value.trim().length < 10) return;
+  const { values, race, cls } = parseStats(text.value);
+  for (const [table, name, col] of [
+    ["Races", race, "Race"],
+    ["Classes", cls, "Class"]
+  ]) {
+    if (!name) continue;
+    for (const [n2, title] of await names(table)) if (title === name) values[col] = String(n2);
+  }
+  for (const [col, v] of Object.entries(values)) state.edits.set(col, v);
+  renderEditor();
+  const n = Object.keys(values).length;
+  status(n ? `Pasted ${n} fields; save to keep them.` : "Nothing in the paste was recognised.", n ? "ok" : "error");
 }
 function select(key) {
   if (!state.table || state.row && sameKey(state.row.key, key)) return;
