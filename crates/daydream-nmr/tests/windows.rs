@@ -89,7 +89,7 @@ fn stock_mme_export_through_jet() {
         daydream_nmr::mme::export(&realm, daydream_nmr::layout_of_realm(&realm), &opts).unwrap();
     let out = tempfile::tempdir().unwrap();
     let file = out.path().join("data.mdb");
-    jet::write_mdb(&data, &file).unwrap();
+    jet::write_plan_mdb(&daydream_nmr::mme::plan(&data), &file).unwrap();
     let names: Vec<&str> = data.tables.iter().map(|t| t.name.as_str()).collect();
     let read = mdb::read_tables(&file, &names).unwrap();
     // a whole number in a Double column may come back as either

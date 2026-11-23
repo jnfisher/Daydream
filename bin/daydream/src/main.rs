@@ -456,9 +456,9 @@ fn mme_export(
     if json {
         std::fs::write(out, serde_json::to_vec(&data)?)?;
     } else if plan {
-        daydream_nmr::jet::write_plan(&data, out)?;
+        std::fs::write(out, daydream_nmr::mme::plan(&data))?;
     } else {
-        daydream_nmr::jet::write_mdb(&data, out)?;
+        daydream_nmr::jet::write_plan_mdb(&daydream_nmr::mme::plan(&data), out)?;
     }
     for t in &data.tables {
         println!("{}: {} rows", t.name, t.rows.len());
