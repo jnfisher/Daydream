@@ -53,7 +53,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     env:
-      DAYDREAM_STOCK_CACHE: ${{ github.workspace }}\..\stock-cache
+      DAYDREAM_STOCK_CACHE: ${{ github.workspace }}\_stock-cache
       DAYDREAM_BTRIEVE_DIR: ${{ github.workspace }}\_nmr
     steps:
       - uses: actions/checkout@v4
