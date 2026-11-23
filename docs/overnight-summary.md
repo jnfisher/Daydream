@@ -10,15 +10,18 @@ revisited. Pull requests merged once CI was green.
   imports about 8,600 cases Daydream wrote to a `.mdb`, and the realm it writes is byte for
   byte the realm Daydream's own import (in NMR mode) writes. The Windows job takes about
   4 minutes.
-- **M2 has started.** The browser editors work on every table, saving through the same
-  import an NMR `.mdb` goes through.
+- **M2: every editor is in.** Items, monsters, spells, classes, races, shops, rooms,
+  messages, text blocks and actions each follow their NMR form's tabs, labels and choice
+  lists, and save through the same import an NMR `.mdb` goes through. Messages and text
+  blocks show a preview in a terminal's ANSI colours.
 
 ## Pull requests
 
 | PR | What | State |
 |---|---|---|
 | #5 | M1 gate: real NMR in CI | merged (before the night began) |
-| M2 A | Editor API and web UI, item editor as NMR's | this PR |
+| #6 | M2: editor API and web UI, item editor as NMR's | merged 04:22Z (squash df539c4) |
+| #7 | M2: every other editor laid out as NMR's, ANSI preview | open |
 
 ## Decisions taken
 
@@ -42,6 +45,15 @@ revisited. Pull requests merged once CI was green.
    read only. Insert saves the current record, asks for the new key (the next free number
    offered), and makes the new record a copy of the current one, which is what NMR's Insert
    does (`frmItem.cmdInsert_Click`).
+
+6. **The editors' choice lists are NMR's own.** They were read out of NMR's form resources
+   (`.frx`) and its `Get*` label functions, so a value reads the same as in NMR. Values NMR has
+   no name for show as "(unknown)" and are kept.
+7. **ESC in text shows as ␛.** Text blocks and messages carry ANSI colour escapes; in the
+   editors ESC shows as ␛, which can be typed or pasted, and is turned back into ESC on save.
+   Row lists show text without escapes.
+8. **PRs B and C went up together** (#7): both were UI layouts on the same code, so one CI run
+   (the Windows job is the slow one) covered them.
 
 ## Known gaps
 

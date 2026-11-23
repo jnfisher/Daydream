@@ -192,6 +192,71 @@ var ABILITIES = {
   90: ["KickACY", "believed to alter kick accuracy value"]
 };
 
+// src/ansi.ts
+var ESC_SHOWN = "\u241B";
+var toShown = (s) => s.replaceAll("\x1B", ESC_SHOWN);
+var toWire = (s) => s.replaceAll(ESC_SHOWN, "\x1B");
+var COLOURS = [
+  "#000000",
+  "#aa0000",
+  "#00aa00",
+  "#aa5500",
+  "#0000aa",
+  "#aa00aa",
+  "#00aaaa",
+  "#aaaaaa",
+  "#555555",
+  "#ff5555",
+  "#55ff55",
+  "#ffff55",
+  "#5555ff",
+  "#ff55ff",
+  "#55ffff",
+  "#ffffff"
+];
+function renderAnsi(text) {
+  const out = document.createDocumentFragment();
+  const pen = { fg: 7, bg: 0, bold: false };
+  const s = toWire(text);
+  let run = "";
+  const flush = () => {
+    if (!run) return;
+    const span = document.createElement("span");
+    span.textContent = run;
+    span.style.color = COLOURS[pen.fg + (pen.bold ? 8 : 0)] ?? COLOURS[7];
+    if (pen.bg) span.style.backgroundColor = COLOURS[pen.bg] ?? "";
+    out.append(span);
+    run = "";
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c !== "\x1B") {
+      if (c !== "\r") run += c;
+      continue;
+    }
+    const m = /^\[([0-9;]*)([A-Za-z])/.exec(s.slice(i + 1));
+    if (!m) continue;
+    i += m[0].length;
+    if (m[2] !== "m") continue;
+    flush();
+    const codes = (m[1] || "0").split(";").map((x) => Number(x || 0));
+    for (const code of codes) {
+      if (code === 0) Object.assign(pen, { fg: 7, bg: 0, bold: false });
+      else if (code === 1) pen.bold = true;
+      else if (code === 22) pen.bold = false;
+      else if (code >= 30 && code <= 37) pen.fg = code - 30;
+      else if (code >= 40 && code <= 47) pen.bg = code - 40;
+    }
+  }
+  flush();
+  return out;
+}
+function titleOf(text) {
+  const line = toWire(text).split(/[\0\r\n]/).find((l) => l.trim()) ?? "";
+  const clean = line.replace(/\x1b\[[0-9;]*[A-Za-z]?/g, "").trim();
+  return clean.length > 60 ? `${clean.slice(0, 60)}...` : clean;
+}
+
 // src/api.ts
 var ApiError = class extends Error {
   constructor(status2, message) {
@@ -353,6 +418,35 @@ var RESIST_ABILITY = list("Magic Resistance", "Strength", "Agility", "Health", "
 var ELEMENT = list("Cold", "Hot", "Stone", "Lightning", "Normal", "Water", "Poison");
 var RESISTS = list("Never", "Anti-Magic Only", "Everyone");
 var YES_NO = list("Yes", "No");
+var ROOM_TYPE = list("Normal", "Shop", "Arena", "Lair", "Hotel", "Colliseum", "Jail", "Library");
+var EXIT_TYPE = list(
+  "Normal",
+  "Spell",
+  "Key",
+  "Item",
+  "Toll",
+  "Action",
+  "Hidden",
+  "Door",
+  "map Change",
+  "Trap",
+  "Text",
+  "Gate",
+  "Remote Action",
+  "Class",
+  "Race",
+  "Level",
+  "Timed",
+  "Ticket",
+  "User Count",
+  "Block Guard",
+  "Alignment",
+  "Delay",
+  "Cast",
+  "Ability",
+  "Spell Trap"
+);
+var EXITS = ["N", "S", "E", "W", "NE", "NW", "SE", "SW", "U", "D"];
 var SHOP_TYPE = list(
   "General",
   "Weapons",
@@ -651,6 +745,139 @@ var LAYOUTS = {
         to: 19
       }
     }
+  ],
+  // frmRoom
+  Rooms: [
+    {
+      title: "General",
+      fields: [
+        f("Map Number"),
+        f("Room Number"),
+        wide("Name"),
+        wide("Desc 0", "Description"),
+        wide("Desc 1", ""),
+        wide("Desc 2", ""),
+        wide("Desc 3", ""),
+        wide("Desc 4", ""),
+        wide("Desc 5", ""),
+        wide("Desc 6", ""),
+        f("Type", "Type", { options: ROOM_TYPE }),
+        f("Shop Number", "Shop", { ref: "Shops" }),
+        f("Gang House Number", "Gang House"),
+        f("Light"),
+        f("AnsiMap", "ANSI Map"),
+        f("Attributes")
+      ]
+    },
+    {
+      title: "Exits",
+      grid: {
+        columns: [
+          { template: "Exit #", label: "To Room" },
+          { template: "Type #", label: "Type", pick: { options: EXIT_TYPE } },
+          { template: "Para1 #", label: "Para 1" },
+          { template: "Para2 #", label: "Para 2" },
+          { template: "Para3 #", label: "Para 3" },
+          { template: "Para4 #", label: "Para 4" }
+        ],
+        from: 0,
+        to: 9,
+        names: EXITS
+      }
+    },
+    {
+      title: "NPC / Items / Coins",
+      fields: [
+        f("Perm NPC", "Perm NPC", { ref: "Monsters" }),
+        f("Mon Type", "Monster Type", { options: MONSTER_GROUP }),
+        f("Min Index"),
+        f("Max Index"),
+        f("Max Regen"),
+        f("Max Area"),
+        f("Runic"),
+        f("Platinum"),
+        f("Gold"),
+        f("Silver"),
+        f("Copper"),
+        f("InvisRunic", "Hidden Runic"),
+        f("InvisPlatinum", "Hidden Platinum"),
+        f("InvisGold", "Hidden Gold"),
+        f("InvisSilver", "Hidden Silver"),
+        f("InvisCopper", "Hidden Copper")
+      ],
+      grid: { columns: [{ template: "Placed Item #", label: "Placed Item", pick: { ref: "Items" } }], from: 0, to: 9 }
+    },
+    {
+      title: "Visible Items",
+      grid: {
+        columns: [
+          { template: "Room Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Room Item # USES", label: "Uses" },
+          { template: "Room Item # QTY", label: "Qty" }
+        ],
+        from: 0,
+        to: 16
+      }
+    },
+    {
+      title: "Hidden Items",
+      grid: {
+        columns: [
+          { template: "Hidden Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Hidden Item # USES", label: "Uses" },
+          { template: "Hidden Item # QTY", label: "Qty" }
+        ],
+        from: 0,
+        to: 14
+      }
+    },
+    {
+      title: "Other",
+      fields: [
+        f("Control Room"),
+        f("Death Room"),
+        f("Exit Room"),
+        f("Command Text"),
+        f("Delay"),
+        f("Spell", "Spell", { ref: "Spells" })
+      ]
+    }
+  ],
+  // frmMessage
+  Messages: [
+    {
+      title: "General",
+      fields: [f("Number"), wide("Line 1"), wide("Line 2"), wide("Line 3")],
+      preview: ["Line 1", "Line 2", "Line 3"]
+    }
+  ],
+  // frmTextblock
+  Textblocks: [
+    {
+      title: "General",
+      fields: [f("Number"), f("Part #", "Part"), f("Link To", "Link To"), wide("Data", "Text")],
+      preview: ["Data"]
+    }
+  ],
+  // frmAction
+  Actions: [
+    {
+      title: "General",
+      fields: [
+        f("Action"),
+        wide("Single to User"),
+        wide("Single to Room"),
+        wide("User to User"),
+        wide("User to Other User"),
+        wide("User to Room"),
+        wide("Monster to User"),
+        wide("Monster to Room"),
+        wide("Inventory to User"),
+        wide("Inventory to Room"),
+        wide("Floor Item to User"),
+        wide("Floor Item to Room")
+      ]
+    }
   ]
 };
 function families(t2) {
@@ -747,7 +974,7 @@ function h(tag, props = {}, ...children) {
   for (const c of children) if (c !== null) el.append(c);
   return el;
 }
-var show = (v) => v === null ? "" : String(v);
+var show = (v) => v === null ? "" : toShown(String(v));
 var keyText = (key) => key.map(show).join("/");
 var sameKey = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function status(text, kind = "info") {
@@ -765,7 +992,7 @@ function changed() {
   const out = {};
   if (!state.row) return out;
   for (const [col, typed] of state.edits) {
-    if (typed !== show(state.row.values[col] ?? null)) out[col] = typed;
+    if (typed !== show(state.row.values[col] ?? null)) out[col] = toWire(typed);
   }
   return out;
 }
@@ -894,6 +1121,19 @@ function renderTab(tabIndex) {
     for (const field of tab.fields) grid.append(renderField(field));
     body.append(grid);
   }
+  if (tab.preview) {
+    const box = h("pre", { class: "terminal", "aria-label": "Preview" });
+    const draw = () => {
+      box.replaceChildren();
+      tab.preview.forEach((col, i) => {
+        if (i) box.append("\n");
+        box.append(renderAnsi(state.edits.get(col) ?? ""));
+      });
+    };
+    draw();
+    body.addEventListener("input", draw);
+    body.append(h("div", { class: "preview-label" }, "As players see it"), box);
+  }
   if (tab.matrix) {
     const m = tab.matrix;
     const table = h("table", { class: "grid matrix" });
@@ -939,7 +1179,7 @@ function renderTab(tabIndex) {
     table.append(h("thead", {}, head));
     const tbody = h("tbody");
     for (let n = g.from; n <= g.to; n++) {
-      const tr = h("tr", {}, h("td", { class: "n" }, String(n)));
+      const tr = h("tr", {}, h("td", { class: "n" }, g.names?.[n - g.from] ?? String(n)));
       for (const c of g.columns) {
         const col = c.template.replace("#", String(n));
         const info = column(col);
@@ -962,7 +1202,7 @@ function renderEditor() {
     ed.append(toolbar(t2));
     return;
   }
-  const title = t2.title ? show(state.row.values[t2.title] ?? null).trimEnd() : "";
+  const title = t2.title ? titleOf(show(state.row.values[t2.title] ?? null)) : "";
   ed.append(h("h2", {}, `${t2.name} ${keyText(state.row.key)}`, title ? ` \u2014 ${title}` : ""));
   ed.append(toolbar(t2));
   const tabs = h("div", { class: "tabs", role: "tablist" });
@@ -1005,7 +1245,7 @@ async function openTable(name, key) {
     state.table = t2;
     const layout = layoutFor(t2);
     const rest = t2.columns.map((c) => c.name).filter((c) => !columnsShown(layout).has(c));
-    state.layout = rest.length ? [...layout, { title: "Other", fields: rest.map((col) => ({ col })) }] : layout;
+    state.layout = rest.length ? [...layout, { title: "More", fields: rest.map((col) => ({ col })) }] : layout;
     state.tab = 0;
     state.row = null;
     state.filter = "";
@@ -1050,7 +1290,10 @@ async function save() {
     state.row = await api.row(t2.name, row.key);
     loadEdits(state.row);
     const i = state.rows.findIndex(([k2]) => sameKey(k2, row.key));
-    if (i >= 0 && t2.title) state.rows[i] = [row.key, state.row.values[t2.title] ?? null];
+    if (i >= 0 && t2.title) {
+      const v = state.row.values[t2.title] ?? null;
+      state.rows[i] = [row.key, typeof v === "string" ? titleOf(v) : v];
+    }
     state.names.delete(t2.name);
     renderList();
     renderEditor();
@@ -1094,7 +1337,8 @@ async function insert() {
   if (dirty()) return;
   const key = newKey(t2);
   if (!key) return;
-  const values = state.row ? Object.fromEntries(state.edits) : {};
+  const values = {};
+  if (state.row) for (const [col, typed] of state.edits) values[col] = toWire(typed);
   t2.key.forEach((c, i) => values[c] = key[i] ?? null);
   try {
     await api.insert(t2.name, values);

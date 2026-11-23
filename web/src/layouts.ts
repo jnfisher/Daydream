@@ -29,6 +29,8 @@ export interface Grid {
   to: number;
   /** One row per template and one column per number, headed with this and the number. */
   across?: string;
+  /** Names for the numbers, from `from` on (exit directions). */
+  names?: string[];
 }
 
 /** Columns that pair up as a small table: a row per label, a cell per header. */
@@ -42,6 +44,8 @@ export interface Tab {
   fields?: Field[];
   grid?: Grid;
   matrix?: Matrix;
+  /** Columns shown below, as a terminal shows them (ANSI colours), one after another. */
+  preview?: string[];
 }
 
 export type Layout = Tab[];
@@ -95,6 +99,14 @@ export const RESIST_ABILITY = list('Magic Resistance', 'Strength', 'Agility', 'H
 export const ELEMENT = list('Cold', 'Hot', 'Stone', 'Lightning', 'Normal', 'Water', 'Poison');
 export const RESISTS = list('Never', 'Anti-Magic Only', 'Everyone');
 export const YES_NO = list('Yes', 'No');
+export const ROOM_TYPE = list('Normal', 'Shop', 'Arena', 'Lair', 'Hotel', 'Colliseum', 'Jail', 'Library');
+export const EXIT_TYPE = list(
+  'Normal', 'Spell', 'Key', 'Item', 'Toll', 'Action', 'Hidden', 'Door', 'map Change', 'Trap', 'Text',
+  'Gate', 'Remote Action', 'Class', 'Race', 'Level', 'Timed', 'Ticket', 'User Count', 'Block Guard',
+  'Alignment', 'Delay', 'Cast', 'Ability', 'Spell Trap',
+);
+/** Exit directions by exit number (GetFriendlyRoomExit). */
+export const EXITS = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW', 'U', 'D'];
 export const SHOP_TYPE = list(
   'General', 'Weapons', 'Armour', 'Items', 'Spells', 'Hospital', 'Tavern', 'Bank', 'Training',
   'Inn', 'Specific', 'Gang Shop', 'Deed Shop',
@@ -302,6 +314,104 @@ export const LAYOUTS: Record<string, Layout> = {
         from: 0,
         to: 19,
       },
+    },
+  ],
+  // frmRoom
+  Rooms: [
+    {
+      title: 'General',
+      fields: [
+        f('Map Number'), f('Room Number'), wide('Name'), wide('Desc 0', 'Description'), wide('Desc 1', ''),
+        wide('Desc 2', ''), wide('Desc 3', ''), wide('Desc 4', ''), wide('Desc 5', ''), wide('Desc 6', ''),
+        f('Type', 'Type', { options: ROOM_TYPE }), f('Shop Number', 'Shop', { ref: 'Shops' }),
+        f('Gang House Number', 'Gang House'), f('Light'), f('AnsiMap', 'ANSI Map'), f('Attributes'),
+      ],
+    },
+    {
+      title: 'Exits',
+      grid: {
+        columns: [
+          { template: 'Exit #', label: 'To Room' },
+          { template: 'Type #', label: 'Type', pick: { options: EXIT_TYPE } },
+          { template: 'Para1 #', label: 'Para 1' },
+          { template: 'Para2 #', label: 'Para 2' },
+          { template: 'Para3 #', label: 'Para 3' },
+          { template: 'Para4 #', label: 'Para 4' },
+        ],
+        from: 0,
+        to: 9,
+        names: EXITS,
+      },
+    },
+    {
+      title: 'NPC / Items / Coins',
+      fields: [
+        f('Perm NPC', 'Perm NPC', { ref: 'Monsters' }), f('Mon Type', 'Monster Type', { options: MONSTER_GROUP }),
+        f('Min Index'), f('Max Index'), f('Max Regen'), f('Max Area'), f('Runic'), f('Platinum'),
+        f('Gold'), f('Silver'), f('Copper'), f('InvisRunic', 'Hidden Runic'),
+        f('InvisPlatinum', 'Hidden Platinum'), f('InvisGold', 'Hidden Gold'),
+        f('InvisSilver', 'Hidden Silver'), f('InvisCopper', 'Hidden Copper'),
+      ],
+      grid: { columns: [{ template: 'Placed Item #', label: 'Placed Item', pick: { ref: 'Items' } }], from: 0, to: 9 },
+    },
+    {
+      title: 'Visible Items',
+      grid: {
+        columns: [
+          { template: 'Room Item #', label: 'Item', pick: { ref: 'Items' } },
+          { template: 'Room Item # USES', label: 'Uses' },
+          { template: 'Room Item # QTY', label: 'Qty' },
+        ],
+        from: 0,
+        to: 16,
+      },
+    },
+    {
+      title: 'Hidden Items',
+      grid: {
+        columns: [
+          { template: 'Hidden Item #', label: 'Item', pick: { ref: 'Items' } },
+          { template: 'Hidden Item # USES', label: 'Uses' },
+          { template: 'Hidden Item # QTY', label: 'Qty' },
+        ],
+        from: 0,
+        to: 14,
+      },
+    },
+    {
+      title: 'Other',
+      fields: [
+        f('Control Room'), f('Death Room'), f('Exit Room'), f('Command Text'), f('Delay'),
+        f('Spell', 'Spell', { ref: 'Spells' }),
+      ],
+    },
+  ],
+  // frmMessage
+  Messages: [
+    {
+      title: 'General',
+      fields: [f('Number'), wide('Line 1'), wide('Line 2'), wide('Line 3')],
+      preview: ['Line 1', 'Line 2', 'Line 3'],
+    },
+  ],
+  // frmTextblock
+  Textblocks: [
+    {
+      title: 'General',
+      fields: [f('Number'), f('Part #', 'Part'), f('Link To', 'Link To'), wide('Data', 'Text')],
+      preview: ['Data'],
+    },
+  ],
+  // frmAction
+  Actions: [
+    {
+      title: 'General',
+      fields: [
+        f('Action'), wide('Single to User'), wide('Single to Room'), wide('User to User'),
+        wide('User to Other User'), wide('User to Room'), wide('Monster to User'),
+        wide('Monster to Room'), wide('Inventory to User'), wide('Inventory to Room'),
+        wide('Floor Item to User'), wide('Floor Item to Room'),
+      ],
     },
   ],
 };
