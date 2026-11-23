@@ -33,6 +33,13 @@ pub enum MdbError {
 /// Every NMR table the file has (Rooms, Items, ..., Info), rows in file order. Tables the
 /// file lacks are left out; other tables in it are ignored.
 pub fn read(path: &Path) -> Result<NmrData, MdbError> {
+    let names: Vec<&str> = TABLES.iter().map(|t| t.name).collect();
+    read_tables(path, &names)
+}
+
+/// The tables named `wanted` that the file has (any case), as `wanted` names them, rows in
+/// file order: for other `.mdb`s, such as MME's.
+pub fn read_tables(path: &Path, wanted: &[&str]) -> Result<NmrData, MdbError> {
     let p = path.display().to_string();
     let bytes = std::fs::read(path).map_err(|source| MdbError::Io {
         path: p.clone(),
@@ -50,8 +57,8 @@ pub fn read(path: &Path) -> Result<NmrData, MdbError> {
         .map(|e| e.name)
         .collect();
     let mut data = NmrData::default();
-    for t in TABLES {
-        let Some(name) = names.iter().find(|n| n.eq_ignore_ascii_case(t.name)) else {
+    for &want in wanted {
+        let Some(name) = names.iter().find(|n| n.eq_ignore_ascii_case(want)) else {
             continue;
         };
         let table = reader.open_table(name).map_err(jet)?;
@@ -77,7 +84,7 @@ pub fn read(path: &Path) -> Result<NmrData, MdbError> {
                     other => {
                         return Err(MdbError::Value {
                             path: p.clone(),
-                            table: t.name.to_string(),
+                            table: want.to_string(),
                             column: column.clone(),
                             value: format!("{other:?}"),
                         });
@@ -87,7 +94,7 @@ pub fn read(path: &Path) -> Result<NmrData, MdbError> {
             rows.push(out);
         }
         data.tables.push(NmrRows {
-            name: t.name.to_string(),
+            name: want.to_string(),
             columns,
             rows,
         });

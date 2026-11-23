@@ -59,6 +59,14 @@ fn escape(s: &str, out: &mut String) {
     }
 }
 
+/// A table as a plan creates it: its columns and its key (name, primary, columns).
+#[derive(Debug, Clone)]
+pub struct PlanTable<'a> {
+    pub name: &'a str,
+    pub columns: Vec<(&'a str, ColumnType)>,
+    pub key: Option<(&'a str, bool, Vec<&'a str>)>,
+}
+
 /// The plan for `data`: NMR's tables in `CreateAccessTables` order, each with its schema
 /// columns (an optional column only when the data has it) and its rows.
 pub fn plan(data: &NmrData) -> Result<String, JetError> {
@@ -67,35 +75,46 @@ pub fn plan(data: &NmrData) -> Result<String, JetError> {
             return Err(JetError::UnknownTable(rows.name.clone()));
         }
     }
+    let tables: Vec<PlanTable> = TABLES
+        .iter()
+        .map(|t| PlanTable {
+            name: t.name,
+            columns: t.columns.iter().map(|c| (c.name, c.ty)).collect(),
+            key: t
+                .index
+                .as_ref()
+                .map(|i| (i.name, i.primary, i.columns.to_vec())),
+        })
+        .collect();
+    Ok(plan_for(&tables, data))
+}
+
+/// The plan for `data` over `tables` (another `.mdb`'s, such as MME's): each table `data`
+/// has, in `tables`' order, with the columns `data` has.
+pub fn plan_for(tables: &[PlanTable], data: &NmrData) -> String {
     let mut out = String::new();
-    for t in TABLES {
+    for t in tables {
         let Some(rows) = data.table(t.name) else {
             continue;
         };
         let cols: Vec<_> = t
             .columns
             .iter()
-            .filter_map(|c| rows.position(c.name).map(|i| (c, i)))
+            .filter_map(|c| rows.position(c.0).map(|i| (c, i)))
             .collect();
         writeln!(out, "T\t{}", t.name).unwrap();
-        for (c, _) in &cols {
-            let (ty, size) = match c.ty {
+        for ((name, ty), _) in &cols {
+            let (ty, size) = match ty {
                 ColumnType::Long => ("Long", 0),
                 ColumnType::Double => ("Double", 0),
-                ColumnType::Text(n) => ("Text", n),
+                ColumnType::Text(n) => ("Text", *n),
                 ColumnType::Memo => ("Memo", 2000),
             };
-            writeln!(out, "C\t{}\t{ty}\t{size}", c.name).unwrap();
+            writeln!(out, "C\t{name}\t{ty}\t{size}").unwrap();
         }
-        if let Some(index) = &t.index {
-            let kind = if index.primary { "primary" } else { "index" };
-            writeln!(
-                out,
-                "K\t{}\t{kind}\t{}",
-                index.name,
-                index.columns.join("\t")
-            )
-            .unwrap();
+        if let Some((name, primary, columns)) = &t.key {
+            let kind = if *primary { "primary" } else { "index" };
+            writeln!(out, "K\t{name}\t{kind}\t{}", columns.join("\t")).unwrap();
         }
         for row in &rows.rows {
             out.push('R');
@@ -116,7 +135,7 @@ pub fn plan(data: &NmrData) -> Result<String, JetError> {
             out.push('\n');
         }
     }
-    Ok(out)
+    out
 }
 
 /// Writes the plan for `data` to `path`.
@@ -137,6 +156,11 @@ pub fn powershell32() -> Option<PathBuf> {
 
 /// Writes `data` to the `.mdb` at `out` (replacing it) through Windows' Jet engine.
 pub fn write_mdb(data: &NmrData, out: &Path) -> Result<(), JetError> {
+    write_plan_mdb(&plan(data)?, out)
+}
+
+/// Writes a plan's `.mdb` at `out` (replacing it) through Windows' Jet engine.
+pub fn write_plan_mdb(plan: &str, out: &Path) -> Result<(), JetError> {
     let ps = powershell32().ok_or(JetError::NoJet)?;
     let dir = tempfile::tempdir()?;
     let script = dir.path().join("write-mdb.ps1");
@@ -145,7 +169,7 @@ pub fn write_mdb(data: &NmrData, out: &Path) -> Result<(), JetError> {
     let mut bom = vec![0xEF, 0xBB, 0xBF];
     bom.extend_from_slice(SCRIPT.as_bytes());
     std::fs::write(&script, bom)?;
-    write_plan(data, &plan_path)?;
+    std::fs::write(&plan_path, plan)?;
     if out.exists() {
         std::fs::remove_file(out)?;
     }

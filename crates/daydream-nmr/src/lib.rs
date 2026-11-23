@@ -23,6 +23,7 @@ pub mod import;
 pub mod jet;
 pub mod map;
 pub mod mdb;
+pub mod mme;
 pub mod modify;
 pub mod presets;
 pub mod renumber;
