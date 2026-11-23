@@ -138,7 +138,10 @@ pub fn split_exp(mut base: u64) -> (u64, u64) {
             return (base.max(1), 1);
         }
         let max = (20..=32767u64).find(|x| x * 65538 >= base).unwrap_or(20);
-        let multi = (3..=max).filter(|x| base.is_multiple_of(*x)).max().unwrap_or(1);
+        let multi = (3..=max)
+            .filter(|x| base.is_multiple_of(*x))
+            .max()
+            .unwrap_or(1);
         if multi == 1 {
             base -= 1;
             continue;
@@ -337,7 +340,7 @@ pub fn plan(realm: &Realm, preset: &Preset, layout: LayoutSet) -> Result<Plan, P
 
 fn text(v: &Value) -> String {
     match v {
-        Value::Text(s) => s.trim_end().to_string(),
+        Value::Text(s) => s.split('\0').next().unwrap_or("").trim_end().to_string(),
         _ => String::new(),
     }
 }
