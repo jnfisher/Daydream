@@ -250,8 +250,10 @@ revisited. Pull requests merged once CI was green.
   decodes in the realm's own layouts.
 - Found and fixed on the way: `daydream nmr-export` and `nmr-import` used the DOS layouts
   even on a Worldgroup realm. They now use the realm's own (#8).
-- Users' inventories are not renumbered by the Record Number Changer, as in NMR (users are
-  not among NMR's tables). Worth adding if renumbering items on a live realm matters.
+- Added (#17): the Record Number Changer can move users' references too, which NMR's never
+  does: items they carry, wear or wield, spells in their book or on them, class, race, and
+  where they stand and their trail (Change Map Number too). It is a box, off by default, so
+  the changer does what NMR's does unless asked.
 - The Tools page (#9) imports with Daydream's strict rules only; NMR mode stays a
   command-line and CI option.
 

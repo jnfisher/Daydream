@@ -2269,13 +2269,20 @@ function recordNumberChanger(post2, result, failure2, changed2) {
     out.replaceChildren();
   };
   kind.addEventListener("change", showForm);
+  const users = h6("input", { type: "checkbox" });
+  const usersBox = h6(
+    "label",
+    { title: "Items and keys they carry, wear or wield; spells in their spellbook or on them; their class and race; where they stand and their trail" },
+    users,
+    " Users follow too (NMR's changer leaves users alone)"
+  );
   const request = () => {
     if (kind.value === "map") {
-      const body = { kind: "map", from: int2(mapFrom), to: int2(mapTo) };
+      const body = { kind: "map", from: int2(mapFrom), to: int2(mapTo), users: users.checked };
       for (const [k2, c] of boxes) body[k2] = c.checked;
       return body;
     }
-    return { kind: "records", table: kind.value, map: kind.value === "rooms" ? int2(map) : void 0, moves };
+    return { kind: "records", table: kind.value, map: kind.value === "rooms" ? int2(map) : void 0, moves, users: users.checked };
   };
   const run = async (dryRun) => {
     if (!dryRun && !confirm("Change the record numbers, and everything that names them? Preview first to see the changes.")) return;
@@ -2310,6 +2317,7 @@ function recordNumberChanger(post2, result, failure2, changed2) {
     h6("div", { class: "toolbar" }, h6("label", {}, "Records: ", kind)),
     recordsForm,
     mapForm,
+    h6("div", {}, usersBox),
     h6("div", { class: "toolbar" }, preview, go),
     out
   );

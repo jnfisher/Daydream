@@ -144,6 +144,7 @@ fn items_move_with_everything_that_names_them() {
             table: Kind::Items,
             map: None,
             moves: moves(&[(5, 50)]),
+            users: false,
         },
     );
     assert!(!has(&realm, "Items", &[("Number", 5)]));
@@ -221,6 +222,7 @@ fn text_blocks_move_every_part_and_their_links() {
             table: Kind::Textblocks,
             map: None,
             moves: moves(&[(10, 20), (11, 21)]),
+            users: false,
         },
     );
     assert!(!has(&realm, "Textblocks", &[("Number", 10)]));
@@ -325,6 +327,7 @@ fn rooms_move_within_their_map() {
             table: Kind::Rooms,
             map: Some(1),
             moves: moves(&[(1, 101), (2, 102)]),
+            users: false,
         },
     );
     let r = |map: i64, n: i64, c: &str| {
@@ -386,6 +389,7 @@ fn bad_runs_are_refused() {
         table: Kind::Items,
         map: None,
         moves: moves(pairs),
+        users: false,
     };
     for bad in [
         items(&[]),
@@ -398,6 +402,7 @@ fn bad_runs_are_refused() {
             table: Kind::Rooms,
             map: None,
             moves: moves(&[(1, 2)]),
+            users: false,
         },
     ] {
         assert!(renumber::plan(&realm, &bad, Dos).is_err(), "{bad:?}");
@@ -460,6 +465,7 @@ fn a_map_moves_to_another() {
         normal: true,
         textblocks: true,
         spells: true,
+        users: false,
     };
     // map 1 has no room 7 or 8, but its room 1 would clash with nothing: fine; map 4 has 50
     let plans = renumber::plan(&realm, &run_map(4), Dos).unwrap();
@@ -501,10 +507,109 @@ fn a_map_moves_to_another() {
                 exits: true,
                 normal: true,
                 textblocks: true,
-                spells: true
+                spells: true,
+                users: false
             },
             Dos
         )
         .is_err()
+    );
+}
+
+/// Users follow only when asked (NMR leaves them): items in every slot they hold one, where
+/// they stand and their trail.
+#[test]
+fn users_follow_when_asked() {
+    let (_d, realm) = realm();
+    add(
+        &realm,
+        "Items",
+        &[
+            vec![("Number", l(5)), ("Name", t("sword"))],
+            vec![("Number", l(6)), ("Name", t("key"))],
+        ],
+    );
+    add(
+        &realm,
+        "Rooms",
+        &[
+            vec![
+                ("Map Number", l(1)),
+                ("Room Number", l(10)),
+                ("Name", t("Square")),
+            ],
+            vec![
+                ("Map Number", l(2)),
+                ("Room Number", l(10)),
+                ("Name", t("Cave")),
+            ],
+        ],
+    );
+    add(
+        &realm,
+        "Users",
+        &[vec![
+            ("BBS Name", t("Ann")),
+            ("Item 0", l(5)),
+            ("Item 1", l(6)),
+            ("Key 0", l(5)),
+            ("Worn 0", l(5)),
+            ("Weapon", l(5)),
+            ("Map Number", l(1)),
+            ("Room Number", l(10)),
+            ("Trail 0 Map", l(1)),
+            ("Trail 0 Room", l(10)),
+            ("Trail 1 Map", l(2)),
+            ("Trail 1 Room", l(10)),
+        ]],
+    );
+    let ann = |c: &str| n(&get(&realm, "Users", &[], c));
+    let items = |users| Renumber::Records {
+        table: Kind::Items,
+        map: None,
+        moves: moves(&[(5, 50)]),
+        users,
+    };
+    // as NMR: users are left alone
+    let plans = renumber::plan(&realm, &items(false), Dos).unwrap();
+    assert!(plans.iter().all(|p| p.table != "Users"));
+    run(&realm, &items(true));
+    for c in ["Item 0", "Key 0", "Worn 0", "Weapon"] {
+        assert_eq!(ann(c), 50, "{c}");
+    }
+    assert_eq!(ann("Item 1"), 6);
+
+    run(
+        &realm,
+        &Renumber::Records {
+            table: Kind::Rooms,
+            map: Some(1),
+            moves: moves(&[(10, 20)]),
+            users: true,
+        },
+    );
+    assert_eq!(
+        (ann("Room Number"), ann("Trail 0 Room"), ann("Trail 1 Room")),
+        (20, 20, 10)
+    );
+
+    let plans = renumber::plan(
+        &realm,
+        &Renumber::Map {
+            from: 2,
+            to: 3,
+            exits: true,
+            normal: true,
+            textblocks: true,
+            spells: true,
+            users: true,
+        },
+        Dos,
+    )
+    .unwrap();
+    renumber::apply(&realm, &plans, Dos).unwrap();
+    assert_eq!(
+        (ann("Map Number"), ann("Trail 0 Map"), ann("Trail 1 Map")),
+        (1, 1, 3)
     );
 }
