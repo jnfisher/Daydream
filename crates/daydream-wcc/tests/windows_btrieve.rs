@@ -327,7 +327,10 @@ fn btrieve_clones_the_stock_files() {
         // the small files, and the message file: its 512-byte pages need more page tables
         // than a rebuilt file reads back with (status 2 past about 30)
         let big = std::fs::metadata(&path).unwrap().len() > 256 * 1024;
-        if big && !name.eq_ignore_ascii_case("WCCMSG.VIR") {
+        if big
+            && !name.eq_ignore_ascii_case("WCCMSG.VIR")
+            && !name.eq_ignore_ascii_case("WCCMP001.VIR")
+        {
             continue;
         }
         let stem = name.trim_end_matches(".VIR").trim_end_matches(".vir");
@@ -359,7 +362,12 @@ fn btrieve_clones_the_stock_files() {
                 print!("{}", nonzero_rows(&bytes[p * page..(p + 1) * page]));
             }
             for (p, chunk) in bytes.chunks(page).enumerate().skip(fcr_pages) {
-                if bytes.len() <= 16 * 1024 || (bytes.len() > 256 * 1024 && chunk[..2] == *b"PP") {
+                // after 30 page tables Btrieve's pages shift by 8: show what is there
+                let after_30 = 2 + 30 * page / 4;
+                let near = p + 4 >= after_30 && p < after_30 + 16;
+                if bytes.len() <= 16 * 1024
+                    || (bytes.len() > 256 * 1024 && (chunk[..2] == *b"PP" || near))
+                {
                     // small files whole, so every byte of Btrieve's layout is on record; of
                     // a large one, the page tables
                     println!("  page {p}:");
