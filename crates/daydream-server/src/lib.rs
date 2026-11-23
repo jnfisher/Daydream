@@ -76,6 +76,7 @@ pub fn router(realm_dir: &Path) -> Router {
         .route("/api/tools/delete", post(tools::delete))
         .route("/api/tools/modify", post(tools::modify))
         .route("/api/tools/preset", post(tools::preset))
+        .route("/api/tools/renumber", post(tools::renumber))
         .route("/api/reports/limited-items", get(reports::limited_items))
         .route("/api/reports/find-item", get(reports::find_item))
         .route("/api/reports/control-rooms", get(reports::control_rooms))

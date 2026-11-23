@@ -6,6 +6,7 @@ import { toShown, toWire } from './ansi';
 import { api, type Report, type TableInfo } from './api';
 import { massRoomEditor } from './massroom';
 import { indexChanger } from './indexchanger';
+import { recordNumberChanger } from './renumber';
 
 /** The tables NMR's importer and deleter list, in its order. */
 const TABLES = ['Items', 'Monsters', 'Spells', 'Shops', 'Races', 'Classes', 'Rooms', 'Actions', 'Messages', 'Textblocks'];
@@ -670,6 +671,7 @@ export function toolsPage(changed: () => void): HTMLElement {
       if (rooms) page.append(massRoomEditor(rooms, (url, body) => post(url, body, true), modifyResult, changed));
       page.append(fixesCard(changed));
       page.append(indexChanger((url, body) => post(url, body, true), modifyResult, failure, changed));
+      page.append(recordNumberChanger((url, body) => post(url, body, true), modifyResult, failure, changed));
     })
     .catch((e) => page.append(failure(e)));
   return page;

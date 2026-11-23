@@ -8,6 +8,7 @@
 //! | `POST /api/tools/merge-users?dry_run=` | body: a user file (`.DAT` or `.db`); what was copied |
 //! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify) and `dry_run`; every change, then the write's report |
 //! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
+//! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
 //!
 //! `options` is JSON: `tables` (names, or absent for all), `ranges` (`[{table, map?, from,
 //! to}]`), `skip_existing`, `room_parts` (`all`, `only_items`, `not_items`), `extra_parts`
@@ -267,6 +268,60 @@ pub(crate) async fn preset(
     .await
 }
 
+/// The body of a Record Number Changer run.
+#[derive(Debug, Deserialize)]
+pub struct RenumberJson {
+    #[serde(flatten)]
+    run: daydream_nmr::renumber::Renumber,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// One plan's answer, as `modify` gives it.
+fn plan_json(plan: &daydream_nmr::modify::Plan, dry_run: bool, report: Option<Value>) -> Value {
+    let listed = &plan.changes[..plan.changes.len().min(MAX_LISTED)];
+    json!({
+        "dry_run": dry_run,
+        "table": plan.table,
+        "changed": plan.changes.len(),
+        "records": plan.records(),
+        "skipped": plan.skipped,
+        "unchanged": plan.unchanged,
+        "notes": plan.notes,
+        "changes": listed,
+        "report": report,
+    })
+}
+
+pub(crate) async fn renumber(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<RenumberJson>,
+) -> Result<Json<Value>, ApiError> {
+    blocking(move || {
+        let _writing = s.write.lock().map_err(internal)?;
+        let realm = Realm::open(&s.realm_dir)?;
+        let layout = daydream_nmr::layout_of_realm(&realm);
+        let plans = daydream_nmr::renumber::plan(&realm, &body.run, layout)
+            .map_err(|e| bad(e.to_string()))?;
+        let reports: Vec<Option<Value>> = if body.dry_run {
+            vec![None; plans.len()]
+        } else {
+            daydream_nmr::renumber::apply(&realm, &plans, layout)
+                .map_err(|e| bad(e.to_string()))?
+                .iter()
+                .map(|r| Some(crate::tables::report_json(r)))
+                .collect()
+        };
+        let tables: Vec<Value> = plans
+            .iter()
+            .zip(reports)
+            .map(|(p, r)| plan_json(p, body.dry_run, r))
+            .collect();
+        Ok(Json(json!({ "dry_run": body.dry_run, "tables": tables })))
+    })
+    .await
+}
+
 /// Plans a run, writes it unless `dry_run`, and answers with what changes.
 async fn run_plan(
     s: Arc<AppState>,
@@ -290,18 +345,7 @@ async fn run_plan(
                 .map_err(|e| bad(e.to_string()))?;
             Some(crate::tables::report_json(&r))
         };
-        let listed = &plan.changes[..plan.changes.len().min(MAX_LISTED)];
-        Ok(Json(json!({
-            "dry_run": dry_run,
-            "table": plan.table,
-            "changed": plan.changes.len(),
-            "records": plan.records(),
-            "skipped": plan.skipped,
-            "unchanged": plan.unchanged,
-            "notes": plan.notes,
-            "changes": listed,
-            "report": report,
-        })))
+        Ok(Json(plan_json(&plan, dry_run, report)))
     })
     .await
 }

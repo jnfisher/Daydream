@@ -16,6 +16,7 @@ mod mdb_read;
 mod modify;
 mod options;
 mod presets;
+mod renumber;
 mod reports;
 mod stock;
 mod synthetic;

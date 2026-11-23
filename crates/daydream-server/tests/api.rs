@@ -571,3 +571,22 @@ async fn quest_files_come_from_the_realm_folder() {
     let (status, _) = get(dir.path(), "/api/quests?file=../x").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn the_record_number_changer_previews_and_refuses() {
+    let dir = realm();
+    let renumber = |body: Value| send(dir.path(), "POST", "/api/tools/renumber", body);
+    let (status, body) = renumber(
+        serde_json::json!({"kind": "records", "table": "races", "moves": [], "dry_run": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("empty"), "{body}");
+    let (status, body) = renumber(
+        serde_json::json!({"kind": "records", "table": "races", "moves": [{"from": 1, "to": 900}], "dry_run": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["dry_run"], true);
+    assert!(body["tables"].is_array(), "{body}");
+}
