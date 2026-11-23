@@ -179,10 +179,20 @@ impl<T: Wire, const N: usize> Wire for [T; N] {
 
 /// An `N`-byte text member: the CP437 bytes up to the first NUL, untrimmed (the
 /// original trims trailing spaces only where it uses the text).
+///
+/// Daydream addition: the member's stored bytes are kept too, because the game leaves
+/// whatever was in its buffer after the NUL (padding spaces, older longer text) and a
+/// realm's files must round-trip byte for byte. While the text is unchanged it is written
+/// back as those bytes; once it is changed it is written cleanly (text, NUL, zeros).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Text<const N: usize>(pub String);
+pub struct Text<const N: usize>(pub String, Vec<u8>);
 
 impl<const N: usize> Text<N> {
+    /// A new text, written cleanly (text, NUL, zeros).
+    pub fn new(text: impl Into<String>) -> Self {
+        Self(text.into(), Vec::new())
+    }
+
     /// The text as T-006 compares and the schema stores it: [`trim`]med.
     pub fn trimmed(&self) -> String {
         trim(&self.0).to_string()
@@ -192,10 +202,14 @@ impl<const N: usize> Text<N> {
 impl<const N: usize> Wire for Text<N> {
     const SIZE: usize = N;
     fn read(b: &[u8]) -> Self {
-        Self(FixedStr::<N>::decode(&b[..N]))
+        Self(FixedStr::<N>::decode(&b[..N]), b[..N].to_vec())
     }
     fn write(&self, out: &mut [u8]) {
-        out[..N].copy_from_slice(&FixedStr::<N>::encode(&self.0));
+        if self.1.len() == N && FixedStr::<N>::decode(&self.1) == self.0 {
+            out[..N].copy_from_slice(&self.1);
+        } else {
+            out[..N].copy_from_slice(&FixedStr::<N>::encode(&self.0));
+        }
     }
     fn json(&self) -> Value {
         Value::String(self.trimmed())
