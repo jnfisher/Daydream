@@ -235,7 +235,8 @@ try {
     }
     Mark "NMR open ($([W]::Text($main)))"
 
-    $id = [W]::MenuId($main, @('Tools', 'Databases', 'Import Records'))
+    $main = [IntPtr]$main
+    $id = [W]::MenuId($main, [string[]]@('Tools', 'Databases', 'Import Records'))
     if ($id -lt 0) { Shot 'no menu'; throw 'no Tools > Databases > Import Records menu item' }
     [W]::PostMessage($main, [W]::WM_COMMAND, [IntPtr]$id, [IntPtr]::Zero) | Out-Null
     $importer = Wait-For 'the Database Importer' $proc {
@@ -271,6 +272,8 @@ try {
     $result = if ($state.Unexpected -gt 0) { 2 } else { 0 }
 } catch {
     Write-Host "FAILED: $_"
+    Write-Host $_.InvocationInfo.PositionMessage
+    Write-Host $_.ScriptStackTrace
     Shot 'failure'
 } finally {
     if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
