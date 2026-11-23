@@ -14,13 +14,22 @@ hand. When you fix a bug in copied code, check whether the upstream copy has it 
 | `crates/daydream-wcc/src/{dos_time,json,zip}.rs` | same names in `silvermere-import/src/` | None. |
 | `crates/daydream-wcc/src/stock.rs` | `silvermere-import/src/stock.rs` | The URL override is `DAYDREAM_STOCK_URL`; messages name `daydream`. |
 | `crates/daydream-wcc/tests/{btrieve_fixtures,decode_offsets,stock_vir}.rs`, `tests/fixtures/btrieve/` | `silvermere-import/tests/` | Adjusted for the renames and the `to_*` functions. |
+| `crates/daydream-silvermere/migrations/{sqlite,postgres}/` | `crates/silvermere-db/migrations/` | None. The adapter refuses a database whose migrations are not these (or a prefix of them). |
+| `crates/daydream-silvermere/src/db/{dialect,guard,world_import}.rs`, `db/repo/` (rooms, items, monsters, spells, classes, races, shops, messages, text_blocks) | same names in `crates/silvermere-db/src/` | `silvermere_types` became `daydream_types` and `crate::` became `crate::db::`. Test modules left out. A new `DbError` stands in for silvermere-db's error type. |
+| `crates/daydream-silvermere/src/db/pool.rs` | `crates/silvermere-db/src/pool.rs` | Trimmed to `Db`: no `TestDb`, no accessors for the player tables. |
 
 Not copied: the importer, the `WCCUPDAT.DAT` patch merge, asset unpacking and the checks,
 which write silvermere's normalised database. Daydream keeps the raw records instead (see
 `docs/approach.md`). `T-nnn` references in the copied comments are silvermere's task cards.
 
-New in Daydream: `daydream-wcc/src/tables.rs` (file stem to record type) and
-`daydream-wcc/src/stock_files.rs` (the stock files unpacked into a cache).
+New in Daydream: `daydream-wcc/src/tables.rs` (file stem to record type),
+`daydream-wcc/src/stock_files.rs` (the stock files unpacked into a cache), and the
+silvermere adapter's own code (`daydream-silvermere/src/{lib,records,sync,raw}.rs`), which
+moves a realm's world through the copied repositories.
+
+When you move to a newer silvermere, copy its new migrations too, and check the copied
+repositories and `records.rs` against any column it added; CI serves the adapter's export
+with the release pinned by `SILVERMERE_VERSION` in `.github/workflows/ci.yml`.
 
 ## wbtrv32 (https://github.com/mbbsemu/wbtrv32, by Paladine, MIT)
 

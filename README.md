@@ -73,6 +73,27 @@ cargo run -p daydream -- write-dat ./realm /path/to/WGSERV           # or --out 
 
 In the browser it is the Tools page's **Write to WCC files** card.
 
+To and from a [silvermere](https://github.com/jnfisher/silvermere) server's database (its
+SQLite file or PostgreSQL), straight into its tables while it is stopped:
+`silvermere-export` writes the realm's world (rooms, items, monsters, spells, classes, races,
+shops, messages, text blocks, actions) as `silvermere import` would, and `silvermere-import`
+reads it back. Player tables are not touched. Daydream takes silvermere's own writer lock, so
+both refuse while `silvermere serve` runs. The export also keeps each record's bytes in a
+table of its own (`daydream_records`, which silvermere ignores), so an unchanged world comes
+back byte for byte and an edit made in silvermere changes only the bytes it stores. Live
+state silvermere already has (floors, shop stock, kills) is kept unless given
+`--reset-state`.
+
+```sh
+cargo run -p daydream -- silvermere-export ./realm /srv/silvermere/data/silvermere.db --dry-run
+cargo run -p daydream -- silvermere-export ./realm postgres://user@host/silvermere
+cargo run -p daydream -- silvermere-import ./realm postgres://user@host/silvermere
+```
+
+`serve` and `mcp` take `--silvermere DATABASE` to offer the same in the browser (the Tools
+page's **silvermere** card) and to agents (`silvermere_status`, `silvermere_export`,
+`silvermere_import`, which preview unless told otherwise).
+
 For AI agents, Daydream is an MCP (Model Context Protocol) server. An agent reads the realm
 in NMR's terms (tables, columns, rows, free record numbers, maps) and makes content with
 `preview_edits`, then `apply_edits`. Every write goes through the same strict import as the
@@ -135,9 +156,10 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `mcp`, `new-token` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `silvermere-export`, `silvermere-import`, `silvermere-info`, `mcp`, `new-token` |
 | `crates/daydream-mcp` | The MCP server for AI agents: its tools, the undo journal, stdio |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file; one row at a time for the editors (`rows`) |
+| `crates/daydream-silvermere` | silvermere's database: its schema and repositories (copied), the writer lock, and moving a realm's world in and out |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
 | `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns |
@@ -167,6 +189,11 @@ cargo test --workspace
 CI runs everything on each pull request that touches code, with the dependency builds, the
 stock package and the wbtrv32 build cached. A Windows job writes real `.mdb` files through
 Jet, reads them back and imports them; it runs when the code it covers changes, and nightly.
+
+The silvermere adapter's tests run on SQLite, and on PostgreSQL too when
+`DAYDREAM_POSTGRES_URL` names a database they may create schemas in. With `SILVERMERE_BIN`
+set to a silvermere binary, they also serve the export with it. CI does both, with
+silvermere's release binary cached.
 
 The web UI's bundle (`crates/daydream-server/src/app.js`) is committed, so building the
 server needs no node. After changing `web/src`, rebuild it:

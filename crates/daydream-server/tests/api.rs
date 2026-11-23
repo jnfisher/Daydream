@@ -836,6 +836,7 @@ async fn a_token_lets_in_whoever_has_it() {
             dir.path(),
             daydream_server::Options {
                 token: Some(token.into()),
+                ..daydream_server::Options::default()
             },
         )
     };
@@ -1028,6 +1029,7 @@ async fn with_a_token_every_route_asks_for_it() {
                     dir.path(),
                     daydream_server::Options {
                         token: Some(token.into()),
+                        ..daydream_server::Options::default()
                     },
                 );
                 let (status, _, _) = through(router, req).await;

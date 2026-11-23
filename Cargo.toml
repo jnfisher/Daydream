@@ -5,6 +5,7 @@ members = [
     "crates/daydream-mcp",
     "crates/daydream-nmr",
     "crates/daydream-server",
+    "crates/daydream-silvermere",
     "crates/daydream-store",
     "crates/daydream-types",
     "crates/daydream-wcc",
@@ -26,6 +27,7 @@ unsafe_code = "forbid"
 daydream-mcp = { path = "crates/daydream-mcp" }
 daydream-nmr = { path = "crates/daydream-nmr" }
 daydream-server = { path = "crates/daydream-server" }
+daydream-silvermere = { path = "crates/daydream-silvermere" }
 daydream-store = { path = "crates/daydream-store" }
 daydream-types = { path = "crates/daydream-types" }
 daydream-wcc = { path = "crates/daydream-wcc" }
@@ -43,6 +45,9 @@ rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+# silvermere's database layer (crates/daydream-silvermere), as silvermere runs it; 0.9.1 is
+# the first that accepts rusqlite's libsqlite3-sys 0.40
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "postgres", "any", "migrate", "macros"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal"] }

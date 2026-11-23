@@ -3,7 +3,8 @@
 //! It runs on the sysop's own machine and opens in the browser. `/` is the web UI (built
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
-//! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the MCP
+//! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the realm
+//! in a silvermere database in [`silvermere`], the MCP
 //! server for AI agents at `/mcp` ([`mcp`]), and the
 //! routes below serve each file's records
 //! decoded (every member by name, `unk_*` spans included), read only. Who may use it is
@@ -39,6 +40,7 @@ pub mod auth;
 pub mod mcp;
 pub mod mme;
 pub mod reports;
+pub mod silvermere;
 pub mod tables;
 pub mod tools;
 
@@ -55,6 +57,8 @@ pub struct AppState {
     mcp: daydream_mcp::Server,
     /// The access token, when the server takes requests from other machines ([`auth`]).
     token: Option<String>,
+    /// The silvermere database the server was given ([`silvermere`]), as a URL.
+    silvermere: Option<String>,
 }
 
 /// How the server is run.
@@ -62,6 +66,9 @@ pub struct AppState {
 pub struct Options {
     /// The access token ([`auth`]). Without one, only this machine is answered.
     pub token: Option<String>,
+    /// A silvermere database (a SQLite file's path or a URL) for the silvermere card and the
+    /// MCP server's silvermere tools ([`silvermere`]).
+    pub silvermere: Option<String>,
 }
 
 /// The router for the realm in `realm_dir`, answering this machine only.
@@ -74,8 +81,18 @@ pub fn router_with(realm_dir: &Path, options: Options) -> Router {
     let state = Arc::new(AppState {
         realm_dir: realm_dir.to_path_buf(),
         write: Mutex::new(()),
-        mcp: daydream_mcp::Server::new(realm_dir, daydream_mcp::Options::default()),
+        mcp: daydream_mcp::Server::new(
+            realm_dir,
+            daydream_mcp::Options {
+                silvermere: options.silvermere.clone(),
+                ..daydream_mcp::Options::default()
+            },
+        ),
         token: options.token,
+        silvermere: options
+            .silvermere
+            .as_deref()
+            .map(daydream_silvermere::database_url),
     });
     Router::new()
         .route("/", get(index))
@@ -106,6 +123,10 @@ pub fn router_with(realm_dir: &Path, options: Options) -> Router {
         .route("/api/tools/preset", post(tools::preset))
         .route("/api/tools/renumber", post(tools::renumber))
         .route("/api/tools/write-dat", post(tools::write_dat))
+        .route("/api/silvermere", get(silvermere::configured))
+        .route("/api/silvermere/info", post(silvermere::info))
+        .route("/api/silvermere/export", post(silvermere::export))
+        .route("/api/silvermere/import", post(silvermere::import))
         .route("/api/reports/limited-items", get(reports::limited_items))
         .route("/api/reports/find-item", get(reports::find_item))
         .route("/api/reports/control-rooms", get(reports::control_rooms))

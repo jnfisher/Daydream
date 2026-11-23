@@ -19,6 +19,12 @@
 //! | `apply_edits` | makes previewed edits, if the realm still gives the same preview |
 //! | `undo` | puts back the records an applied token changed, byte for byte |
 //! | `history` | the applied edits that can be undone |
+//! | `silvermere_status` | what the silvermere database holds, and whether silvermere runs on it |
+//! | `silvermere_export` | writes the realm's world into the silvermere database (dry run by default) |
+//! | `silvermere_import` | rewrites the realm's world from the silvermere database (dry run by default) |
+//!
+//! The `silvermere_*` tools are offered only when the server was given a silvermere database
+//! ([`Options::silvermere`]); the agent cannot name another.
 //!
 //! Writes go through the strict import, like the editors' saves, under one write lock.
 //! Every applied change is journaled in `REALM/.daydream/undo/`, so it can be undone even
@@ -48,6 +54,9 @@ pub const MAX_ROWS: usize = 500;
 pub struct Options {
     /// Offer the player tables (users, bank books, gangs).
     pub players: bool,
+    /// A silvermere database (a SQLite file's path or a URL): offers the `silvermere_*`
+    /// tools, on this database only, so an agent never handles its credentials.
+    pub silvermere: Option<String>,
 }
 
 /// Previewed edits waiting to be applied.
@@ -90,6 +99,8 @@ pub enum ToolError {
     Bad(String),
     #[error("{0}")]
     Io(String),
+    #[error(transparent)]
+    Silvermere(#[from] daydream_silvermere::Error),
 }
 
 fn bad(msg: impl Into<String>) -> ToolError {
@@ -128,7 +139,7 @@ fn number_arg(args: &Map<String, Value>, name: &str) -> Result<Option<i64>, Tool
 }
 
 /// The tools' descriptions and input schemas, as `tools/list` gives them.
-fn tool_list() -> Value {
+fn tool_list(silvermere: bool) -> Value {
     let table = json!({ "type": "string", "description": "An NMR table name, as list_tables gives it (Items, Monsters, Rooms, ...)" });
     let key = json!({ "type": "array", "description": "The row's key: its key columns' values in order, as list_tables gives them (Rooms: [map, room])" });
     let edit = json!({
@@ -142,7 +153,7 @@ fn tool_list() -> Value {
         },
         "required": ["op", "table"]
     });
-    json!({ "tools": [
+    let mut list = json!({ "tools": [
         {
             "name": "list_tables",
             "description": "Every table of the realm in NMR's terms, with the columns each row is keyed by and the column that names a row.",
@@ -216,7 +227,38 @@ fn tool_list() -> Value {
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true }
         }
-    ]})
+    ]});
+    if silvermere {
+        let dry = json!({ "type": "boolean", "description": "Report what would change without writing (the default). Show the user the report, then call again with false." });
+        let keep = json!({ "type": "boolean", "description": "Keep the rows the source does not have, instead of deleting them" });
+        let tools = list["tools"].as_array_mut().expect("a list");
+        tools.push(json!({
+            "name": "silvermere_status",
+            "description": "The silvermere database this server was set up with: its rows per world table, whether silvermere is running on it, and whether it keeps the bytes of a Daydream export.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
+        }));
+        tools.push(json!({
+            "name": "silvermere_export",
+            "description": "Writes the realm's world (rooms, items, monsters, spells, classes, races, shops, messages, text blocks, actions) into the silvermere database, as silvermere's import does. silvermere must be stopped. Its live state (room floors, shop stock, monster kills) is kept unless reset_state.",
+            "inputSchema": { "type": "object", "properties": {
+                "dry_run": dry,
+                "reset_state": { "type": "boolean", "description": "Rewrite the live state of rows silvermere has from the realm" },
+                "keep_extra": keep
+            } },
+            "annotations": { "destructiveHint": true }
+        }));
+        tools.push(json!({
+            "name": "silvermere_import",
+            "description": "Rewrites the realm's world from the silvermere database: changed records are rewritten, records silvermere lacks are deleted. silvermere must be stopped. This cannot be taken back with undo.",
+            "inputSchema": { "type": "object", "properties": {
+                "dry_run": dry,
+                "keep_extra": keep
+            } },
+            "annotations": { "destructiveHint": true }
+        }));
+    }
+    list
 }
 
 impl Server {
@@ -228,6 +270,49 @@ impl Server {
             pending: Mutex::new(HashMap::new()),
             counter: AtomicU64::new(0),
         }
+    }
+
+    /// The `silvermere_*` tools, on the server's own database.
+    fn silvermere(
+        &self,
+        name: &str,
+        database: &str,
+        args: &Map<String, Value>,
+    ) -> Result<Value, ToolError> {
+        use daydream_silvermere as sm;
+        let url = sm::database_url(database);
+        let flag = |n: &str, default: bool| args.get(n).and_then(Value::as_bool).unwrap_or(default);
+        if name == "silvermere_status" {
+            let info = sm::block_on(sm::info(&url))?;
+            return serde_json::to_value(info).map_err(|e| ToolError::Io(e.to_string()));
+        }
+        let dry_run = flag("dry_run", true);
+        let _writing = self
+            .write
+            .lock()
+            .map_err(|e| ToolError::Io(e.to_string()))?;
+        let realm = self.realm()?;
+        let tables = if name == "silvermere_export" {
+            let opts = sm::ExportOptions {
+                state: if flag("reset_state", false) {
+                    sm::State::Reset
+                } else {
+                    sm::State::Keep
+                },
+                delete: !flag("keep_extra", false),
+                dry_run,
+                ..sm::ExportOptions::default()
+            };
+            sm::block_on(sm::export(&realm, &url, &opts))?
+        } else {
+            let opts = sm::ImportOptions {
+                delete: !flag("keep_extra", false),
+                dry_run,
+                ..sm::ImportOptions::default()
+            };
+            sm::block_on(sm::import(&realm, &url, &opts))?
+        };
+        Ok(json!({ "dry_run": dry_run, "tables": tables }))
     }
 
     fn realm(&self) -> Result<Realm, ToolError> {
@@ -283,7 +368,7 @@ impl Server {
                 )
             }
             "ping" => rpc_result(&id, json!({})),
-            "tools/list" => rpc_result(&id, tool_list()),
+            "tools/list" => rpc_result(&id, tool_list(self.options.silvermere.is_some())),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params
@@ -327,6 +412,12 @@ impl Server {
             "apply_edits" => self.apply_edits(args),
             "undo" => self.undo(args),
             "history" => self.history(),
+            "silvermere_status" | "silvermere_export" | "silvermere_import" => {
+                let Some(db) = &self.options.silvermere else {
+                    return None;
+                };
+                self.silvermere(name, db, args)
+            }
             _ => return None,
         })
     }

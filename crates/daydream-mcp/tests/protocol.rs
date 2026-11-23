@@ -63,7 +63,13 @@ fn player_tables_are_offered_only_when_asked() {
             .contains("player table")
     );
 
-    let server = Server::new(tmp.path(), Options { players: true });
+    let server = Server::new(
+        tmp.path(),
+        Options {
+            players: true,
+            ..Options::default()
+        },
+    );
     let mut c = Client::new(&server);
     c.call("list_rows", json!({ "table": "Users" }));
 }
