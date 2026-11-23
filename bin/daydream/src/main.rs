@@ -189,6 +189,16 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Serve REALM to an AI agent over the Model Context Protocol, on stdin and stdout (for a
+    /// local agent such as Claude Code or Claude Desktop). `daydream serve` offers the same
+    /// tools over HTTP at `/mcp`. Stop the game first.
+    Mcp {
+        /// The realm directory.
+        realm: PathBuf,
+        /// Offer the player tables (users, bank books, gangs) too.
+        #[arg(long)]
+        players: bool,
+    },
     /// Merge another user file's users into REALM's, as NMR's Merge Users does: users REALM
     /// lacks are copied byte for byte, users it has are skipped. Stop the realm first.
     MergeUsers {
@@ -354,6 +364,13 @@ fn main() -> anyhow::Result<()> {
             from,
             dry_run,
         } => merge_users(&realm, &from, dry_run),
+        Command::Mcp { realm, players } => {
+            Realm::open(&realm)
+                .with_context(|| format!("opening the realm {}", realm.display()))?;
+            let server = daydream_mcp::Server::new(&realm, daydream_mcp::Options { players });
+            server.run_stdio(std::io::stdin().lock(), std::io::stdout().lock())?;
+            Ok(())
+        }
         Command::WriteDat {
             realm,
             wcc,

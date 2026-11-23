@@ -28,6 +28,7 @@ pub mod modify;
 pub mod presets;
 pub mod renumber;
 pub mod reports;
+pub mod rows;
 pub mod schema;
 pub mod text;
 

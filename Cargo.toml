@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "bin/daydream",
+    "crates/daydream-mcp",
     "crates/daydream-nmr",
     "crates/daydream-server",
     "crates/daydream-store",
@@ -22,6 +23,7 @@ repository = "https://github.com/jnfisher/Daydream"
 unsafe_code = "forbid"
 
 [workspace.dependencies]
+daydream-mcp = { path = "crates/daydream-mcp" }
 daydream-nmr = { path = "crates/daydream-nmr" }
 daydream-server = { path = "crates/daydream-server" }
 daydream-store = { path = "crates/daydream-store" }
