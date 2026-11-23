@@ -121,7 +121,9 @@ revisited. Pull requests merged once CI was green.
   - **On the command line as `daydream mme-export`** (added to #17), with NMR's options:
     Legit by default, `--not-legit` for a custom name, an update URL, the sysop's own
     exclusions and no rooms. The Windows job writes the stock world's export through Jet
-    and reads it back. Not in the web UI yet: writing the `.mdb` needs Windows' Jet.
+    and reads it back; that test caught two bugs on its first runs (the wrong table plan,
+    and empty room names written as Null where MME's file holds empty texts), both fixed.
+    Not in the web UI yet: writing the `.mdb` needs Windows' Jet.
 
 - **NMR's last user tools** (added to #17). The user editor gains **Paste Items** (NMR's
   Paste Items/Keys/Worn/$$: an inventory capture read as NMR reads it, items matched by
