@@ -27,7 +27,7 @@ revisited. Pull requests merged once CI was green.
 | #10 | M3: the Universal Modifier, with a preview | merged (squash f4eb920) |
 | #11 | M3: NMR's one-click fixes (limited items, exp, uses, kill times, drop %) | merged (squash c2536d0) |
 | #12 | M3: NMR's lists, the Mass Room Editor, and the rest of its fixes | merged (squash 0f7b6dc) |
-| #13 | M3: the Map and the Quest Organizer | open |
+| #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -60,6 +60,9 @@ revisited. Pull requests merged once CI was green.
   text and up/down exits. Clicking a room centres on it; each room links to its editor, and
   the room editor has a Map button. The Lists page gains NMR's Quest Organizer, which reads
   NMR's quest file (its tree of quests and the text blocks in each) and shows each text block.
+  The Tools page gains NMR's Monster Group/Index Changer: a change list of group/index moves,
+  run over the monsters and the rooms whose index ranges hold them, with the rooms' index
+  runs listed to pick from.
 
 ## Decisions taken
 
