@@ -10,13 +10,12 @@ use daydream_types::records::LayoutSet::Dos;
 
 use crate::support::{empty_realm, l, put, t};
 
-/// Columns NMR fills from its lairs and its attack simulation,
-/// which Daydream does not compute yet; and the export's date and time.
+/// Columns NMR fills from its monster attack simulation, which Daydream does not compute
+/// yet; and the export's date and time.
 const NOT_YET: &[&str] = &[
     "AvgDmg",
     "AvgDmgPhys",
     "AvgDmgSpell",
-    "AvgLairExp",
     "ScriptValue",
     "AttTrue%-0",
     "AttTrue%-1",
@@ -26,7 +25,6 @@ const NOT_YET: &[&str] = &[
     "Date",
     "Time",
 ];
-const NOT_YET_TABLES: &[&str] = &["Lairs"];
 
 fn key(t: &NmrRows, r: &[Value]) -> String {
     let cols: &[&str] = match t.name.as_str() {
@@ -58,9 +56,6 @@ fn same(a: &Value, b: &Value) -> bool {
 fn differences(ours: &NmrData, theirs: &NmrData, skip: &[&str]) -> Vec<String> {
     let mut out = Vec::new();
     for t in &ours.tables {
-        if NOT_YET_TABLES.contains(&t.name.as_str()) {
-            continue;
-        }
         let Some(th) = theirs.table(&t.name) else {
             out.push(format!("{}: not in the reference", t.name));
             continue;

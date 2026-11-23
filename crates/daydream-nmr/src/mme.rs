@@ -5,15 +5,16 @@
 //! and the same rooms left out (NMR's default exclusion list of sysop and test rooms, and
 //! a sysop's own list).
 //!
-//! This first part covers the record tables' own values, the rooms and their exits as MME
-//! shows them, and the version row. Still to come, each as NMR does it: the walk that marks
-//! what is in the game and where it comes from (`In Game`, `Obtained From`, `References`,
-//! `Learned From`, `Casted By`, `Summoned By`, `Assigned To`, `TBInfo`), the lairs and
-//! their averages, and the monster attack simulation (`AvgDmg*`, `AttTrue%`, `ScriptValue`).
-//! Until then those columns hold what NMR writes before its walk: 0 and NUL.
+//! It covers the record tables' own values, the rooms and their exits as MME shows them,
+//! the version row, the walk that marks what is in the game and where it comes from
+//! (`walk`: `In Game`, `Obtained From`, `References`, `Learned From`, `Casted By`,
+//! `Summoned By`, `Assigned To`, `TBInfo`), and the lairs and their averages (`lairs`).
+//! Still to come: NMR's monster attack simulation (`AvgDmg*`, `AttTrue%`, and from them
+//! `ScriptValue`); until then those columns hold 0, as NMR writes them before it.
 
 use std::collections::HashMap;
 
+mod lairs;
 mod walk;
 
 use daydream_store::Realm;
@@ -840,8 +841,17 @@ pub fn export(realm: &Realm, layout: LayoutSet, o: &MmeOptions) -> Result<NmrDat
     let rooms = Src::load(realm, "Rooms", layout)?;
     let textblocks = Src::load(realm, "Textblocks", layout)?;
     let world = walk::World::read(&rooms, &shops, &monsters, &spells, &items, &textblocks);
-    walk::locate(&mut data, &world, &excl, o.hide_excluded);
+    let mut lairs = walk::locate(&mut data, &world, &excl, o.hide_excluded);
+    lairs.script_values(named(&mut data, "Monsters"));
+    lairs.export(named(&mut data, "Lairs"), &world.lair_rooms());
     Ok(data)
+}
+
+fn named<'a>(data: &'a mut NmrData, name: &str) -> &'a mut NmrRows {
+    data.tables
+        .iter_mut()
+        .find(|t| t.name == name)
+        .expect("an MME table")
 }
 
 /// `GetMessages(n, which)`: one line, or (`which` 0) the lines that have text, joined.

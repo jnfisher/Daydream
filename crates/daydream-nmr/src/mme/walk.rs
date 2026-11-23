@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::data::{NmrData, NmrRows};
 use crate::schema::Value;
 
+use super::lairs::{LairRoom, Lairs};
 use super::{Exclusions, Src, num};
 
 // ---- VB's string functions, on Windows-1252 bytes, positions from 1 ----
@@ -87,6 +88,11 @@ fn val(s: &[u8]) -> i64 {
         n = n.saturating_mul(10).saturating_add(i64::from(b - b'0'));
     }
     if neg { -n } else { n }
+}
+
+/// `Val` of text.
+pub(super) fn vb_val(s: &str) -> i64 {
+    val(s.as_bytes())
 }
 
 /// `LCase` (the letters the walk looks for are ASCII).
@@ -241,6 +247,27 @@ struct Room {
     min_index: i64,
     max_index: i64,
     max_regen: i64,
+    delay: i64,
+}
+
+impl Room {
+    fn lair_room(&self) -> LairRoom {
+        LairRoom {
+            map: self.map,
+            room: self.room,
+            ty: self.ty,
+            delay: self.delay,
+            mon_type: self.mon_type,
+            min_index: self.min_index,
+            max_index: self.max_index,
+            max_regen: self.max_regen,
+            exits: self
+                .exits
+                .iter()
+                .map(|&(to, ty, p)| (to, ty, p[0]))
+                .collect(),
+        }
+    }
 }
 
 struct Shop {
@@ -262,6 +289,9 @@ struct Monster {
     /// Type, Hit Spell, Accu/Spell.
     attacks: Vec<[i64; 3]>,
     spells: Vec<i64>,
+    regen: i64,
+    /// Experience times its multiplier.
+    exp: f64,
 }
 
 struct Spell {
@@ -321,6 +351,10 @@ impl Row<'_> {
         num(&self.r[*self.at.get(c).unwrap_or_else(|| panic!("no column {c}"))])
     }
 
+    fn n_or(&self, c: &str, or: i64) -> i64 {
+        self.at.get(c).map_or(or, |&i| num(&self.r[i]))
+    }
+
     fn s(&self, c: &str) -> String {
         super::clip(&self.r[self.at[c]])
     }
@@ -356,9 +390,16 @@ pub(super) struct World {
     spells: Vec<Spell>,
     items: Vec<Item>,
     tbs: Vec<Tb>,
+    /// `MGIL`: each group and index's monsters.
+    mgil: HashMap<(i64, i64), Vec<i64>>,
 }
 
 impl World {
+    /// Every room, as the lair code reads them.
+    pub(super) fn lair_rooms(&self) -> Vec<LairRoom> {
+        self.rooms.iter().map(Room::lair_room).collect()
+    }
+
     pub(super) fn read(
         rooms: &Src,
         shops: &Src,
@@ -392,6 +433,7 @@ impl World {
                 min_index: r.n("Min Index"),
                 max_index: r.n("Max Index"),
                 max_regen: r.n("Max Regen"),
+                delay: r.n("Delay"),
             })
             .collect();
         // NMR reads the rooms in their file's key order: by room number, then map
@@ -412,6 +454,7 @@ impl World {
                     .collect(),
             })
             .collect();
+        let mgil = super::monster_group_index_list(monsters);
         let monsters = Reader::new(monsters)
             .rows()
             .map(|r| Monster {
@@ -441,6 +484,8 @@ impl World {
                     })
                     .collect(),
                 spells: r.list(5, |x| format!("Spell Number {x}")),
+                regen: r.n("Regen Time"),
+                exp: r.n("Experience") as f64 * r.n_or("Exp Multiplier", 1) as f64,
             })
             .collect();
         let spells = Reader::new(spells)
@@ -477,6 +522,7 @@ impl World {
             spells,
             items,
             tbs,
+            mgil,
         }
     }
 }
@@ -587,10 +633,18 @@ struct Walk<'w> {
     tb_at: HashMap<(i64, i64), usize>,
     item_at: HashMap<i64, usize>,
     spell_at: HashMap<i64, usize>,
+    monster_at: HashMap<i64, usize>,
+    lairs: Lairs,
 }
 
-/// Walks the world and fills in `data`'s Items, Spells, Monsters and Shops and its TBInfo.
-pub(super) fn locate(data: &mut NmrData, world: &World, excl: &Exclusions, hide_excluded: bool) {
+/// Walks the world and fills in `data`'s Items, Spells, Monsters and Shops and its TBInfo;
+/// the lairs it found along the way.
+pub(super) fn locate(
+    data: &mut NmrData,
+    world: &World,
+    excl: &Exclusions,
+    hide_excluded: bool,
+) -> Lairs {
     let mut take = |name: &str| {
         Marked::take(
             data.tables
@@ -638,6 +692,14 @@ pub(super) fn locate(data: &mut NmrData, world: &World, excl: &Exclusions, hide_
             .map(|(i, t)| (t.number, i))
             .rev()
             .collect(),
+        monster_at: world
+            .monsters
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.number, i))
+            .rev()
+            .collect(),
+        lairs: Lairs::default(),
     };
 
     // LocateRecords
@@ -656,6 +718,7 @@ pub(super) fn locate(data: &mut NmrData, world: &World, excl: &Exclusions, hide_
     w.scan_greets();
     w.fill_textblock_commands();
 
+    let lairs = std::mem::take(&mut w.lairs);
     for (name, m) in [
         ("Items", w.items),
         ("Spells", w.spells),
@@ -681,6 +744,7 @@ pub(super) fn locate(data: &mut NmrData, world: &World, excl: &Exclusions, hide_
             ]
         })
         .collect();
+    lairs
 }
 
 fn room_note(r: &Room) -> String {
@@ -919,6 +983,14 @@ impl Walk<'_> {
                 }
             }
             if r.min_index <= r.max_index && r.max_index > 0 {
+                let monster = |n: i64| self.monster_at.get(&n).map(|&i| &world.monsters[i]);
+                self.lairs.room(
+                    &r.lair_room(),
+                    |g, x| world.mgil.get(&(g, x)).cloned().unwrap_or_default(),
+                    // GetMonsterRegen: -1 for no such monster
+                    |n| monster(n).map_or(-1, |m| m.regen),
+                    |n| monster(n).map_or(0.0, |m| m.exp),
+                );
                 let lair = r.ty == 3 && r.max_regen > 0;
                 for x in r.min_index..=r.max_index {
                     let g = self.mon_group.entry((r.mon_type, x)).or_default();
