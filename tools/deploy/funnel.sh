@@ -36,8 +36,16 @@ die() { printf 'daydream funnel: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -ne 0 ] || die "run this as yourself, not root: the service runs as your user"
 
 CONF=${XDG_CONFIG_HOME:-$HOME/.config}/daydream
+# Saved settings, under any given in the environment for this run.
 if [ -r "$CONF/deploy.env" ]; then
-    set -a; . "$CONF/deploy.env"; set +a
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+        DAYDREAM_*=*)
+            k=${line%%=*}
+            if [ -z "${!k+x}" ]; then export "$line"; fi
+            ;;
+        esac
+    done < "$CONF/deploy.env"
 fi
 DD_HOME=${DAYDREAM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/daydream}
 SRC=$DD_HOME/src
