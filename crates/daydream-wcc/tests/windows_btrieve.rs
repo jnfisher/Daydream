@@ -324,7 +324,10 @@ fn btrieve_clones_the_stock_files() {
         if !name.to_ascii_uppercase().ends_with(".VIR") {
             continue;
         }
-        if std::fs::metadata(&path).unwrap().len() > 256 * 1024 {
+        // the small files, and the message file: its 512-byte pages need more page tables
+        // than a rebuilt file reads back with (status 2 past about 30)
+        let big = std::fs::metadata(&path).unwrap().len() > 256 * 1024;
+        if big && !name.eq_ignore_ascii_case("WCCMSG.VIR") {
             continue;
         }
         let stem = name.trim_end_matches(".VIR").trim_end_matches(".vir");
@@ -335,6 +338,7 @@ fn btrieve_clones_the_stock_files() {
     files.sort();
     let out = tmp.path().join("clones");
     script("btrieve-clone.ps1", &[&out, &engine], &files);
+    let mut unread = Vec::new();
     for f in &files {
         let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
         for (what, path) in [
@@ -355,10 +359,13 @@ fn btrieve_clones_the_stock_files() {
                 print!("{}", nonzero_rows(&bytes[p * page..(p + 1) * page]));
             }
             for (p, chunk) in bytes.chunks(page).enumerate().skip(fcr_pages) {
-                if bytes.len() <= 16 * 1024 {
-                    // small files whole, so every byte of Btrieve's layout is on record
+                if bytes.len() <= 16 * 1024 || (bytes.len() > 256 * 1024 && chunk[..2] == *b"PP") {
+                    // small files whole, so every byte of Btrieve's layout is on record; of
+                    // a large one, the page tables
                     println!("  page {p}:");
                     print!("{}", nonzero_rows(chunk));
+                } else if bytes.len() > 256 * 1024 {
+                    continue;
                 } else {
                     let hex: Vec<String> = chunk[..16].iter().map(|b| format!("{b:02x}")).collect();
                     println!("  page {p}: {}", hex.join(" "));
@@ -366,9 +373,17 @@ fn btrieve_clones_the_stock_files() {
             }
             if what != "original" {
                 // Daydream must read Btrieve's own files, indexes included
-                let mut file = open(&path);
-                let report = file.verify_indexes().unwrap_or_else(|e| panic!("{e}"));
-                println!("  indexes: {report:?}");
+                match OpenOptions::new()
+                    .variable_length(true)
+                    .open(&path)
+                    .and_then(|mut file| file.verify_indexes())
+                {
+                    Ok(report) => println!("  indexes: {report:?}"),
+                    Err(e) => {
+                        println!("  Daydream fails: {e}");
+                        unread.push(format!("{stem} {what}: {e}"));
+                    }
+                }
             }
         }
     }
@@ -400,5 +415,6 @@ fn btrieve_clones_the_stock_files() {
             ));
         }
     }
+    differ.extend(unread);
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
