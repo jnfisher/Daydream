@@ -24,6 +24,7 @@
 //!   pads it with spaces.
 //! - A new record starts from the record of the row before it in this table (NMR reuses its
 //!   Btrieve buffer, which a failed Get Equal leaves alone), or from zeros for the first.
+//!   A new room starts from zeros: only `ImportRooms` clears the buffer.
 //! - A text block is always re-encrypted, and stored at its full length.
 
 use std::collections::HashMap;
@@ -203,8 +204,9 @@ fn import_table(
                 (*fi, Some(*id), raw.clone(), *len)
             }
             None => {
+                // NMR clears the buffer for a new room only
                 let base = match &last {
-                    Some(r) if opts.like_nmr => r.clone(),
+                    Some(r) if opts.like_nmr && table != Table::Rooms => r.clone(),
                     _ => vec![0; layout.len],
                 };
                 (0, None, base, 0)
