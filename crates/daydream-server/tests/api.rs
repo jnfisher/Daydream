@@ -733,3 +733,43 @@ async fn write_dat_previews_then_writes_the_wcc_files() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn mcp_answers_over_http_from_this_machine_only() {
+    let dir = realm();
+    let mcp = |origin: Option<&str>, body: Value| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("content-type", "application/json");
+        if let Some(o) = origin {
+            req = req.header("origin", o);
+        }
+        let req = req.body(Body::from(body.to_string())).unwrap();
+        let path = dir.path().to_path_buf();
+        async move {
+            let res = daydream_server::router(&path).oneshot(req).await.unwrap();
+            let status = res.status();
+            let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            (
+                status,
+                serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null),
+            )
+        }
+    };
+    let init = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}});
+    let (status, body) = mcp(Some("http://localhost:7340"), init.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["serverInfo"]["name"], "daydream");
+    let (status, _) = mcp(
+        None,
+        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (status, _) = mcp(Some("https://evil.example"), init).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let tools = serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}});
+    let (_, body) = mcp(None, tools).await;
+    assert_eq!(body["result"]["isError"], false);
+}

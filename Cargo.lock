@@ -398,6 +398,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "daydream-mcp",
  "daydream-nmr",
  "daydream-server",
  "daydream-store",
@@ -408,6 +409,20 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "daydream-mcp"
+version = "0.1.0"
+dependencies = [
+ "daydream-nmr",
+ "daydream-store",
+ "daydream-types",
+ "daydream-wcc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -429,6 +444,7 @@ name = "daydream-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "daydream-mcp",
  "daydream-nmr",
  "daydream-store",
  "daydream-types",

@@ -73,6 +73,20 @@ cargo run -p daydream -- write-dat ./realm /path/to/WGSERV           # or --out 
 
 In the browser it is the Tools page's **Write to WCC files** card.
 
+For AI agents, Daydream is an MCP (Model Context Protocol) server. An agent reads the realm
+in NMR's terms (tables, columns, rows, free record numbers, maps) and makes content with
+`preview_edits`, then `apply_edits`. Every write goes through the same strict import as the
+editors' saves, and `undo` puts back exactly the records an applied edit changed (the journal
+is kept in `REALM/.daydream/undo`). The player tables are left out unless given `--players`.
+
+```sh
+claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over stdio
+```
+
+For Claude Desktop, add `{"command": "daydream", "args": ["mcp", "/path/to/realm"]}` under
+`mcpServers` in its config. `daydream serve` also answers MCP over HTTP at
+`http://127.0.0.1:7340/mcp`, on this machine only for now.
+
 `convert` only reads the source files. It writes one `.db` per Btrieve file, in the format of
 wbtrv32 (the `WBTRV32.DLL` replacement MBBSEmu uses), so MBBSEmu and legacy NMR can open the
 same files.
@@ -81,8 +95,9 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat` |
-| `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `mcp` |
+| `crates/daydream-mcp` | The MCP server for AI agents: its tools, the undo journal, stdio |
+| `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file; one row at a time for the editors (`rows`) |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
 | `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns |

@@ -3,7 +3,8 @@
 //! It runs on the sysop's own machine and opens in the browser. `/` is the web UI (built
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
-//! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], and the
+//! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the MCP
+//! server for AI agents at `/mcp` ([`mcp`]), and the
 //! routes below serve each file's records
 //! decoded (every member by name, `unk_*` spans included), read only.
 //!
@@ -33,6 +34,7 @@ use daydream_wcc::decode::base64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub mod mcp;
 pub mod mme;
 pub mod reports;
 pub mod tables;
@@ -47,6 +49,8 @@ pub struct AppState {
     realm_dir: PathBuf,
     /// Held by every write, so two saves never interleave.
     write: Mutex<()>,
+    /// The MCP server at `/mcp`.
+    mcp: daydream_mcp::Server,
 }
 
 /// The router for the realm in `realm_dir`.
@@ -54,12 +58,14 @@ pub fn router(realm_dir: &Path) -> Router {
     let state = Arc::new(AppState {
         realm_dir: realm_dir.to_path_buf(),
         write: Mutex::new(()),
+        mcp: daydream_mcp::Server::new(realm_dir, daydream_mcp::Options::default()),
     });
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
         .route("/api/health", get(health))
+        .route("/mcp", post(mcp::post).get(mcp::get))
         .route("/api/tables", get(tables::tables))
         .route("/api/tables/{table}/rows", get(tables::rows))
         .route(

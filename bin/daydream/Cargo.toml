@@ -15,6 +15,7 @@ workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+daydream-mcp.workspace = true
 daydream-nmr.workspace = true
 daydream-server.workspace = true
 jiff.workspace = true

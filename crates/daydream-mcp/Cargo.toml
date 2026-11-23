@@ -1,0 +1,29 @@
+[package]
+name = "daydream-mcp"
+description = "Daydream as a Model Context Protocol server: tools for AI agents to read a realm and make content in it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+daydream-nmr.workspace = true
+daydream-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+daydream-types.workspace = true
+daydream-wcc.workspace = true
+tempfile.workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

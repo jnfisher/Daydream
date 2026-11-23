@@ -432,6 +432,27 @@ impl WbtrvDb {
         Ok(id)
     }
 
+    /// Puts back record `id` with these bytes, as it was before it was deleted (for undo):
+    /// the same position, the key columns recomputed. Fails if `id` is taken or a unique
+    /// key clashes.
+    pub fn restore(&mut self, id: i64, data: &[u8]) -> Result<(), StoreError> {
+        self.check_length(data)?;
+        let values = key_values(&self.keys, data).map_err(|source| StoreError::Key {
+            path: self.path.clone(),
+            source,
+        })?;
+        let sql = insert_sql_with(&self.keys, true);
+        let id = KeyValue::Integer(id);
+        let blob = KeyValue::Blob(data.to_vec());
+        self.conn
+            .execute(
+                &sql,
+                params_from_iter([&id, &blob].into_iter().chain(&values)),
+            )
+            .map_err(sql_err(&self.path))?;
+        Ok(())
+    }
+
     /// Removes record `id`.
     pub fn delete(&mut self, id: i64) -> Result<(), StoreError> {
         let changed = self
@@ -482,7 +503,16 @@ fn key_values(keys: &[Key], data: &[u8]) -> Result<Vec<KeyValue>, KeyError> {
 }
 
 fn insert_sql(keys: &[Key]) -> String {
-    let mut columns = vec!["data".to_string()];
+    insert_sql_with(keys, false)
+}
+
+/// The insert, with an explicit `id` first when `with_id`.
+fn insert_sql_with(keys: &[Key], with_id: bool) -> String {
+    let mut columns = Vec::new();
+    if with_id {
+        columns.push("id".to_string());
+    }
+    columns.push("data".to_string());
     for k in keys {
         columns.extend(k.column_names());
     }

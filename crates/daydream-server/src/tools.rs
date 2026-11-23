@@ -126,7 +126,10 @@ pub(crate) async fn import(
             extra_parts: o.extra_parts,
         };
         let reports = daydream_nmr::import(&realm, &data, &opts).map_err(|e| bad(e.to_string()))?;
-        let reports: Vec<Value> = reports.iter().map(crate::tables::report_json).collect();
+        let reports: Vec<Value> = reports
+            .iter()
+            .map(daydream_nmr::rows::report_json)
+            .collect();
         Ok(Json(json!({ "dry_run": opts.dry_run, "reports": reports })))
     })
     .await
@@ -169,7 +172,7 @@ pub(crate) async fn delete(
         .map_err(|e| bad(e.to_string()))?;
         Ok(Json(json!({
             "dry_run": body.dry_run,
-            "report": crate::tables::report_json(&report),
+            "report": daydream_nmr::rows::report_json(&report),
         })))
     })
     .await
@@ -332,7 +335,7 @@ pub(crate) async fn renumber(
             daydream_nmr::renumber::apply(&realm, &plans, layout)
                 .map_err(|e| bad(e.to_string()))?
                 .iter()
-                .map(|r| Some(crate::tables::report_json(r)))
+                .map(|r| Some(daydream_nmr::rows::report_json(r)))
                 .collect()
         };
         let tables: Vec<Value> = plans
@@ -366,7 +369,7 @@ async fn run_plan(
         } else {
             let r = daydream_nmr::modify::apply(&realm, &plan, layout)
                 .map_err(|e| bad(e.to_string()))?;
-            Some(crate::tables::report_json(&r))
+            Some(daydream_nmr::rows::report_json(&r))
         };
         Ok(Json(plan_json(&plan, dry_run, report)))
     })
