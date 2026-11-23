@@ -458,11 +458,13 @@ fn dump(realm: &std::path::Path, stem: &str) -> anyhow::Result<()> {
         bail!("{} has no {stem}.db", realm.dir().display());
     };
     let db = WbtrvDb::open_read_only(&file.path)?;
+    // a Worldgroup 3 realm's files hold the aligned layouts
+    let layout = daydream_nmr::layout_of_realm(&realm);
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
     for (id, data) in db.records()? {
         let value = match file.table {
             Some(t) => serde_json::Value::Object(
-                t.to_json(u32::try_from(id)?, &data)
+                t.to_json_as(u32::try_from(id)?, &data, layout)
                     .with_context(|| format!("{} record {id}", file.stem))?,
             ),
             None => serde_json::json!({
