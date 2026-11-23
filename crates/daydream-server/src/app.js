@@ -1088,8 +1088,7 @@ function listsPage() {
   return h("div", { class: "tools" }, limitedItems(), findItem(), controlRooms(), monsterGroups(), npcRooms());
 }
 
-// src/tools.ts
-var TABLES = ["Items", "Monsters", "Spells", "Shops", "Races", "Classes", "Rooms", "Actions", "Messages", "Textblocks"];
+// src/massroom.ts
 function h2(tag, props = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k2, v] of Object.entries(props)) {
@@ -1100,7 +1099,153 @@ function h2(tag, props = {}, ...children) {
   el.append(...children);
   return el;
 }
-var input = (props) => h2("input", props);
+var count = (n) => Array.from({ length: n }, (_, i) => i);
+var GROUPS = [
+  ["Name", [["Name", "Name"]]],
+  ["Description", count(7).map((i) => [`Desc ${i}`, `Line ${i + 1}`])],
+  ["Ansi Map", [["AnsiMap", "Ansi Map"]]],
+  ["Room Type", [["Type", "Room Type", ROOM_TYPE]]],
+  ["Shop #", [["Shop Number", "Shop #"]]],
+  ["Gang House #", [["Gang House Number", "Gang House #"]]],
+  ["Light", [["Light", "Light"]]],
+  ["Attributes", [["Attributes", "Attributes"]]],
+  ["Permanent NPC", [["Perm NPC", "Permanent NPC"]]],
+  ["Monster Type", [["Mon Type", "Monster Type", MONSTER_GROUP]]],
+  ["Min Index", [["Min Index", "Min Index"]]],
+  ["Max Index", [["Max Index", "Max Index"]]],
+  ["Max Regen", [["Max Regen", "Max Regen"]]],
+  ["Max Area", [["Max Area", "Max Area"]]],
+  ["Control Room", [["Control Room", "Control Room"]]],
+  ["Death Room", [["Death Room", "Death Room"]]],
+  ["Exit Room", [["Exit Room", "Exit Room"]]],
+  ["CMD Text", [["Command Text", "CMD Text"]]],
+  ["Delay", [["Delay", "Delay"]]],
+  ["Room Spell", [["Spell", "Room Spell"]]],
+  ["Visible Coins", ["Runic", "Platinum", "Gold", "Silver", "Copper"].map((c) => [c, c])],
+  ["Hidden Coins", ["Runic", "Platinum", "Gold", "Silver", "Copper"].map((c) => [`Invis${c}`, c])],
+  ...EXITS.map((d, i) => [
+    `Exit ${d}`,
+    [[`Exit ${i}`, "To Room"], [`Type ${i}`, "Exit Type", EXIT_TYPE], [`Para1 ${i}`, "Para1"], [`Para2 ${i}`, "Para2"], [`Para3 ${i}`, "Para3"], [`Para4 ${i}`, "Para4"]]
+  ]),
+  ["Items In Room", count(17).flatMap((i) => [[`Room Item ${i}`, `Item ${i}`], [`Room Item ${i} USES`, "Uses"], [`Room Item ${i} QTY`, "Qty - 1"]])],
+  ["Hidden Items In Room", count(15).flatMap((i) => [[`Hidden Item ${i}`, `Item ${i}`], [`Hidden Item ${i} USES`, "Uses"], [`Hidden Item ${i} QTY`, "Qty - 1"]])],
+  ["Placed Items", count(10).map((i) => [`Placed Item ${i}`, `Placed ${i}`])],
+  ["Current Monsters In Room", count(15).map((i) => [`CurrentRoomMon ${i}`, `Monster ${i}`])]
+];
+function massRoomEditor(rooms, post2, show2, changed2) {
+  const textual = new Set(rooms.columns.filter((c) => c.type === "text" || c.type === "memo").map((c) => c.name));
+  const num2 = (value = "") => h2("input", { type: "text", inputmode: "numeric", class: "number", value });
+  const card2 = h2("section", { class: "tool" }, h2("h2", {}, "Mass Room Editor"));
+  card2.append(
+    h2("p", { class: "hint" }, "Set the checked fields on every room of a map from one room to another. Take the values from a room, or type them. Item quantities are the count less one (0 for 1).")
+  );
+  const map = num2("1");
+  const from = num2("1");
+  const to = num2("1");
+  const srcMap = num2("1");
+  const srcRoom = num2("1");
+  const take = h2("button", { type: "button" }, "Take Values");
+  card2.append(
+    h2("div", { class: "toolbar" }, h2("label", {}, "Map ", map), h2("label", {}, "From: ", from), h2("label", {}, "To: ", to)),
+    h2("div", { class: "toolbar" }, h2("span", {}, "Values from room "), h2("label", {}, "Map ", srcMap), h2("label", {}, "Room # ", srcRoom), take)
+  );
+  const inputs = [];
+  const groups = [];
+  const list2 = h2("div", { class: "mass-groups" });
+  for (const [label, fields] of GROUPS) {
+    const box = h2("input", { type: "checkbox" });
+    const body = h2("div", { class: "mass-fields", hidden: "" });
+    const mine = [];
+    for (const [column2, name, opts] of fields) {
+      const text = textual.has(column2);
+      const el = opts ? h2("select", {}, ...Object.entries(opts).map(([v, l]) => h2("option", { value: v }, l))) : h2("input", { type: "text", class: text ? "text" : "number", value: text ? "" : "0" });
+      const i = { column: column2, el, text };
+      mine.push(i);
+      inputs.push(i);
+      body.append(h2("label", {}, `${name} `, el));
+    }
+    box.addEventListener("change", () => body.hidden = !box.checked);
+    groups.push({ box, fields: mine });
+    list2.append(h2("div", { class: "mass-group" }, h2("label", { class: "check" }, box, ` ${label}`), body));
+  }
+  const all = h2("button", { type: "button" }, "Select All");
+  const none = h2("button", { type: "button" }, "Select None");
+  const setAll = (on) => groups.forEach((g) => {
+    g.box.checked = on;
+    g.box.dispatchEvent(new Event("change"));
+  });
+  all.addEventListener("click", () => setAll(true));
+  none.addEventListener("click", () => setAll(false));
+  card2.append(h2("div", { class: "toolbar" }, all, none), list2);
+  const out = h2("div");
+  take.addEventListener("click", async () => {
+    try {
+      const row = await api.row("Rooms", [Number(srcMap.value), Number(srcRoom.value)]);
+      for (const i of inputs) {
+        const v = row.values[i.column] ?? (i.text ? "" : 0);
+        i.el.value = i.text ? toShown(String(v ?? "")) : String(v ?? 0);
+      }
+      out.replaceChildren(h2("p", {}, `Values taken from room ${srcMap.value}/${srcRoom.value}.`));
+    } catch (e) {
+      out.replaceChildren(h2("p", { class: "error" }, e instanceof Error ? e.message : String(e)));
+    }
+  });
+  const preview = h2("button", { type: "button" }, "Preview");
+  const go = h2("button", { type: "button", class: "primary" }, "Go");
+  card2.append(h2("div", { class: "toolbar" }, preview, go), out);
+  const run = async (dryRun) => {
+    const values = [];
+    for (const g of groups) {
+      if (!g.box.checked) continue;
+      for (const i of g.fields) {
+        if (i.text) values.push([i.column, toWire(i.el.value)]);
+        else {
+          const n = Number(i.el.value.trim() || 0);
+          if (!Number.isFinite(n)) {
+            out.replaceChildren(h2("p", { class: "error" }, `${i.column}: ${i.el.value} is not a number.`));
+            return;
+          }
+          values.push([i.column, n]);
+        }
+      }
+    }
+    if (!values.length) {
+      out.replaceChildren(h2("p", { class: "error" }, "Check the fields to set."));
+      return;
+    }
+    const range = { table: "Rooms", map: Number(map.value), from: Number(from.value), to: Number(to.value) };
+    if (range.from > range.to) {
+      out.replaceChildren(h2("p", { class: "error" }, "Illegal Range Entered!"));
+      return;
+    }
+    if (!dryRun && !confirm(`Set ${values.length} fields on rooms ${range.from} to ${range.to} of map ${range.map}?`)) return;
+    out.replaceChildren(h2("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
+    try {
+      const res = await post2("/api/tools/modify", JSON.stringify({ table: "Rooms", action: { kind: "set", values }, range, only_if: [], dry_run: dryRun }));
+      out.replaceChildren(show2(res));
+      if (!dryRun) changed2();
+    } catch (e) {
+      out.replaceChildren(h2("p", { class: "error" }, e instanceof Error ? e.message : String(e)));
+    }
+  };
+  preview.addEventListener("click", () => void run(true));
+  go.addEventListener("click", () => void run(false));
+  return card2;
+}
+
+// src/tools.ts
+var TABLES = ["Items", "Monsters", "Spells", "Shops", "Races", "Classes", "Rooms", "Actions", "Messages", "Textblocks"];
+function h3(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k2, v] of Object.entries(props)) {
+    if (v === void 0) continue;
+    if (k2 === "class") el.className = v;
+    else el.setAttribute(k2, v);
+  }
+  el.append(...children);
+  return el;
+}
+var input = (props) => h3("input", props);
 async function post(url, body, json = false) {
   const res = await fetch(url, {
     method: "POST",
@@ -1117,26 +1262,26 @@ async function post(url, body, json = false) {
   return parsed;
 }
 function reportTable(reports, dryRun) {
-  const box = h2("div", { class: "tool-result" });
-  box.append(h2("p", {}, dryRun ? "Preview: nothing was written." : "Done."));
-  const table = h2("table", { class: "grid" });
+  const box = h3("div", { class: "tool-result" });
+  box.append(h3("p", {}, dryRun ? "Preview: nothing was written." : "Done."));
+  const table = h3("table", { class: "grid" });
   table.append(
-    h2("thead", {}, h2("tr", {}, ...["Table", "Inserted", "Updated", "Unchanged", "Skipped", "Deleted", "Errors"].map((c) => h2("th", {}, c))))
+    h3("thead", {}, h3("tr", {}, ...["Table", "Inserted", "Updated", "Unchanged", "Skipped", "Deleted", "Errors"].map((c) => h3("th", {}, c))))
   );
-  const body = h2("tbody");
+  const body = h3("tbody");
   for (const r of reports) {
     body.append(
-      h2("tr", {}, ...[r.table, r.inserted, r.updated, r.unchanged, r.skipped ?? 0, r.deleted, r.errors.length].map((v) => h2("td", {}, String(v))))
+      h3("tr", {}, ...[r.table, r.inserted, r.updated, r.unchanged, r.skipped ?? 0, r.deleted, r.errors.length].map((v) => h3("td", {}, String(v))))
     );
   }
   table.append(body);
   box.append(table);
   const errors = reports.flatMap((r) => r.errors);
-  if (errors.length) box.append(h2("pre", { class: "errors" }, errors.join("\n")));
+  if (errors.length) box.append(h3("pre", { class: "errors" }, errors.join("\n")));
   return box;
 }
 function failure(e) {
-  return h2("p", { class: "error" }, e instanceof Error ? e.message : String(e));
+  return h3("p", { class: "error" }, e instanceof Error ? e.message : String(e));
 }
 function rangeOf(r) {
   if (r.all.checked) return null;
@@ -1154,60 +1299,60 @@ function rangeRow(table, withUse) {
   all.addEventListener("change", () => {
     for (const i of [map, from, to]) if (i) i.disabled = all.checked;
   });
-  const tr = h2(
+  const tr = h3(
     "tr",
     {},
-    h2("td", {}, withUse ? h2("label", {}, use, " ", table) : table),
-    h2("td", {}, h2("label", {}, all, " All")),
-    h2("td", {}, map ?? ""),
-    h2("td", {}, from),
-    h2("td", {}, to)
+    h3("td", {}, withUse ? h3("label", {}, use, " ", table) : table),
+    h3("td", {}, h3("label", {}, all, " All")),
+    h3("td", {}, map ?? ""),
+    h3("td", {}, from),
+    h3("td", {}, to)
   );
   return [tr, { table, use, all, map, from, to }];
 }
 function rangeHead(first) {
-  return h2("thead", {}, h2("tr", {}, ...[first, "Range", "Map", "From", "To"].map((c) => h2("th", {}, c))));
+  return h3("thead", {}, h3("tr", {}, ...[first, "Range", "Map", "From", "To"].map((c) => h3("th", {}, c))));
 }
 function importer(changed2) {
-  const card2 = h2("section", { class: "tool" }, h2("h2", {}, "Database Importer"));
+  const card2 = h3("section", { class: "tool" }, h3("h2", {}, "Database Importer"));
   card2.append(
-    h2("p", { class: "hint" }, "Import an NMR export (.mdb) into this realm. Stop the realm first. Preview First shows what would change without writing.")
+    h3("p", { class: "hint" }, "Import an NMR export (.mdb) into this realm. Stop the realm first. Preview First shows what would change without writing.")
   );
   const file = input({ type: "file", accept: ".mdb,.json" });
-  card2.append(h2("label", { class: "file" }, "Import file: ", file));
+  card2.append(h3("label", { class: "file" }, "Import file: ", file));
   const rows = [];
-  const table = h2("table", { class: "grid" });
+  const table = h3("table", { class: "grid" });
   table.append(rangeHead("Databases to Import"));
-  const body = h2("tbody");
+  const body = h3("tbody");
   for (const t2 of TABLES) {
     const [tr, r] = rangeRow(t2, true);
     rows.push(r);
     body.append(tr);
   }
   table.append(body);
-  const allBtn = h2("button", { type: "button" }, "All");
-  const noneBtn = h2("button", { type: "button" }, "None");
+  const allBtn = h3("button", { type: "button" }, "All");
+  const noneBtn = h3("button", { type: "button" }, "None");
   allBtn.addEventListener("click", () => rows.forEach((r) => r.use.checked = true));
   noneBtn.addEventListener("click", () => rows.forEach((r) => r.use.checked = false));
-  card2.append(table, h2("div", { class: "toolbar" }, allBtn, noneBtn));
-  const radio = (name, value, label, checked = false) => h2("label", {}, input({ type: "radio", name, value, checked: checked ? "" : void 0 }), " ", label);
+  card2.append(table, h3("div", { class: "toolbar" }, allBtn, noneBtn));
+  const radio = (name, value, label, checked = false) => h3("label", {}, input({ type: "radio", name, value, checked: checked ? "" : void 0 }), " ", label);
   card2.append(
-    h2("fieldset", {}, h2("legend", {}, "Existing Records"), radio("existing", "update", "Update", true), radio("existing", "skip", "Skip")),
-    h2(
+    h3("fieldset", {}, h3("legend", {}, "Existing Records"), radio("existing", "update", "Update", true), radio("existing", "skip", "Skip")),
+    h3(
       "fieldset",
       {},
-      h2("legend", {}, "Rooms"),
+      h3("legend", {}, "Rooms"),
       radio("rooms", "all", "Everything", true),
       radio("rooms", "only_items", "Only Items"),
       radio("rooms", "not_items", "Not Items")
     )
   );
   const extra = input({ type: "checkbox", checked: "" });
-  card2.append(h2("label", { class: "check" }, extra, " Delete text block parts past the last part the file has (NMR always does)"));
-  const preview = h2("button", { type: "button" }, "Preview First");
-  const go = h2("button", { type: "button", class: "primary" }, "Import");
-  const out = h2("div");
-  card2.append(h2("div", { class: "toolbar" }, preview, go), out);
+  card2.append(h3("label", { class: "check" }, extra, " Delete text block parts past the last part the file has (NMR always does)"));
+  const preview = h3("button", { type: "button" }, "Preview First");
+  const go = h3("button", { type: "button", class: "primary" }, "Import");
+  const out = h3("div");
+  card2.append(h3("div", { class: "toolbar" }, preview, go), out);
   const run = async (dryRun) => {
     const f2 = file.files?.[0];
     if (!f2) {
@@ -1224,7 +1369,7 @@ function importer(changed2) {
       dry_run: dryRun
     };
     if (!dryRun && !confirm(`Import ${f2.name} into this realm?`)) return;
-    out.replaceChildren(h2("p", {}, `${dryRun ? "Previewing" : "Importing"} ${f2.name}\u2026`));
+    out.replaceChildren(h3("p", {}, `${dryRun ? "Previewing" : "Importing"} ${f2.name}\u2026`));
     try {
       const res = await post(`/api/tools/import?options=${encodeURIComponent(JSON.stringify(options2))}`, f2);
       out.replaceChildren(reportTable(res.reports, res.dry_run));
@@ -1238,21 +1383,21 @@ function importer(changed2) {
   return card2;
 }
 function deleter(changed2) {
-  const card2 = h2("section", { class: "tool" }, h2("h2", {}, "Database Deleter"));
-  card2.append(h2("p", { class: "hint" }, "Delete every record of a table, or a range of them. This cannot be undone; Preview shows how many would go."));
-  const select2 = h2("select", {}, ...TABLES.map((t2) => h2("option", { value: t2 }, t2)));
-  const holder = h2("tbody");
+  const card2 = h3("section", { class: "tool" }, h3("h2", {}, "Database Deleter"));
+  card2.append(h3("p", { class: "hint" }, "Delete every record of a table, or a range of them. This cannot be undone; Preview shows how many would go."));
+  const select2 = h3("select", {}, ...TABLES.map((t2) => h3("option", { value: t2 }, t2)));
+  const holder = h3("tbody");
   let row = rangeRow(TABLES[0], false);
   holder.append(row[0]);
   select2.addEventListener("change", () => {
     row = rangeRow(select2.value, false);
     holder.replaceChildren(row[0]);
   });
-  const table = h2("table", { class: "grid" }, rangeHead("Table"), holder);
-  const preview = h2("button", { type: "button" }, "Preview");
-  const go = h2("button", { type: "button", class: "danger" }, "Delete Selected");
-  const out = h2("div");
-  card2.append(h2("label", {}, "Delete from: ", select2), table, h2("div", { class: "toolbar" }, preview, go), out);
+  const table = h3("table", { class: "grid" }, rangeHead("Table"), holder);
+  const preview = h3("button", { type: "button" }, "Preview");
+  const go = h3("button", { type: "button", class: "danger" }, "Delete Selected");
+  const out = h3("div");
+  card2.append(h3("label", {}, "Delete from: ", select2), table, h3("div", { class: "toolbar" }, preview, go), out);
   const run = async (dryRun) => {
     const r = row[1];
     const range = rangeOf(r);
@@ -1260,7 +1405,7 @@ function deleter(changed2) {
     if (!dryRun && !confirm(`Delete ${what} from the realm? This cannot be undone.`)) return;
     try {
       const res = await post("/api/tools/delete", JSON.stringify({ table: r.table, range, all: range === null, dry_run: dryRun }), true);
-      out.replaceChildren(h2("p", {}, `${res.report.deleted} ${r.table} record${res.report.deleted === 1 ? "" : "s"} ${dryRun ? "would be " : ""}deleted.`));
+      out.replaceChildren(h3("p", {}, `${res.report.deleted} ${r.table} record${res.report.deleted === 1 ? "" : "s"} ${dryRun ? "would be " : ""}deleted.`));
       if (!dryRun) changed2();
     } catch (e) {
       out.replaceChildren(failure(e));
@@ -1271,13 +1416,13 @@ function deleter(changed2) {
   return card2;
 }
 function mergeUsers() {
-  const card2 = h2("section", { class: "tool" }, h2("h2", {}, "Merge Users"));
-  card2.append(h2("p", { class: "hint" }, "Copy the users of another user file (WCCUSER2.DAT, or a Daydream .db) into this realm, byte for byte. Users the realm already has are skipped."));
+  const card2 = h3("section", { class: "tool" }, h3("h2", {}, "Merge Users"));
+  card2.append(h3("p", { class: "hint" }, "Copy the users of another user file (WCCUSER2.DAT, or a Daydream .db) into this realm, byte for byte. Users the realm already has are skipped."));
   const file = input({ type: "file", accept: ".dat,.db" });
-  const preview = h2("button", { type: "button" }, "Preview");
-  const go = h2("button", { type: "button", class: "primary" }, "Merge");
-  const out = h2("div");
-  card2.append(h2("label", { class: "file" }, "Users to merge in: ", file), h2("div", { class: "toolbar" }, preview, go), out);
+  const preview = h3("button", { type: "button" }, "Preview");
+  const go = h3("button", { type: "button", class: "primary" }, "Merge");
+  const out = h3("div");
+  card2.append(h3("label", { class: "file" }, "Users to merge in: ", file), h3("div", { class: "toolbar" }, preview, go), out);
   const run = async (dryRun) => {
     const f2 = file.files?.[0];
     if (!f2) {
@@ -1288,8 +1433,8 @@ function mergeUsers() {
     try {
       const res = await post(`/api/tools/merge-users?dry_run=${dryRun}`, f2);
       const lines = [`${res.copied} users ${dryRun ? "would be " : ""}copied, ${res.skipped.length} skipped (already in the realm).`];
-      out.replaceChildren(h2("p", {}, lines[0]));
-      if (res.skipped.length) out.append(h2("pre", { class: "errors" }, res.skipped.join("\n")));
+      out.replaceChildren(h3("p", {}, lines[0]));
+      if (res.skipped.length) out.append(h3("pre", { class: "errors" }, res.skipped.join("\n")));
     } catch (e) {
       out.replaceChildren(failure(e));
     }
@@ -1300,7 +1445,7 @@ function mergeUsers() {
 }
 var OPS = [["add", "+"], ["sub", "-"], ["mul", "*"], ["div", "/"], ["percent", "%"], ["set", "="]];
 var CMPS = [["eq", "="], ["le", "<="], ["ge", ">="], ["ne", "<>"]];
-var options = (pairs) => pairs.map(([v, label]) => h2("option", { value: v }, label));
+var options = (pairs) => pairs.map(([v, label]) => h3("option", { value: v }, label));
 var numberInput = (value = "") => input({ type: "text", inputmode: "decimal", class: "number", value });
 function numericColumns(t2) {
   const keys = new Set(t2.key);
@@ -1311,7 +1456,7 @@ function numericColumns(t2) {
     if (m) families2.set(m[1], (families2.get(m[1]) ?? 0) + 1);
   }
   const out = [];
-  for (const [f2, count] of families2) if (count > 1) out.push([`${f2}*`, `${f2.trimEnd()} (every one)`]);
+  for (const [f2, count2] of families2) if (count2 > 1) out.push([`${f2}*`, `${f2.trimEnd()} (every one)`]);
   return [...names2.map((n) => [n, n]), ...out];
 }
 function columnsOf(t2, choice) {
@@ -1323,29 +1468,29 @@ var abilityOptions = () => options(
   Object.entries(ABILITIES).filter(([n]) => n !== "0").map(([n, [name]]) => [n, `${n}: ${name}`])
 );
 function universalModifier(tables, changed2) {
-  const card2 = h2("section", { class: "tool" }, h2("h2", {}, "Universal Modifier"));
+  const card2 = h3("section", { class: "tool" }, h3("h2", {}, "Universal Modifier"));
   card2.append(
-    h2(
+    h3(
       "p",
       { class: "hint" },
       "Change a field (or an ability) in many records at once. Preview lists every value that would change; Start writes them."
     )
   );
   const editable = tables.filter((t2) => TABLES.includes(t2.name) && t2.name !== "Actions");
-  const editor = h2("select", {}, ...editable.map((t2) => h2("option", { value: t2.name }, t2.name)));
-  const top = h2("div", { class: "toolbar" }, h2("label", {}, "Editor: ", editor));
-  const rangeBody = h2("tbody");
-  const actionBox = h2("div");
-  const onlyIfBox = h2("div");
-  const out = h2("div");
-  const preview = h2("button", { type: "button" }, "Preview");
-  const go = h2("button", { type: "button", class: "primary" }, "Start");
+  const editor = h3("select", {}, ...editable.map((t2) => h3("option", { value: t2.name }, t2.name)));
+  const top = h3("div", { class: "toolbar" }, h3("label", {}, "Editor: ", editor));
+  const rangeBody = h3("tbody");
+  const actionBox = h3("div");
+  const onlyIfBox = h3("div");
+  const out = h3("div");
+  const preview = h3("button", { type: "button" }, "Preview");
+  const go = h3("button", { type: "button", class: "primary" }, "Start");
   card2.append(
     top,
-    h2("table", { class: "grid" }, rangeHead("Table"), rangeBody),
-    h2("fieldset", {}, h2("legend", {}, "Modifier"), actionBox),
-    h2("fieldset", {}, h2("legend", {}, "Only Perform Action If:"), onlyIfBox),
-    h2("div", { class: "toolbar" }, preview, go),
+    h3("table", { class: "grid" }, rangeHead("Table"), rangeBody),
+    h3("fieldset", {}, h3("legend", {}, "Modifier"), actionBox),
+    h3("fieldset", {}, h3("legend", {}, "Only Perform Action If:"), onlyIfBox),
+    h3("div", { class: "toolbar" }, preview, go),
     out
   );
   let build = () => ({});
@@ -1356,20 +1501,20 @@ function universalModifier(tables, changed2) {
     rangeBody.replaceChildren(tr);
     const kinds = [["math", "Field"]];
     if (hasAbilities) kinds.push(["change_ability", "Ability value"], ["give_ability", "Give ability"], ["take_ability", "Take ability"]);
-    const kind = h2("select", {}, ...options(kinds));
-    const field = h2("select", {}, ...options(numericColumns(t2)));
-    const ability = h2("select", {}, ...abilityOptions());
-    const op = h2("select", {}, ...options(OPS));
+    const kind = h3("select", {}, ...options(kinds));
+    const field = h3("select", {}, ...options(numericColumns(t2)));
+    const ability = h3("select", {}, ...abilityOptions());
+    const op = h3("select", {}, ...options(OPS));
     const value = numberInput("0");
-    const limitCmp = h2("select", {}, h2("option", { value: "" }, "(no limit)"), ...options(CMPS.filter(([c]) => c === "le" || c === "ge")));
+    const limitCmp = h3("select", {}, h3("option", { value: "" }, "(no limit)"), ...options(CMPS.filter(([c]) => c === "le" || c === "ge")));
     const limit = numberInput();
     const clear = input({ type: "checkbox" });
-    const fieldLabel = h2("label", {}, "Field ", field);
-    const abilityLabel = h2("label", {}, "Ability ", ability);
-    const opLabel = h2("label", {}, "Modifier ", op);
-    const valueLabel = h2("label", {}, "Value ", value);
-    const limitLabel = h2("label", {}, "Limit to ", limitCmp, limit);
-    const clearLabel = h2("label", {}, clear, " Clear its value too");
+    const fieldLabel = h3("label", {}, "Field ", field);
+    const abilityLabel = h3("label", {}, "Ability ", ability);
+    const opLabel = h3("label", {}, "Modifier ", op);
+    const valueLabel = h3("label", {}, "Value ", value);
+    const limitLabel = h3("label", {}, "Limit to ", limitCmp, limit);
+    const clearLabel = h3("label", {}, clear, " Clear its value too");
     const show2 = () => {
       const k2 = kind.value;
       fieldLabel.hidden = k2 !== "math";
@@ -1379,18 +1524,18 @@ function universalModifier(tables, changed2) {
       clearLabel.hidden = k2 !== "take_ability";
     };
     kind.addEventListener("change", show2);
-    actionBox.replaceChildren(h2("label", {}, kind), fieldLabel, abilityLabel, opLabel, valueLabel, limitLabel, clearLabel);
+    actionBox.replaceChildren(h3("label", {}, kind), fieldLabel, abilityLabel, opLabel, valueLabel, limitLabel, clearLabel);
     show2();
     const conditionKinds = [["", "(none)"], ["column", "Field"]];
     if (hasAbilities) conditionKinds.push(["has_ability", "Has ability"], ["lacks_ability", "Lacks ability"]);
     const plainColumns = numericColumns(t2).filter(([v]) => !v.endsWith("*"));
     const conditions = [0, 1, 2].map(() => {
-      const k2 = h2("select", {}, ...options(conditionKinds));
-      const col = h2("select", {}, ...options(plainColumns));
-      const ab = h2("select", {}, ...abilityOptions());
-      const cmp = h2("select", {}, ...options(CMPS));
+      const k2 = h3("select", {}, ...options(conditionKinds));
+      const col = h3("select", {}, ...options(plainColumns));
+      const ab = h3("select", {}, ...abilityOptions());
+      const cmp = h3("select", {}, ...options(CMPS));
       const v = numberInput("0");
-      const mustBe = h2("span", {}, " must be ");
+      const mustBe = h3("span", {}, " must be ");
       const sync = () => {
         col.hidden = k2.value !== "column";
         ab.hidden = !k2.value.endsWith("ability");
@@ -1398,7 +1543,7 @@ function universalModifier(tables, changed2) {
       };
       k2.addEventListener("change", sync);
       sync();
-      return { row: h2("div", { class: "toolbar" }, k2, col, ab, mustBe, cmp, v), k: k2, col, ab, cmp, v };
+      return { row: h3("div", { class: "toolbar" }, k2, col, ab, mustBe, cmp, v), k: k2, col, ab, cmp, v };
     });
     onlyIfBox.replaceChildren(...conditions.map((c) => c.row));
     build = () => {
@@ -1420,7 +1565,7 @@ function universalModifier(tables, changed2) {
   const run = async (dryRun) => {
     const body = build();
     if (!dryRun && !confirm(`Change ${editor.value} records as set? Preview first to see every change.`)) return;
-    out.replaceChildren(h2("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
+    out.replaceChildren(h3("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
     try {
       const res = await post("/api/tools/modify", JSON.stringify({ ...body, dry_run: dryRun }), true);
       out.replaceChildren(modifyResult(res));
@@ -1433,36 +1578,37 @@ function universalModifier(tables, changed2) {
   go.addEventListener("click", () => void run(false));
   return card2;
 }
+var shownCell = (v) => typeof v === "string" ? toShown(v.split("\0")[0]) : String(v);
 function modifyResult(res) {
-  const box = h2("div", { class: "tool-result" });
+  const box = h3("div", { class: "tool-result" });
   const would = res.dry_run ? "would change" : "changed";
   box.append(
-    h2(
+    h3(
       "p",
       {},
       `${res.records} record${res.records === 1 ? "" : "s"} ${would} (${res.changed} value${res.changed === 1 ? "" : "s"}); ${res.unchanged} already as set; ${res.skipped} left out by the "only if" boxes.` + (res.dry_run ? " Preview: nothing was written." : "")
     )
   );
-  if (res.notes?.length) box.append(h2("p", {}, "Worth a look (not changed):"), h2("pre", { class: "errors" }, res.notes.join("\n")));
-  if (res.report?.errors?.length) box.append(h2("pre", { class: "errors" }, res.report.errors.join("\n")));
+  if (res.notes?.length) box.append(h3("p", {}, "Worth a look (not changed):"), h3("pre", { class: "errors" }, res.notes.join("\n")));
+  if (res.report?.errors?.length) box.append(h3("pre", { class: "errors" }, res.report.errors.join("\n")));
   if (res.changes.length) {
-    const body = h2("tbody");
+    const body = h3("tbody");
     for (const c of res.changes) {
-      body.append(h2("tr", {}, ...[c.key.join(" / "), c.column, String(c.before), String(c.after)].map((v) => h2("td", {}, v))));
+      body.append(h3("tr", {}, ...[c.key.join(" / "), c.column, shownCell(c.before), shownCell(c.after)].map((v) => h3("td", {}, v))));
     }
-    box.append(h2("table", { class: "grid changes" }, h2("thead", {}, h2("tr", {}, ...["Record", "Field", "Before", "After"].map((c) => h2("th", {}, c)))), body));
-    if (res.changes.length < res.changed) box.append(h2("p", { class: "hint" }, `The first ${res.changes.length} changes are listed.`));
+    box.append(h3("table", { class: "grid changes" }, h3("thead", {}, h3("tr", {}, ...["Record", "Field", "Before", "After"].map((c) => h3("th", {}, c)))), body));
+    if (res.changes.length < res.changed) box.append(h3("p", { class: "hint" }, `The first ${res.changes.length} changes are listed.`));
   }
   return box;
 }
 var pick = (values, selected) => {
-  const s = h2("select", {}, ...options(values));
+  const s = h3("select", {}, ...options(values));
   if (selected) s.value = selected;
   return s;
 };
 var check = (label, on = true) => {
   const i = input({ type: "checkbox", checked: on ? "" : void 0 });
-  return [i, h2("label", {}, i, " ", label)];
+  return [i, h3("label", {}, i, " ", label)];
 };
 var num = (i) => Number(i.value.trim() || 0);
 function fixes() {
@@ -1508,19 +1654,19 @@ function fixes() {
     {
       title: "Multiply All Exp",
       hint: "Monster experience times 2 to 20, split into Experience \xD7 Exp Multiplier as NMR splits it. A cap of 0 is the most 1.11p holds.",
-      inputs: [h2("label", {}, "Times ", mulBy), h2("label", {}, "Cap ", mulCap)],
+      inputs: [h3("label", {}, "Times ", mulBy), h3("label", {}, "Cap ", mulCap)],
       request: () => ["/api/tools/preset", { preset: "multiply_exp", by: num(mulBy), cap: num(mulCap) || null }]
     },
     {
       title: "Divide All Exp",
       hint: "Monster experience divided by 2 to 20 (at least 1).",
-      inputs: [h2("label", {}, "Divide by ", divBy)],
+      inputs: [h3("label", {}, "Divide by ", divBy)],
       request: () => ["/api/tools/preset", { preset: "divide_exp", by: num(divBy) }]
     },
     {
       title: "Multiply Boss Exp",
       hint: "Exp Multiplier times this, for monsters with Game Limit = 1 (which are probably bosses). The Universal Modifier does the same with other settings.",
-      inputs: [h2("label", {}, "Times ", bossBy)],
+      inputs: [h3("label", {}, "Times ", bossBy)],
       request: () => [
         "/api/tools/modify",
         {
@@ -1539,7 +1685,7 @@ function fixes() {
     {
       title: "Set Last Killed Times to Date",
       hint: "Every monster last killed on this date, at 01:01:02.",
-      inputs: [h2("label", {}, "Date ", date)],
+      inputs: [h3("label", {}, "Date ", date)],
       request: () => {
         const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.value);
         if (!m) throw new Error("Pick a date.");
@@ -1556,10 +1702,10 @@ function fixes() {
       title: "Modify Item Drop Percentages",
       hint: "Change the drop % of monsters' item drops, by the kind of item. A drop already at the value is left alone, as NMR leaves it.",
       inputs: [
-        h2("div", { class: "toolbar" }, dropMode, dropValue, h2("span", {}, " only if the drop % is "), dropCmp, dropLimit),
-        h2("div", { class: "toolbar" }, ...types.map(([, l]) => l)),
-        h2("div", { class: "toolbar" }, dropLimited, delMaintLabel),
-        h2("div", { class: "toolbar" }, regenLabel, regen)
+        h3("div", { class: "toolbar" }, dropMode, dropValue, h3("span", {}, " only if the drop % is "), dropCmp, dropLimit),
+        h3("div", { class: "toolbar" }, ...types.map(([, l]) => l)),
+        h3("div", { class: "toolbar" }, dropLimited, delMaintLabel),
+        h3("div", { class: "toolbar" }, regenLabel, regen)
       ],
       request: () => {
         const [w, a, k2, c, sc] = types.map(([i]) => i.checked);
@@ -1585,29 +1731,29 @@ function fixes() {
   ];
 }
 function fixesCard(changed2) {
-  const card2 = h2("section", { class: "tool" }, h2("h2", {}, "Fixes"));
-  card2.append(h2("p", { class: "hint" }, "NMR's one-click fixes from its Items and Monsters menus. Each previews first; Run writes."));
-  const choose = h2("select", {});
+  const card2 = h3("section", { class: "tool" }, h3("h2", {}, "Fixes"));
+  card2.append(h3("p", { class: "hint" }, "NMR's one-click fixes from its Items and Monsters menus. Each previews first; Run writes."));
+  const choose = h3("select", {});
   const list2 = fixes();
-  list2.forEach((f2, i) => choose.append(h2("option", { value: String(i) }, f2.title)));
-  const body = h2("div");
-  const out = h2("div");
-  const preview = h2("button", { type: "button" }, "Preview");
-  const go = h2("button", { type: "button", class: "primary" }, "Run");
+  list2.forEach((f2, i) => choose.append(h3("option", { value: String(i) }, f2.title)));
+  const body = h3("div");
+  const out = h3("div");
+  const preview = h3("button", { type: "button" }, "Preview");
+  const go = h3("button", { type: "button", class: "primary" }, "Run");
   const show2 = () => {
     const f2 = list2[Number(choose.value)];
-    body.replaceChildren(h2("p", { class: "hint" }, f2.hint), ...f2.inputs.length ? [h2("div", { class: "fix-inputs" }, ...f2.inputs)] : []);
+    body.replaceChildren(h3("p", { class: "hint" }, f2.hint), ...f2.inputs.length ? [h3("div", { class: "fix-inputs" }, ...f2.inputs)] : []);
     out.replaceChildren();
   };
   choose.addEventListener("change", show2);
   show2();
-  card2.append(h2("div", { class: "toolbar" }, h2("label", {}, "Fix: ", choose)), body, h2("div", { class: "toolbar" }, preview, go), out);
+  card2.append(h3("div", { class: "toolbar" }, h3("label", {}, "Fix: ", choose)), body, h3("div", { class: "toolbar" }, preview, go), out);
   const run = async (dryRun) => {
     const f2 = list2[Number(choose.value)];
     try {
       const [url, req] = f2.request();
       if (!dryRun && !confirm(`${f2.title}: write the changes? Preview first to see them.`)) return;
-      out.replaceChildren(h2("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
+      out.replaceChildren(h3("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
       const res = await post(url, JSON.stringify({ ...req, dry_run: dryRun }), true);
       out.replaceChildren(modifyResult(res));
       if (!dryRun) changed2();
@@ -1620,8 +1766,13 @@ function fixesCard(changed2) {
   return card2;
 }
 function toolsPage(changed2) {
-  const page = h2("div", { class: "tools" }, importer(changed2), deleter(changed2), mergeUsers());
-  api.tables().then((tables) => page.append(universalModifier(tables, changed2), fixesCard(changed2))).catch((e) => page.append(failure(e)));
+  const page = h3("div", { class: "tools" }, importer(changed2), deleter(changed2), mergeUsers());
+  api.tables().then((tables) => {
+    page.append(universalModifier(tables, changed2));
+    const rooms = tables.find((t2) => t2.name === "Rooms");
+    if (rooms) page.append(massRoomEditor(rooms, (url, body) => post(url, body, true), modifyResult, changed2));
+    page.append(fixesCard(changed2));
+  }).catch((e) => page.append(failure(e)));
   return page;
 }
 
@@ -1640,7 +1791,7 @@ var state = {
   names: /* @__PURE__ */ new Map()
 };
 var $ = (sel) => document.querySelector(sel);
-function h3(tag, props = {}, ...children) {
+function h4(tag, props = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k2, v] of Object.entries(props)) {
     if (v === void 0) continue;
@@ -1713,12 +1864,12 @@ function renderNav() {
     (a, b) => (ORDER.indexOf(a.name) + 1 || 99) - (ORDER.indexOf(b.name) + 1 || 99)
   );
   for (const t2 of ordered) {
-    const a = h3("a", { href: `#/${encodeURIComponent(t2.name)}` }, t2.name);
+    const a = h4("a", { href: `#/${encodeURIComponent(t2.name)}` }, t2.name);
     if (t2 === state.table && !onPage()) a.classList.add("active");
     nav.append(a);
   }
-  const lists = h3("a", { href: "#/lists", class: "tools-link" }, "Lists");
-  const tools = h3("a", { href: "#/tools" }, "Tools");
+  const lists = h4("a", { href: "#/lists", class: "tools-link" }, "Lists");
+  const tools = h4("a", { href: "#/tools" }, "Tools");
   if (onPage() === "lists") lists.classList.add("active");
   if (onPage() === "tools") tools.classList.add("active");
   nav.append(lists, tools);
@@ -1748,7 +1899,7 @@ function renderList() {
     ([key, title]) => !needle || `${keyText(key)} ${show(title)}`.toLowerCase().includes(needle)
   );
   for (const [key, title] of matches.slice(0, LIST_LIMIT)) {
-    const li = h3("li", {}, h3("span", { class: "key" }, keyText(key)), " ", show(title).trimEnd());
+    const li = h4("li", {}, h4("span", { class: "key" }, keyText(key)), " ", show(title).trimEnd());
     if (state.row && sameKey(state.row.key, key)) li.classList.add("selected");
     li.addEventListener("click", () => select(key));
     list2.append(li);
@@ -1762,19 +1913,19 @@ function input2(field, info) {
   const pick2 = field.pick;
   let control;
   if (pick2 && "options" in pick2) {
-    const select2 = h3("select", { "data-col": col });
+    const select2 = h4("select", { "data-col": col });
     const options2 = { ...pick2.options };
     if (value !== "" && !(Number(value) in options2)) options2[Number(value)] = `${value} (unknown)`;
     for (const [n, label] of Object.entries(options2)) {
-      select2.append(h3("option", { value: n }, `${n}: ${label}`));
+      select2.append(h4("option", { value: n }, `${n}: ${label}`));
     }
     select2.value = value;
     control = select2;
   } else if (info?.type === "memo") {
-    control = h3("textarea", { "data-col": col, rows: "8", spellcheck: "false" });
+    control = h4("textarea", { "data-col": col, rows: "8", spellcheck: "false" });
     control.value = value;
   } else {
-    control = h3("input", {
+    control = h4("input", {
       "data-col": col,
       type: "text",
       spellcheck: "false",
@@ -1788,39 +1939,39 @@ function input2(field, info) {
     control.setAttribute("disabled", "");
     control.title = "The record\u2019s key: insert a new record to use another";
   }
-  const name = h3("span", { class: "pick-name" }, pickName(pick2, value));
+  const name = h4("span", { class: "pick-name" }, pickName(pick2, value));
   if (pick2 && "abilities" in pick2) name.title = ABILITIES[Number(value)]?.[1] ?? "";
   control.addEventListener("input", () => {
     state.edits.set(col, control.value);
     name.textContent = pickName(pick2, control.value);
     refreshDirty();
   });
-  const wrap = h3("span", { class: "control" }, control);
+  const wrap = h4("span", { class: "control" }, control);
   if (pick2 && !("options" in pick2)) wrap.append(name);
   return wrap;
 }
 function renderField(field) {
   const info = column(field.col);
-  if (!info) return h3("span");
+  if (!info) return h4("span");
   const label = field.label ?? field.col;
-  return h3(
+  return h4(
     "label",
     { class: field.wide ? "field wide" : "field", title: field.col },
-    h3("span", { class: "label" }, label),
+    h4("span", { class: "label" }, label),
     input2(field, info)
   );
 }
 function renderTab(tabIndex) {
   const tab = state.layout[tabIndex];
-  const body = h3("div", { class: "tab-body" });
+  const body = h4("div", { class: "tab-body" });
   if (!tab) return body;
   if (tab.fields) {
-    const grid2 = h3("div", { class: "fields" });
+    const grid2 = h4("div", { class: "fields" });
     for (const field of tab.fields) grid2.append(renderField(field));
     body.append(grid2);
   }
   if (tab.preview) {
-    const box = h3("pre", { class: "terminal", "aria-label": "Preview" });
+    const box = h4("pre", { class: "terminal", "aria-label": "Preview" });
     const draw = () => {
       box.replaceChildren();
       tab.preview.forEach((col, i) => {
@@ -1830,20 +1981,20 @@ function renderTab(tabIndex) {
     };
     draw();
     body.addEventListener("input", draw);
-    body.append(h3("div", { class: "preview-label" }, "As players see it"), box);
+    body.append(h4("div", { class: "preview-label" }, "As players see it"), box);
   }
   if (tab.matrix) {
     const m = tab.matrix;
-    const table = h3("table", { class: "grid matrix" });
-    const head = h3("tr", {}, h3("th"));
-    for (const label of m.headers) head.append(h3("th", {}, label));
-    table.append(h3("thead", {}, head));
-    const tbody = h3("tbody");
+    const table = h4("table", { class: "grid matrix" });
+    const head = h4("tr", {}, h4("th"));
+    for (const label of m.headers) head.append(h4("th", {}, label));
+    table.append(h4("thead", {}, head));
+    const tbody = h4("tbody");
     for (const row of m.rows) {
-      const tr = h3("tr", {}, h3("td", { class: "n" }, row.label));
+      const tr = h4("tr", {}, h4("td", { class: "n" }, row.label));
       for (const col of row.cols) {
         const info = column(col);
-        tr.append(h3("td", { title: col }, info ? input2({ col }, info) : ""));
+        tr.append(h4("td", { title: col }, info ? input2({ col }, info) : ""));
       }
       tbody.append(tr);
     }
@@ -1853,17 +2004,17 @@ function renderTab(tabIndex) {
   if (tab.grid) {
     const g = tab.grid;
     if (g.across) {
-      const table2 = h3("table", { class: "grid across" });
-      const head2 = h3("tr", {}, h3("th"));
-      for (let n = g.from; n <= g.to; n++) head2.append(h3("th", {}, `${g.across} ${n - g.from + 1}`));
-      table2.append(h3("thead", {}, head2));
-      const tbody2 = h3("tbody");
+      const table2 = h4("table", { class: "grid across" });
+      const head2 = h4("tr", {}, h4("th"));
+      for (let n = g.from; n <= g.to; n++) head2.append(h4("th", {}, `${g.across} ${n - g.from + 1}`));
+      table2.append(h4("thead", {}, head2));
+      const tbody2 = h4("tbody");
       for (const c of g.columns) {
-        const tr = h3("tr", {}, h3("td", { class: "n" }, c.label ?? c.template));
+        const tr = h4("tr", {}, h4("td", { class: "n" }, c.label ?? c.template));
         for (let n = g.from; n <= g.to; n++) {
           const col = c.template.replace("#", String(n));
           const info = column(col);
-          tr.append(h3("td", { title: col }, info ? input2({ col, pick: c.pick }, info) : ""));
+          tr.append(h4("td", { title: col }, info ? input2({ col, pick: c.pick }, info) : ""));
         }
         tbody2.append(tr);
       }
@@ -1871,17 +2022,17 @@ function renderTab(tabIndex) {
       body.append(table2);
       return body;
     }
-    const table = h3("table", { class: "grid" });
-    const head = h3("tr", {}, h3("th", {}, "#"));
-    for (const c of g.columns) head.append(h3("th", {}, c.label ?? c.template));
-    table.append(h3("thead", {}, head));
-    const tbody = h3("tbody");
+    const table = h4("table", { class: "grid" });
+    const head = h4("tr", {}, h4("th", {}, "#"));
+    for (const c of g.columns) head.append(h4("th", {}, c.label ?? c.template));
+    table.append(h4("thead", {}, head));
+    const tbody = h4("tbody");
     for (let n = g.from; n <= g.to; n++) {
-      const tr = h3("tr", {}, h3("td", { class: "n" }, g.names?.[n - g.from] ?? String(n)));
+      const tr = h4("tr", {}, h4("td", { class: "n" }, g.names?.[n - g.from] ?? String(n)));
       for (const c of g.columns) {
         const col = c.template.replace("#", String(n));
         const info = column(col);
-        tr.append(h3("td", {}, info ? input2({ col, pick: c.pick }, info) : ""));
+        tr.append(h4("td", {}, info ? input2({ col, pick: c.pick }, info) : ""));
       }
       tbody.append(tr);
     }
@@ -1896,16 +2047,16 @@ function renderEditor() {
   const t2 = state.table;
   if (!t2) return;
   if (!state.row) {
-    ed.append(h3("p", { class: "empty" }, "Pick a record on the left, or insert a new one."));
+    ed.append(h4("p", { class: "empty" }, "Pick a record on the left, or insert a new one."));
     ed.append(toolbar(t2));
     return;
   }
   const title = t2.title ? titleOf(show(state.row.values[t2.title] ?? null)) : "";
-  ed.append(h3("h2", {}, `${t2.name} ${keyText(state.row.key)}`, title ? ` \u2014 ${title}` : ""));
+  ed.append(h4("h2", {}, `${t2.name} ${keyText(state.row.key)}`, title ? ` \u2014 ${title}` : ""));
   ed.append(toolbar(t2));
-  const tabs = h3("div", { class: "tabs", role: "tablist" });
+  const tabs = h4("div", { class: "tabs", role: "tablist" });
   state.layout.forEach((tab, i) => {
-    const b = h3("button", { role: "tab", type: "button" }, tab.title);
+    const b = h4("button", { role: "tab", type: "button" }, tab.title);
     if (i === state.tab) b.classList.add("active");
     b.addEventListener("click", () => {
       state.tab = i;
@@ -1917,9 +2068,9 @@ function renderEditor() {
   refreshDirty();
 }
 function toolbar(t2) {
-  const bar = h3("div", { class: "toolbar" });
+  const bar = h4("div", { class: "toolbar" });
   const button = (label, title, run, cls = "") => {
-    const b = h3("button", { type: "button", title, class: cls }, label);
+    const b = h4("button", { type: "button", title, class: cls }, label);
     b.addEventListener("click", run);
     bar.append(b);
     return b;
@@ -1930,7 +2081,7 @@ function toolbar(t2) {
   }
   button("Insert", state.row ? `Copy this record to a new ${t2.name} record` : `Add a new ${t2.name} record`, () => void insert());
   if (state.row) button("Delete", "Remove this record from the realm", () => void remove(), "danger");
-  bar.append(h3("span", { id: "dirty" }));
+  bar.append(h4("span", { id: "dirty" }));
   return bar;
 }
 function loadEdits(row) {

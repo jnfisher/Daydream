@@ -211,3 +211,70 @@ fn bad_runs_are_refused() {
     };
     assert!(modify::plan(&realm, &give, Dos).is_err());
 }
+
+#[test]
+fn set_fills_in_rooms_like_the_mass_room_editor() {
+    use crate::support::{empty_realm, l, put, t};
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let room = |map, n, name: &str| {
+        vec![
+            ("Map Number", l(map)),
+            ("Room Number", l(n)),
+            ("Name", t(name)),
+            ("Light", l(0)),
+        ]
+    };
+    let rows = [
+        room(1, 1, "a"),
+        room(1, 2, "b"),
+        room(1, 3, "Cave"),
+        room(1, 4, "d"),
+        room(2, 2, "e"),
+    ];
+    let refs: Vec<&[(&str, Value)]> = rows.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Rooms", &refs);
+    let m = Modify {
+        table: "Rooms".into(),
+        action: Action::Set {
+            values: vec![
+                ("Name".into(), Value::Text("Cave".into())),
+                ("Light".into(), Value::Long(-200)),
+            ],
+        },
+        range: Some(Range {
+            table: "Rooms".into(),
+            map: Some(1),
+            from: 2,
+            to: 3,
+        }),
+        only_if: vec![],
+    };
+    let plan = modify::plan(&realm, &m, Dos).unwrap();
+    // room 3 already has the name: only its light changes
+    let got: Vec<_> = plan
+        .changes
+        .iter()
+        .map(|c| (n(&c.key[1]), c.column.as_str()))
+        .collect();
+    assert_eq!(got, [(2.0, "Name"), (2.0, "Light"), (3.0, "Light")]);
+    modify::apply(&realm, &plan, Dos).unwrap();
+    let again = modify::plan(&realm, &m, Dos).unwrap();
+    assert!(again.changes.is_empty(), "{again:?}");
+
+    let key = Modify {
+        action: Action::Set {
+            values: vec![("Room Number".into(), Value::Long(9))],
+        },
+        ..m.clone()
+    };
+    assert!(modify::plan(&realm, &key, Dos).is_err());
+    let text_in_number = Modify {
+        action: Action::Set {
+            values: vec![("Light".into(), Value::Text("dim".into()))],
+        },
+        ..m
+    };
+    assert!(modify::plan(&realm, &text_in_number, Dos).is_err());
+}

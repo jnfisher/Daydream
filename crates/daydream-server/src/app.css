@@ -125,3 +125,12 @@ pre.errors { background: var(--bg); border: 1px solid var(--line); padding: .5re
 .tool table.list td { vertical-align: top; }
 .tool table.list tr.over td { color: var(--danger); }
 .tool table.list a { color: var(--accent); }
+.tool .mass-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .1rem 1rem; margin: .25rem 0 .5rem; }
+.tool .mass-group .mass-fields { display: flex; flex-wrap: wrap; gap: .25rem .5rem; padding: .25rem 0 .5rem 1.5rem; }
+.tool .mass-group .mass-fields[hidden] { display: none; }
+.tool .mass-group .mass-fields label { margin-right: 0; }
+.tool .mass-group input.number { width: 5rem; }
+.tool .mass-group input.text { width: 15rem; }
+.tool .mass-group select { width: auto; }
+.tool .toolbar input.number { width: 5rem; }
+.tool .mass-group:has(> label input:checked) { grid-column: 1 / -1; }

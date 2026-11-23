@@ -1,51 +1,13 @@
 //! NMR's lists, on a realm set up for them.
 
+use daydream_nmr::Value;
 use daydream_nmr::reports::{self, PlaceKind, Scan};
-use daydream_nmr::schema::{self, ColumnType, layout_of};
-use daydream_nmr::{ImportOptions, NmrData, NmrRows, Value, import};
+use daydream_nmr::schema::layout_of;
 use daydream_store::{Metadata, Realm, WbtrvDb};
 use daydream_types::records::LayoutSet::{self, Dos};
 use daydream_wcc::tables::Table;
 
-use crate::support::empty_realm;
-
-/// Rows of `name`, every column zero or empty but those given.
-fn put(realm: &Realm, name: &str, rows: &[&[(&str, Value)]]) {
-    let t = schema::table(name).unwrap();
-    let rows = rows
-        .iter()
-        .map(|given| {
-            t.columns
-                .iter()
-                .map(|c| match given.iter().find(|(n, _)| *n == c.name) {
-                    Some((_, v)) => v.clone(),
-                    None => match c.ty {
-                        ColumnType::Long => Value::Long(0),
-                        ColumnType::Double => Value::Double(0.0),
-                        _ => Value::Text(String::new()),
-                    },
-                })
-                .collect()
-        })
-        .collect();
-    let data = NmrData {
-        tables: vec![NmrRows {
-            name: t.name.into(),
-            columns: t.columns.iter().map(|c| c.name.to_string()).collect(),
-            rows,
-        }],
-    };
-    let report = import(realm, &data, &ImportOptions::default()).unwrap();
-    assert!(report.iter().all(|r| r.errors.is_empty()), "{report:?}");
-}
-
-fn l(n: i32) -> Value {
-    Value::Long(n)
-}
-
-fn t(s: &str) -> Value {
-    Value::Text(s.into())
-}
+use crate::support::{empty_realm, l, put, t};
 
 /// A user file holding one user carrying `items`.
 fn user(dir: &std::path::Path, id: &str, first: &str, items: &[i32]) {

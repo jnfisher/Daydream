@@ -2,7 +2,9 @@
 // out as NMR's forms lay them out, over the server's /api/tools routes.
 
 import { ABILITIES } from './abilities';
+import { toShown } from './ansi';
 import { api, type Report, type TableInfo } from './api';
+import { massRoomEditor } from './massroom';
 
 /** The tables NMR's importer and deleter list, in its order. */
 const TABLES = ['Items', 'Monsters', 'Spells', 'Shops', 'Races', 'Classes', 'Rooms', 'Actions', 'Messages', 'Textblocks'];
@@ -412,6 +414,9 @@ function universalModifier(tables: TableInfo[], changed: () => void): HTMLElemen
   return card;
 }
 
+/** A value as a record reads it: text up to its NUL, with ESC shown. */
+const shownCell = (v: unknown) => (typeof v === 'string' ? toShown(v.split('\0')[0]!) : String(v));
+
 function modifyResult(res: any): HTMLElement {
   const box = h('div', { class: 'tool-result' });
   const would = res.dry_run ? 'would change' : 'changed';
@@ -429,7 +434,7 @@ function modifyResult(res: any): HTMLElement {
   if (res.changes.length) {
     const body = h('tbody');
     for (const c of res.changes) {
-      body.append(h('tr', {}, ...[c.key.join(' / '), c.column, String(c.before), String(c.after)].map((v) => h('td', {}, v))));
+      body.append(h('tr', {}, ...[c.key.join(' / '), c.column, shownCell(c.before), shownCell(c.after)].map((v) => h('td', {}, v))));
     }
     box.append(h('table', { class: 'grid changes' }, h('thead', {}, h('tr', {}, ...['Record', 'Field', 'Before', 'After'].map((c) => h('th', {}, c)))), body));
     if (res.changes.length < res.changed) box.append(h('p', { class: 'hint' }, `The first ${res.changes.length} changes are listed.`));
@@ -621,7 +626,12 @@ export function toolsPage(changed: () => void): HTMLElement {
   const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers());
   api
     .tables()
-    .then((tables) => page.append(universalModifier(tables, changed), fixesCard(changed)))
+    .then((tables) => {
+      page.append(universalModifier(tables, changed));
+      const rooms = tables.find((t) => t.name === 'Rooms');
+      if (rooms) page.append(massRoomEditor(rooms, (url, body) => post(url, body, true), modifyResult, changed));
+      page.append(fixesCard(changed));
+    })
     .catch((e) => page.append(failure(e)));
   return page;
 }
