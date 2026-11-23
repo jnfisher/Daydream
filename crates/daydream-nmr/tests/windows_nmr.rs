@@ -7,7 +7,8 @@
 //! Nightmare Redux checkout): Daydream exports the realm, turns the export into one batch of
 //! cases ([`add_cases`]: edits in every column of every table, and new records), and writes
 //! it as a `.mdb` through Jet. NMR's Database Importer (driven by `tools/nmr/nmr-import.ps1`)
-//! imports it into one copy of the realm, Daydream's import into another, and every record
+//! imports it into one copy of the realm, Daydream's import (in its NMR mode,
+//! `ImportOptions::like_nmr`) into another, and every record
 //! of the two must be the same, byte for byte. Every difference is reported, by table, row
 //! and column. `DAYDREAM_NMR_OUT` (default: the temp folder) holds the work while it runs.
 //! Elsewhere the test does nothing; in CI on Windows NMR is required.
@@ -156,7 +157,8 @@ fn compare_columns(ours: &NmrData, theirs: &NmrData) -> Vec<String> {
     problems
 }
 
-/// Records of NMR's realm and Daydream's that are not in the other, whatever their order.
+/// Records of NMR's realm and Daydream's that are not in the other, whatever their order;
+/// for a few, the NMR record most like it and the members where they differ.
 fn compare_bytes(ours: &Path, theirs: &Path) -> Vec<String> {
     let theirs: HashMap<String, Vec<Vec<u8>>> = records(theirs)
         .into_iter()
@@ -172,14 +174,47 @@ fn compare_bytes(ours: &Path, theirs: &Path) -> Vec<String> {
             println!("{stem}: {} records the same", a.len());
             continue;
         }
-        let only_ours = a.iter().filter(|r| b.binary_search(r).is_err()).count();
-        let only_theirs = b.iter().filter(|r| a.binary_search(r).is_err()).count();
+        let only_ours: Vec<&Vec<u8>> = a.iter().filter(|r| b.binary_search(r).is_err()).collect();
+        let only_theirs: Vec<&Vec<u8>> = b.iter().filter(|r| a.binary_search(r).is_err()).collect();
         problems.push(format!(
-            "{stem}: {} records from Daydream, {} from NMR; {only_ours} of Daydream's are not \
-             NMR's, {only_theirs} of NMR's are not Daydream's",
+            "{stem}: {} records from Daydream, {} from NMR; {} of Daydream's are not NMR's, \
+             {} of NMR's are not Daydream's",
             a.len(),
-            b.len()
+            b.len(),
+            only_ours.len(),
+            only_theirs.len()
         ));
+        let layout = daydream_wcc::tables::table_for_stem(&stem)
+            .map(|t| daydream_nmr::schema::layout_of(t, LayoutSet::Worldgroup));
+        for x in only_ours.iter().take(4) {
+            let distance = |y: &&&Vec<u8>| {
+                x.iter().zip(y.iter()).filter(|(p, q)| p != q).count() + x.len().abs_diff(y.len())
+            };
+            let Some(y) = only_theirs.iter().min_by_key(distance) else {
+                break;
+            };
+            let mut fields = Vec::new();
+            match layout {
+                Some(layout) => {
+                    for f in layout.fields {
+                        let end = f.offset + f.size;
+                        let p = x.get(f.offset..end.min(x.len())).unwrap_or(&[]);
+                        let q = y.get(f.offset..end.min(y.len())).unwrap_or(&[]);
+                        if p != q {
+                            let show = |v: &[u8]| format!("{:02x?}", &v[..v.len().min(12)]);
+                            fields.push(format!("{} Daydream {} NMR {}", f.name, show(p), show(q)));
+                        }
+                    }
+                }
+                None => fields.push("no layout".into()),
+            }
+            problems.push(format!(
+                "  {stem}: Daydream's {} bytes against NMR's {}: {}",
+                x.len(),
+                y.len(),
+                fields.join("; ")
+            ));
+        }
     }
     problems
 }
@@ -216,6 +251,7 @@ fn nmr_imports_daydreams_cases_as_daydream_does() {
     copy_realm(&base, &ours);
     let import_opts = ImportOptions {
         layout: LayoutSet::Worldgroup,
+        like_nmr: true,
         ..ImportOptions::default()
     };
     for r in import(&Realm::open(&ours).unwrap(), &written, &import_opts).unwrap() {

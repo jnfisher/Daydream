@@ -15,6 +15,16 @@
 //!
 //! A monster table without `Exp Multiplier` imports with a multiplier of 1, the answer
 //! NMR offers.
+//!
+//! [`ImportOptions::like_nmr`] does what NMR's Database Importer does instead, byte for
+//! byte (the `windows_nmr` test holds it to that against real NMR):
+//!
+//! - Rows go in index order, and every value is written, changed or not.
+//! - Text goes through VB's `Trim` (spaces off both ends) into a fixed-length string, which
+//!   pads it with spaces.
+//! - A new record starts from the record of the row before it in this table (NMR reuses its
+//!   Btrieve buffer, which a failed Get Equal leaves alone), or from zeros for the first.
+//! - A text block is always re-encrypted, and stored at its full length.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,9 +34,9 @@ use daydream_types::records::{Layout, LayoutSet};
 use daydream_wcc::tables::Table;
 
 use crate::data::{NmrData, NmrRows};
-use crate::export::{key_text, row_of};
+use crate::export::{key_text, row_of, sort_by_index};
 use crate::schema::{
-    self, NmrTable, Source, Value, ValueError, gather, layout_of, read_unsigned, scatter,
+    self, NmrTable, Source, Value, ValueError, Vb, gather, layout_of, read_unsigned, scatter,
     write_unsigned,
 };
 use crate::text;
@@ -40,6 +50,9 @@ pub struct ImportOptions {
     pub dry_run: bool,
     /// The realm's record layouts.
     pub layout: LayoutSet,
+    /// Do exactly what NMR's import does (see the module docs), not Daydream's stricter
+    /// rules.
+    pub like_nmr: bool,
 }
 
 /// What an import did to one table.
@@ -164,7 +177,18 @@ fn import_table(
         }
     }
 
-    for (n, row) in rows.rows.iter().enumerate() {
+    let ordered;
+    let rows: &[Vec<Value>] = if opts.like_nmr {
+        let mut sorted = rows.rows.clone();
+        sort_by_index(t, &mut sorted);
+        ordered = sorted;
+        &ordered
+    } else {
+        &rows.rows
+    };
+    // NMR's Btrieve buffer: the record of the row before
+    let mut last: Option<Vec<u8>> = None;
+    for (n, row) in rows.iter().enumerate() {
         let key = key_of(
             index_cols
                 .iter()
@@ -178,10 +202,20 @@ fn import_table(
                 }
                 (*fi, Some(*id), raw.clone(), *len)
             }
-            None => (0, None, vec![0; layout.len], 0),
+            None => {
+                let base = match &last {
+                    Some(r) if opts.like_nmr => r.clone(),
+                    _ => vec![0; layout.len],
+                };
+                (0, None, base, 0)
+            }
         };
         let mut record = before.clone();
-        if let Err((column, e)) = apply(t, layout, &at, row, &mut record) {
+        let applied = apply(t, layout, &at, row, &mut record, opts.like_nmr);
+        if opts.like_nmr {
+            last = Some(record.clone());
+        }
+        if let Err((column, e)) = applied {
             report
                 .errors
                 .push(format!("{} row {}: {column}: {e}", t.name, n + 1));
@@ -191,7 +225,7 @@ fn import_table(
             report.unchanged += 1;
             continue;
         }
-        let image = if table.is_variable_length() {
+        let image = if table.is_variable_length() && !opts.like_nmr {
             textblock_image(layout, &record, stored_len)
         } else {
             record.clone()
@@ -245,6 +279,7 @@ fn apply(
     at: &[Option<usize>],
     row: &[Value],
     record: &mut [u8],
+    like_nmr: bool,
 ) -> Result<(), (&'static str, ValueError)> {
     for (c, a) in t.columns.iter().zip(at) {
         let value = match a {
@@ -254,10 +289,22 @@ fn apply(
         };
         let err = |e| (c.name, e);
         match &c.source {
+            Source::Element {
+                vb: Vb::Text,
+                pieces,
+            } if like_nmr => {
+                let len = pieces.iter().map(|p| p.len).sum();
+                let Value::Text(s) = &value else {
+                    return Err(err(ValueError::NotText(value)));
+                };
+                let mut bytes = text::to_1252(s.trim_matches(' ')).map_err(|e| err(e.into()))?;
+                bytes.resize(len, b' ');
+                scatter(layout, pieces, &bytes, record);
+            }
             Source::Element { vb, pieces } => {
                 let len = pieces.iter().map(|p| p.len).sum();
                 let current = vb.read(&gather(layout, pieces, record));
-                if same(&current, &value) {
+                if !like_nmr && same(&current, &value) {
                     continue;
                 }
                 let bytes = vb.write(&value, len).map_err(err)?;
@@ -265,7 +312,7 @@ fn apply(
             }
             Source::Unsigned(pieces) => {
                 let current = read_unsigned(&gather(layout, pieces, record));
-                if same(&current, &value) {
+                if !like_nmr && same(&current, &value) {
                     continue;
                 }
                 let bytes = write_unsigned(&value).map_err(err)?;
@@ -277,7 +324,7 @@ fn apply(
                 };
                 let f = layout.field("text").expect("textblk has text");
                 let span = f.offset..f.offset + f.size;
-                if text::decrypt_textblock(&record[span.clone()]) == *s {
+                if !like_nmr && text::decrypt_textblock(&record[span.clone()]) == *s {
                     continue;
                 }
                 let bytes =
