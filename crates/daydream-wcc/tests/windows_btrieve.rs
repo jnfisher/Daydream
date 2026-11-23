@@ -292,12 +292,14 @@ fn btrieve_clones_the_stock_files() {
         if !name.to_ascii_uppercase().ends_with(".VIR") {
             continue;
         }
-        // the small files, and the message file: its 512-byte pages need more page tables
-        // than a rebuilt file reads back with (status 2 past about 30)
+        // the small files; the message file, whose 512-byte pages need more than 30 page
+        // tables filled (past which Btrieve leaves a 4096-byte gap); and the text file, the
+        // variable-length one
         let big = std::fs::metadata(&path).unwrap().len() > 256 * 1024;
         if big
-            && !name.eq_ignore_ascii_case("WCCMSG.VIR")
-            && !name.eq_ignore_ascii_case("WCCMP001.VIR")
+            && !["WCCMSG.VIR", "WCCTEXT.VIR"]
+                .iter()
+                .any(|n| name.eq_ignore_ascii_case(n))
         {
             continue;
         }
@@ -329,8 +331,13 @@ fn btrieve_clones_the_stock_files() {
                 println!("  FCR page {p}:");
                 print!("{}", nonzero_rows(&bytes[p * page..(p + 1) * page]));
             }
+            // of a large file, the first two pages of each kind whole (by the page id's
+            // type byte: index, data, variable)
+            let mut shown = std::collections::HashMap::new();
             for (p, chunk) in bytes.chunks(page).enumerate().skip(fcr_pages) {
-                if bytes.len() <= 16 * 1024 {
+                let seen = shown.entry(chunk[1]).or_insert(0);
+                *seen += 1;
+                if bytes.len() <= 16 * 1024 || (p > 3 && *seen <= 2) {
                     // small files whole, so every byte of Btrieve's layout is on record
                     println!("  page {p}:");
                     print!("{}", nonzero_rows(chunk));
