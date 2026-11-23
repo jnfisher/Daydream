@@ -521,3 +521,17 @@ async fn the_modifier_previews_then_writes() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn presets_are_checked_before_they_run() {
+    let dir = realm();
+    let preset = |body: Value| send(dir.path(), "POST", "/api/tools/preset", body);
+    let (status, body) = preset(serde_json::json!({"preset": "multiply_exp", "by": 50})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("2 to 20"),
+        "{body}"
+    );
+    let (status, _) = preset(serde_json::json!({"preset": "no_such_fix"})).await;
+    assert!(status.is_client_error());
+}

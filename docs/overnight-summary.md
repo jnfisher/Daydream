@@ -24,7 +24,8 @@ revisited. Pull requests merged once CI was green.
 | #7 | M2: every other editor laid out as NMR's, ANSI preview | merged (squash 163fa0c) |
 | #8 | NMR's import options, Database Deleter and Merge Users | merged (squash 4c25fd8) |
 | #9 | The importer, deleter and Merge Users in the browser (Tools) | merged (squash 3435600) |
-| #10 | M3: the Universal Modifier, with a preview | open |
+| #10 | M3: the Universal Modifier, with a preview | merged (squash f4eb920) |
+| #11 | M3: NMR's one-click fixes (limited items, exp, uses, kill times, drop %) | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -38,6 +39,12 @@ revisited. Pull requests merged once CI was green.
   change an ability, over a range, with up to three "only if" boxes. Preview lists every
   value that would change, before and after; Start writes them. It is the fourth card on
   the Tools page.
+- **NMR's one-click fixes are in** (#11), each with a preview: No Limited Items, No Level
+  Restrictions, Fix Number of Uses (items, and on monster drops), Multiply / Divide All Exp
+  (split into Experience × Exp Multiplier as NMR splits it), Multiply Boss Exp, Combine Exp
+  and Exp Multi, Set / Reset Last Killed Times, and Modify Item Drop Percentages with NMR's
+  form and defaults. Records NMR would log for a look (an item with uses but no recharge
+  ability, a drop of a missing item) are listed under the preview.
 
 ## Decisions taken
 
@@ -84,6 +91,19 @@ revisited. Pull requests merged once CI was green.
     2,000 are shown; the count is whole). Start writes only the changed rows, so the
     records it does not change keep their bytes. The arithmetic follows NMR's `DoMath`
     exactly, including VB's rounding of halves to even.
+
+12. **Multiply All Exp takes an Exp Multiplier of 0 as 1.** NMR's code multiplies by the 0
+    and so leaves such a monster with 1 experience; its Divide and Combine already take 0 as
+    1, so Multiply does the same here. Everything else follows NMR's code exactly, including
+    VB's rounding and its search for a multiplier.
+13. **The fixes follow NMR's code where its prompt text differs.** Fix Uses on Item Drops
+    copies each item's uses (NMR's prompt says items with 0 or fewer uses get -1; its code
+    copies the uses, and the item fix, run first, is what sets -1). Modify Item Drop
+    Percentages keeps NMR's rule that a drop already at the value is left alone, even when
+    adding.
+14. **Multiply Boss Exp runs as a fix.** NMR fills in the Universal Modifier's form
+    (Exp Multiplier × 2 where Game Limit = 1); here it is a fix with its own "times" box, and
+    the modifier can do the same with other settings.
 
 ## Known gaps
 

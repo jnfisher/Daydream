@@ -7,6 +7,7 @@
 //! | `POST /api/tools/delete` | `{table, range?, dry_run}`; the deleter's report |
 //! | `POST /api/tools/merge-users?dry_run=` | body: a user file (`.DAT` or `.db`); what was copied |
 //! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify) and `dry_run`; every change, then the write's report |
+//! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
 //!
 //! `options` is JSON: `tables` (names, or absent for all), `ranges` (`[{table, map?, from,
 //! to}]`), `skip_existing`, `room_parts` (`all`, `only_items`, `not_items`), `extra_parts`
@@ -241,13 +242,48 @@ pub(crate) async fn modify(
     State(s): State<Arc<AppState>>,
     Json(body): Json<ModifyJson>,
 ) -> Result<Json<Value>, ApiError> {
+    run_plan(s, body.dry_run, move |realm, layout| {
+        daydream_nmr::modify::plan(realm, &body.modify, layout).map_err(|e| bad(e.to_string()))
+    })
+    .await
+}
+
+/// The body of one of NMR's fixes: the fix, and whether to only preview it.
+#[derive(Debug, Deserialize)]
+pub struct PresetJson {
+    #[serde(flatten)]
+    preset: daydream_nmr::presets::Preset,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+pub(crate) async fn preset(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<PresetJson>,
+) -> Result<Json<Value>, ApiError> {
+    run_plan(s, body.dry_run, move |realm, layout| {
+        daydream_nmr::presets::plan(realm, &body.preset, layout).map_err(|e| bad(e.to_string()))
+    })
+    .await
+}
+
+/// Plans a run, writes it unless `dry_run`, and answers with what changes.
+async fn run_plan(
+    s: Arc<AppState>,
+    dry_run: bool,
+    plan: impl FnOnce(
+        &Realm,
+        daydream_types::records::LayoutSet,
+    ) -> Result<daydream_nmr::modify::Plan, ApiError>
+    + Send
+    + 'static,
+) -> Result<Json<Value>, ApiError> {
     blocking(move || {
         let _writing = s.write.lock().map_err(internal)?;
         let realm = Realm::open(&s.realm_dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
-        let plan = daydream_nmr::modify::plan(&realm, &body.modify, layout)
-            .map_err(|e| bad(e.to_string()))?;
-        let report = if body.dry_run {
+        let plan = plan(&realm, layout)?;
+        let report = if dry_run {
             None
         } else {
             let r = daydream_nmr::modify::apply(&realm, &plan, layout)
@@ -256,12 +292,13 @@ pub(crate) async fn modify(
         };
         let listed = &plan.changes[..plan.changes.len().min(MAX_LISTED)];
         Ok(Json(json!({
-            "dry_run": body.dry_run,
+            "dry_run": dry_run,
             "table": plan.table,
             "changed": plan.changes.len(),
             "records": plan.records(),
             "skipped": plan.skipped,
             "unchanged": plan.unchanged,
+            "notes": plan.notes,
             "changes": listed,
             "report": report,
         })))

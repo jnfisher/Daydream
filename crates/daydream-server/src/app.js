@@ -462,7 +462,7 @@ var SHOP_TYPE = list(
   "Gang Shop",
   "Deed Shop"
 );
-var f = (col, label, pick) => ({ col, label, pick });
+var f = (col, label, pick2) => ({ col, label, pick: pick2 });
 var wide = (col, label) => ({ col, label, wide: true });
 var abilities = (from, to) => ({
   columns: [
@@ -1007,10 +1007,10 @@ function rangeOf(r) {
 function rangeRow(table, withUse) {
   const use = input({ type: "checkbox", checked: "" });
   const all = input({ type: "checkbox", checked: "" });
-  const num = () => input({ type: "text", inputmode: "numeric", class: "number", disabled: "" });
-  const map = table === "Rooms" ? num() : null;
-  const from = num();
-  const to = num();
+  const num2 = () => input({ type: "text", inputmode: "numeric", class: "number", disabled: "" });
+  const map = table === "Rooms" ? num2() : null;
+  const from = num2();
+  const to = num2();
   if (table === "Actions") all.disabled = true;
   all.addEventListener("change", () => {
     for (const i of [map, from, to]) if (i) i.disabled = all.checked;
@@ -1304,6 +1304,7 @@ function modifyResult(res) {
       `${res.records} record${res.records === 1 ? "" : "s"} ${would} (${res.changed} value${res.changed === 1 ? "" : "s"}); ${res.unchanged} already as set; ${res.skipped} left out by the "only if" boxes.` + (res.dry_run ? " Preview: nothing was written." : "")
     )
   );
+  if (res.notes?.length) box.append(h("p", {}, "Worth a look (not changed):"), h("pre", { class: "errors" }, res.notes.join("\n")));
   if (res.report?.errors?.length) box.append(h("pre", { class: "errors" }, res.report.errors.join("\n")));
   if (res.changes.length) {
     const body = h("tbody");
@@ -1315,9 +1316,173 @@ function modifyResult(res) {
   }
   return box;
 }
+var pick = (values, selected) => {
+  const s = h("select", {}, ...options(values));
+  if (selected) s.value = selected;
+  return s;
+};
+var check = (label, on = true) => {
+  const i = input({ type: "checkbox", checked: on ? "" : void 0 });
+  return [i, h("label", {}, i, " ", label)];
+};
+var num = (i) => Number(i.value.trim() || 0);
+function fixes() {
+  const mulBy = numberInput("2");
+  const mulCap = numberInput("0");
+  const divBy = numberInput("2");
+  const bossBy = numberInput("2");
+  const date = input({ type: "date", value: "1990-01-01" });
+  const dropMode = pick([["set", "Set to"], ["add", "Add (+/-)"]]);
+  const dropValue = numberInput("20");
+  const dropCmp = pick(CMPS, "le");
+  const dropLimit = numberInput("20");
+  const dropLimited = pick([["include", "Include limited items"], ["exclude", "Exclude limited items"], ["only", "Only limited items"]]);
+  const [delMaint, delMaintLabel] = check("Exclude weapons and armour deleted at maintenance (ability 119)", true);
+  const [regenOn, regenLabel] = check("AND only if monster regen >", true);
+  const regen = numberInput("1");
+  const types = ["Weapons", "Armour", "Keys", "Containers", "Scrolls"].map((t2) => check(t2));
+  return [
+    {
+      title: "No Limited Items",
+      hint: "Every item's Game Limit to 0, except the quest portals (839, 1078, 1326, 1531, 1643, 1686, 1749) and gang items.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "no_limited_items" }]
+    },
+    {
+      title: "No Level Restrictions",
+      hint: "Takes the level restriction abilities (135 and 136) off every item, values too.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "no_level_restrictions" }]
+    },
+    {
+      title: "Fix Number of Uses (items)",
+      hint: "Items with 0 uses get -1. Items kept after their uses get a recharge value equal to their uses; those without a recharge ability are listed.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "fix_item_uses" }]
+    },
+    {
+      title: "Fix Number of Uses on Item Drops",
+      hint: "Each monster drop's uses set to the item's own uses. Run the item fix first.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "fix_drop_uses" }]
+    },
+    {
+      title: "Multiply All Exp",
+      hint: "Monster experience times 2 to 20, split into Experience \xD7 Exp Multiplier as NMR splits it. A cap of 0 is the most 1.11p holds.",
+      inputs: [h("label", {}, "Times ", mulBy), h("label", {}, "Cap ", mulCap)],
+      request: () => ["/api/tools/preset", { preset: "multiply_exp", by: num(mulBy), cap: num(mulCap) || null }]
+    },
+    {
+      title: "Divide All Exp",
+      hint: "Monster experience divided by 2 to 20 (at least 1).",
+      inputs: [h("label", {}, "Divide by ", divBy)],
+      request: () => ["/api/tools/preset", { preset: "divide_exp", by: num(divBy) }]
+    },
+    {
+      title: "Multiply Boss Exp",
+      hint: "Exp Multiplier times this, for monsters with Game Limit = 1 (which are probably bosses). The Universal Modifier does the same with other settings.",
+      inputs: [h("label", {}, "Times ", bossBy)],
+      request: () => [
+        "/api/tools/modify",
+        {
+          table: "Monsters",
+          action: { kind: "math", columns: ["Exp Multiplier"], op: "mul", value: num(bossBy), limit: null },
+          only_if: [{ kind: "column", column: "Game Limit", cmp: "eq", value: 1 }]
+        }
+      ]
+    },
+    {
+      title: "Combine Exp and Exp Multi Fields",
+      hint: "Experience \xD7 Exp Multiplier into Experience, multiplier 1 (fixes the experience of monsters killed by damage over time). A multiplier of 0 or less counts as 1.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "combine_exp" }]
+    },
+    {
+      title: "Set Last Killed Times to Date",
+      hint: "Every monster last killed on this date, at 01:01:02.",
+      inputs: [h("label", {}, "Date ", date)],
+      request: () => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.value);
+        if (!m) throw new Error("Pick a date.");
+        return ["/api/tools/preset", { preset: "set_kill_times", year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) }];
+      }
+    },
+    {
+      title: "Reset Last Killed Times to Zero",
+      hint: "Every monster's last killed date and time to 0.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "reset_kill_times" }]
+    },
+    {
+      title: "Modify Item Drop Percentages",
+      hint: "Change the drop % of monsters' item drops, by the kind of item. A drop already at the value is left alone, as NMR leaves it.",
+      inputs: [
+        h("div", { class: "toolbar" }, dropMode, dropValue, h("span", {}, " only if the drop % is "), dropCmp, dropLimit),
+        h("div", { class: "toolbar" }, ...types.map(([, l]) => l)),
+        h("div", { class: "toolbar" }, dropLimited, delMaintLabel),
+        h("div", { class: "toolbar" }, regenLabel, regen)
+      ],
+      request: () => {
+        const [w, a, k2, c, sc] = types.map(([i]) => i.checked);
+        return [
+          "/api/tools/preset",
+          {
+            preset: "item_drop_pct",
+            set: dropMode.value === "set",
+            value: num(dropValue),
+            only_if: [dropCmp.value, num(dropLimit)],
+            limited: dropLimited.value,
+            exclude_del_at_maint: delMaint.checked,
+            min_regen: regenOn.checked ? num(regen) : null,
+            weapons: w,
+            armour: a,
+            keys: k2,
+            containers: c,
+            scrolls: sc
+          }
+        ];
+      }
+    }
+  ];
+}
+function fixesCard(changed2) {
+  const card = h("section", { class: "tool" }, h("h2", {}, "Fixes"));
+  card.append(h("p", { class: "hint" }, "NMR's one-click fixes from its Items and Monsters menus. Each previews first; Run writes."));
+  const choose = h("select", {});
+  const list2 = fixes();
+  list2.forEach((f2, i) => choose.append(h("option", { value: String(i) }, f2.title)));
+  const body = h("div");
+  const out = h("div");
+  const preview = h("button", { type: "button" }, "Preview");
+  const go = h("button", { type: "button", class: "primary" }, "Run");
+  const show2 = () => {
+    const f2 = list2[Number(choose.value)];
+    body.replaceChildren(h("p", { class: "hint" }, f2.hint), ...f2.inputs.length ? [h("div", { class: "fix-inputs" }, ...f2.inputs)] : []);
+    out.replaceChildren();
+  };
+  choose.addEventListener("change", show2);
+  show2();
+  card.append(h("div", { class: "toolbar" }, h("label", {}, "Fix: ", choose)), body, h("div", { class: "toolbar" }, preview, go), out);
+  const run = async (dryRun) => {
+    const f2 = list2[Number(choose.value)];
+    try {
+      const [url, req] = f2.request();
+      if (!dryRun && !confirm(`${f2.title}: write the changes? Preview first to see them.`)) return;
+      out.replaceChildren(h("p", {}, dryRun ? "Previewing\u2026" : "Changing\u2026"));
+      const res = await post(url, JSON.stringify({ ...req, dry_run: dryRun }), true);
+      out.replaceChildren(modifyResult(res));
+      if (!dryRun) changed2();
+    } catch (e) {
+      out.replaceChildren(failure(e));
+    }
+  };
+  preview.addEventListener("click", () => void run(true));
+  go.addEventListener("click", () => void run(false));
+  return card;
+}
 function toolsPage(changed2) {
   const page = h("div", { class: "tools" }, importer(changed2), deleter(changed2), mergeUsers());
-  api.tables().then((tables) => page.append(universalModifier(tables, changed2))).catch((e) => page.append(failure(e)));
+  api.tables().then((tables) => page.append(universalModifier(tables, changed2), fixesCard(changed2))).catch((e) => page.append(failure(e)));
   return page;
 }
 
@@ -1395,11 +1560,11 @@ async function names(table) {
   }
   return m;
 }
-function pickName(pick, value) {
-  if (!pick || value.trim() === "") return "";
+function pickName(pick2, value) {
+  if (!pick2 || value.trim() === "") return "";
   const n = Number(value);
-  if ("abilities" in pick) return n === 0 ? "" : ABILITIES[n]?.[0] ?? "unknown ability";
-  if ("ref" in pick) return n === 0 ? "" : state.names.get(pick.ref)?.get(n) ?? "none such";
+  if ("abilities" in pick2) return n === 0 ? "" : ABILITIES[n]?.[0] ?? "unknown ability";
+  if ("ref" in pick2) return n === 0 ? "" : state.names.get(pick2.ref)?.get(n) ?? "none such";
   return "";
 }
 function renderNav() {
@@ -1451,11 +1616,11 @@ function input2(field, info) {
   const col = field.col;
   const value = state.edits.get(col) ?? "";
   const isKey = state.table?.key.includes(col) ?? false;
-  const pick = field.pick;
+  const pick2 = field.pick;
   let control;
-  if (pick && "options" in pick) {
+  if (pick2 && "options" in pick2) {
     const select2 = h2("select", { "data-col": col });
-    const options2 = { ...pick.options };
+    const options2 = { ...pick2.options };
     if (value !== "" && !(Number(value) in options2)) options2[Number(value)] = `${value} (unknown)`;
     for (const [n, label] of Object.entries(options2)) {
       select2.append(h2("option", { value: n }, `${n}: ${label}`));
@@ -1480,15 +1645,15 @@ function input2(field, info) {
     control.setAttribute("disabled", "");
     control.title = "The record\u2019s key: insert a new record to use another";
   }
-  const name = h2("span", { class: "pick-name" }, pickName(pick, value));
-  if (pick && "abilities" in pick) name.title = ABILITIES[Number(value)]?.[1] ?? "";
+  const name = h2("span", { class: "pick-name" }, pickName(pick2, value));
+  if (pick2 && "abilities" in pick2) name.title = ABILITIES[Number(value)]?.[1] ?? "";
   control.addEventListener("input", () => {
     state.edits.set(col, control.value);
-    name.textContent = pickName(pick, control.value);
+    name.textContent = pickName(pick2, control.value);
     refreshDirty();
   });
   const wrap = h2("span", { class: "control" }, control);
-  if (pick && !("options" in pick)) wrap.append(name);
+  if (pick2 && !("options" in pick2)) wrap.append(name);
   return wrap;
 }
 function renderField(field) {

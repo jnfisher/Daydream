@@ -424,6 +424,7 @@ function modifyResult(res: any): HTMLElement {
         (res.dry_run ? ' Preview: nothing was written.' : ''),
     ),
   );
+  if (res.notes?.length) box.append(h('p', {}, 'Worth a look (not changed):'), h('pre', { class: 'errors' }, res.notes.join('\n')));
   if (res.report?.errors?.length) box.append(h('pre', { class: 'errors' }, res.report.errors.join('\n')));
   if (res.changes.length) {
     const body = h('tbody');
@@ -436,12 +437,191 @@ function modifyResult(res: any): HTMLElement {
   return box;
 }
 
+/** One fix: its title, what it does, its inputs, and the request it sends. */
+interface Fix {
+  title: string;
+  hint: string;
+  inputs: (HTMLElement | string)[];
+  /** The route, and its body without `dry_run`; a thrown Error is shown as the answer. */
+  request: () => [string, object];
+}
+
+const pick = (values: [string, string][], selected?: string) => {
+  const s = h('select', {}, ...options(values));
+  if (selected) s.value = selected;
+  return s;
+};
+const check = (label: string, on = true) => {
+  const i = input({ type: 'checkbox', checked: on ? '' : undefined });
+  return [i, h('label', {}, i, ' ', label)] as const;
+};
+const num = (i: HTMLInputElement) => Number(i.value.trim() || 0);
+
+function fixes(): Fix[] {
+  const mulBy = numberInput('2');
+  const mulCap = numberInput('0');
+  const divBy = numberInput('2');
+  const bossBy = numberInput('2');
+  const date = input({ type: 'date', value: '1990-01-01' });
+
+  // Modify Item Drop Percentages
+  const dropMode = pick([['set', 'Set to'], ['add', 'Add (+/-)']]);
+  const dropValue = numberInput('20');
+  const dropCmp = pick(CMPS, 'le');
+  const dropLimit = numberInput('20');
+  const dropLimited = pick([['include', 'Include limited items'], ['exclude', 'Exclude limited items'], ['only', 'Only limited items']]);
+  const [delMaint, delMaintLabel] = check('Exclude weapons and armour deleted at maintenance (ability 119)', true);
+  const [regenOn, regenLabel] = check('AND only if monster regen >', true);
+  const regen = numberInput('1');
+  const types = ['Weapons', 'Armour', 'Keys', 'Containers', 'Scrolls'].map((t) => check(t));
+
+  return [
+    {
+      title: 'No Limited Items',
+      hint: 'Every item\'s Game Limit to 0, except the quest portals (839, 1078, 1326, 1531, 1643, 1686, 1749) and gang items.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'no_limited_items' }],
+    },
+    {
+      title: 'No Level Restrictions',
+      hint: 'Takes the level restriction abilities (135 and 136) off every item, values too.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'no_level_restrictions' }],
+    },
+    {
+      title: 'Fix Number of Uses (items)',
+      hint: 'Items with 0 uses get -1. Items kept after their uses get a recharge value equal to their uses; those without a recharge ability are listed.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'fix_item_uses' }],
+    },
+    {
+      title: 'Fix Number of Uses on Item Drops',
+      hint: 'Each monster drop\'s uses set to the item\'s own uses. Run the item fix first.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'fix_drop_uses' }],
+    },
+    {
+      title: 'Multiply All Exp',
+      hint: 'Monster experience times 2 to 20, split into Experience × Exp Multiplier as NMR splits it. A cap of 0 is the most 1.11p holds.',
+      inputs: [h('label', {}, 'Times ', mulBy), h('label', {}, 'Cap ', mulCap)],
+      request: () => ['/api/tools/preset', { preset: 'multiply_exp', by: num(mulBy), cap: num(mulCap) || null }],
+    },
+    {
+      title: 'Divide All Exp',
+      hint: 'Monster experience divided by 2 to 20 (at least 1).',
+      inputs: [h('label', {}, 'Divide by ', divBy)],
+      request: () => ['/api/tools/preset', { preset: 'divide_exp', by: num(divBy) }],
+    },
+    {
+      title: 'Multiply Boss Exp',
+      hint: 'Exp Multiplier times this, for monsters with Game Limit = 1 (which are probably bosses). The Universal Modifier does the same with other settings.',
+      inputs: [h('label', {}, 'Times ', bossBy)],
+      request: () => [
+        '/api/tools/modify',
+        {
+          table: 'Monsters',
+          action: { kind: 'math', columns: ['Exp Multiplier'], op: 'mul', value: num(bossBy), limit: null },
+          only_if: [{ kind: 'column', column: 'Game Limit', cmp: 'eq', value: 1 }],
+        },
+      ],
+    },
+    {
+      title: 'Combine Exp and Exp Multi Fields',
+      hint: 'Experience × Exp Multiplier into Experience, multiplier 1 (fixes the experience of monsters killed by damage over time). A multiplier of 0 or less counts as 1.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'combine_exp' }],
+    },
+    {
+      title: 'Set Last Killed Times to Date',
+      hint: 'Every monster last killed on this date, at 01:01:02.',
+      inputs: [h('label', {}, 'Date ', date)],
+      request: () => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.value);
+        if (!m) throw new Error('Pick a date.');
+        return ['/api/tools/preset', { preset: 'set_kill_times', year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) }];
+      },
+    },
+    {
+      title: 'Reset Last Killed Times to Zero',
+      hint: 'Every monster\'s last killed date and time to 0.',
+      inputs: [],
+      request: () => ['/api/tools/preset', { preset: 'reset_kill_times' }],
+    },
+    {
+      title: 'Modify Item Drop Percentages',
+      hint: 'Change the drop % of monsters\' item drops, by the kind of item. A drop already at the value is left alone, as NMR leaves it.',
+      inputs: [
+        h('div', { class: 'toolbar' }, dropMode, dropValue, h('span', {}, ' only if the drop % is '), dropCmp, dropLimit),
+        h('div', { class: 'toolbar' }, ...types.map(([, l]) => l)),
+        h('div', { class: 'toolbar' }, dropLimited, delMaintLabel),
+        h('div', { class: 'toolbar' }, regenLabel, regen),
+      ],
+      request: () => {
+        const [w, a, k, c, sc] = types.map(([i]) => i.checked);
+        return [
+          '/api/tools/preset',
+          {
+            preset: 'item_drop_pct',
+            set: dropMode.value === 'set',
+            value: num(dropValue),
+            only_if: [dropCmp.value, num(dropLimit)],
+            limited: dropLimited.value,
+            exclude_del_at_maint: delMaint.checked,
+            min_regen: regenOn.checked ? num(regen) : null,
+            weapons: w,
+            armour: a,
+            keys: k,
+            containers: c,
+            scrolls: sc,
+          },
+        ];
+      },
+    },
+  ];
+}
+
+function fixesCard(changed: () => void): HTMLElement {
+  const card = h('section', { class: 'tool' }, h('h2', {}, 'Fixes'));
+  card.append(h('p', { class: 'hint' }, "NMR's one-click fixes from its Items and Monsters menus. Each previews first; Run writes."));
+  const choose = h('select', {});
+  const list = fixes();
+  list.forEach((f, i) => choose.append(h('option', { value: String(i) }, f.title)));
+  const body = h('div');
+  const out = h('div');
+  const preview = h('button', { type: 'button' }, 'Preview');
+  const go = h('button', { type: 'button', class: 'primary' }, 'Run');
+  const show = () => {
+    const f = list[Number(choose.value)]!;
+    body.replaceChildren(h('p', { class: 'hint' }, f.hint), ...(f.inputs.length ? [h('div', { class: 'fix-inputs' }, ...f.inputs)] : []));
+    out.replaceChildren();
+  };
+  choose.addEventListener('change', show);
+  show();
+  card.append(h('div', { class: 'toolbar' }, h('label', {}, 'Fix: ', choose)), body, h('div', { class: 'toolbar' }, preview, go), out);
+  const run = async (dryRun: boolean) => {
+    const f = list[Number(choose.value)]!;
+    try {
+      const [url, req] = f.request();
+      if (!dryRun && !confirm(`${f.title}: write the changes? Preview first to see them.`)) return;
+      out.replaceChildren(h('p', {}, dryRun ? 'Previewing…' : 'Changing…'));
+      const res = await post(url, JSON.stringify({ ...req, dry_run: dryRun }), true);
+      out.replaceChildren(modifyResult(res));
+      if (!dryRun) changed();
+    } catch (e) {
+      out.replaceChildren(failure(e));
+    }
+  };
+  preview.addEventListener('click', () => void run(true));
+  go.addEventListener('click', () => void run(false));
+  return card;
+}
+
 /** The tools page; `changed` runs after a write, so the editors reload what they show. */
 export function toolsPage(changed: () => void): HTMLElement {
   const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers());
   api
     .tables()
-    .then((tables) => page.append(universalModifier(tables, changed)))
+    .then((tables) => page.append(universalModifier(tables, changed), fixesCard(changed)))
     .catch((e) => page.append(failure(e)));
   return page;
 }

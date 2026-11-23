@@ -131,6 +131,8 @@ pub struct Plan {
     pub skipped: usize,
     /// Records in range the action changed nothing in.
     pub unchanged: usize,
+    /// Things worth a look that the run could not change, as NMR logs them.
+    pub notes: Vec<String>,
     /// The changed rows, whole, for [`apply`].
     #[serde(skip)]
     rows: Option<NmrRows>,
@@ -162,12 +164,12 @@ pub enum ModifyError {
     Import(#[from] ImportError),
 }
 
-fn num(v: &Value) -> f64 {
+pub(crate) fn num(v: &Value) -> f64 {
     schema::number(v).unwrap_or(0.0)
 }
 
 /// The range a column's element holds, as NMR clamps to it.
-fn bounds(t: &NmrTable, column: &str) -> Option<(f64, f64)> {
+pub(crate) fn bounds(t: &NmrTable, column: &str) -> Option<(f64, f64)> {
     let c = t.column(column)?;
     Some(match &c.source {
         Source::Element {
@@ -199,7 +201,7 @@ fn math(value: f64, op: Op, by: f64, limit: Option<(Cmp, f64)>, (lo, hi): (f64, 
 }
 
 /// A number in the cell's own form: a Double column stays a Double.
-fn cell(like: &Value, n: f64) -> Value {
+pub(crate) fn cell(like: &Value, n: f64) -> Value {
     match like {
         Value::Double(_) => Value::Double(n),
         _ => Value::Long(n as i32),
@@ -207,7 +209,7 @@ fn cell(like: &Value, n: f64) -> Value {
 }
 
 /// The ability slots of a table: (ability column, value column) positions.
-fn slots(rows: &NmrRows) -> Vec<(usize, usize)> {
+pub(crate) fn slots(rows: &NmrRows) -> Vec<(usize, usize)> {
     (0..)
         .map_while(|i| {
             Some((
@@ -298,33 +300,20 @@ pub fn plan(realm: &Realm, m: &Modify, layout: LayoutSet) -> Result<Plan, Modify
             _ => {}
         }
     }
-    let index: Vec<usize> = t
-        .index
-        .as_ref()
-        .map(|i| i.columns.iter().filter_map(|c| rows.position(c)).collect())
-        .unwrap_or_default();
     let value_bounds = slots
         .first()
         .and_then(|&(_, v)| bounds(t, &rows.columns[v]))
         .unwrap_or((f64::from(i16::MIN), f64::from(i16::MAX)));
-
-    let mut plan = Plan {
-        table: t.name.to_string(),
-        ..Plan::default()
-    };
-    let mut changed_rows = Vec::new();
-    for row in &rows.rows {
-        if m.range
-            .as_ref()
-            .is_some_and(|r| !in_range(t, &rows, row, r))
-        {
-            continue;
+    let in_scope = |row: &[Value]| m.range.as_ref().is_none_or(|r| in_range(t, &rows, row, r));
+    let only_if = |row: &[Value]| m.only_if.iter().all(|c| passes(&rows, &slots, row, c));
+    let each = |row: &[Value]| -> Step {
+        if !in_scope(row) {
+            return Step::Out;
         }
-        if !m.only_if.iter().all(|c| passes(&rows, &slots, row, c)) {
-            plan.skipped += 1;
-            continue;
+        if !only_if(row) {
+            return Step::Skip;
         }
-        let mut new = row.clone();
+        let mut new = row.to_vec();
         match &m.action {
             Action::Math {
                 columns,
@@ -382,6 +371,46 @@ pub fn plan(realm: &Realm, m: &Modify, layout: LayoutSet) -> Result<Plan, Modify
                 }
             }
         }
+        Step::Row(new)
+    };
+    Ok(collect(t, &rows, each))
+}
+
+/// What a run does with one record.
+pub(crate) enum Step {
+    /// Outside the run's range: not counted.
+    Out,
+    /// Left out by an "only if" box.
+    Skip,
+    /// The record as the run leaves it.
+    Row(Vec<Value>),
+}
+
+/// Runs `each` over every row and gathers the changes into a plan.
+pub(crate) fn collect(
+    t: &NmrTable,
+    rows: &NmrRows,
+    mut each: impl FnMut(&[Value]) -> Step,
+) -> Plan {
+    let index: Vec<usize> = t
+        .index
+        .as_ref()
+        .map(|i| i.columns.iter().filter_map(|c| rows.position(c)).collect())
+        .unwrap_or_default();
+    let mut plan = Plan {
+        table: t.name.to_string(),
+        ..Plan::default()
+    };
+    let mut changed_rows = Vec::new();
+    for row in &rows.rows {
+        let new = match each(row) {
+            Step::Out => continue,
+            Step::Skip => {
+                plan.skipped += 1;
+                continue;
+            }
+            Step::Row(new) => new,
+        };
         let key: Vec<Value> = index.iter().map(|&i| row[i].clone()).collect();
         let before = plan.changes.len();
         for (i, (a, b)) in row.iter().zip(&new).enumerate() {
@@ -405,7 +434,7 @@ pub fn plan(realm: &Realm, m: &Modify, layout: LayoutSet) -> Result<Plan, Modify
         columns: rows.columns.clone(),
         rows: changed_rows,
     });
-    Ok(plan)
+    plan
 }
 
 /// Writes a plan's changed rows to the realm through the strict import.
