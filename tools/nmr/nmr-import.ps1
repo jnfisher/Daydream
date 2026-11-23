@@ -27,6 +27,8 @@ $Mdb = (Resolve-Path $Mdb).Path
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $importDir = Split-Path $Mdb -Parent
+# Btrieve ends a file name at the first space
+if ($Wg -match ' ') { throw "the realm's path has a space, which Btrieve cannot open: $Wg" }
 
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
 Add-Type -TypeDefinition @'
@@ -187,6 +189,9 @@ function Wait-For([string]$what, $proc, [scriptblock]$test, [int]$seconds = 120)
         Start-Sleep -Milliseconds 250
     }
     Shot "timeout $what"
+    foreach ($h in [W]::TopLevel([uint32]$proc.Id)) {
+        Write-Host ("  window {0} '{1}' enabled {2}" -f [W]::Class($h), [W]::Text($h), [W]::IsWindowEnabled($h))
+    }
     throw "timed out after $seconds s waiting for $what"
 }
 

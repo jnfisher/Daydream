@@ -172,7 +172,10 @@ jobs:
         shell: pwsh
         run: |
           7z x "_nmr\_fresh dats.7z" -o_wg -y | Out-Null
-          $wg = "_wg\_dats\MajorMUD v1.11p final"
+          # Btrieve ends a file name at the first space
+          $wg = "_realm"
+          New-Item -ItemType Directory -Force $wg | Out-Null
+          Copy-Item "_wg\_dats\MajorMUD v1.11p final\*" $wg
           New-Item -ItemType Directory -Force _import | Out-Null
           $t = [Diagnostics.Stopwatch]::StartNew()
           cargo run -p daydream-nmr --locked --example stock_mdb -- _import\stock.mdb
