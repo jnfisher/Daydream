@@ -283,8 +283,14 @@ fn btrieve_clones_the_stock_files() {
                 print!("{}", nonzero_rows(&bytes[p * page..(p + 1) * page]));
             }
             for (p, chunk) in bytes.chunks(page).enumerate().skip(fcr_pages) {
-                let hex: Vec<String> = chunk[..16].iter().map(|b| format!("{b:02x}")).collect();
-                println!("  page {p}: {}", hex.join(" "));
+                if bytes.len() <= 16 * 1024 {
+                    // small files whole, so every byte of Btrieve's layout is on record
+                    println!("  page {p}:");
+                    print!("{}", nonzero_rows(chunk));
+                } else {
+                    let hex: Vec<String> = chunk[..16].iter().map(|b| format!("{b:02x}")).collect();
+                    println!("  page {p}: {}", hex.join(" "));
+                }
             }
             if what != "original" {
                 // Daydream must read Btrieve's own files, indexes included
