@@ -12,3 +12,4 @@ mod btrieve_write;
 mod decode_offsets;
 mod roundtrip;
 mod stock_vir;
+mod windows_btrieve;
