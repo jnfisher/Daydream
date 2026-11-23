@@ -2,6 +2,7 @@
 
 mod support;
 
+mod dat_write;
 mod oracle;
 mod roundtrip;
 mod writes;

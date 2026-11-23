@@ -80,6 +80,7 @@ pub fn router(realm_dir: &Path) -> Router {
         .route("/api/tools/modify", post(tools::modify))
         .route("/api/tools/preset", post(tools::preset))
         .route("/api/tools/renumber", post(tools::renumber))
+        .route("/api/tools/write-dat", post(tools::write_dat))
         .route("/api/reports/limited-items", get(reports::limited_items))
         .route("/api/reports/find-item", get(reports::find_item))
         .route("/api/reports/control-rooms", get(reports::control_rooms))

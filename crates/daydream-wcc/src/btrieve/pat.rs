@@ -4,10 +4,30 @@
 //! (:666) and `lookupPATEntry` (:687). PAT pages come in pairs that both start with `PP`;
 //! the copy with the higher usage count at +4 is active. Each 4-byte entry is
 //! `[page high][type][page low][page mid]`.
+//!
+//! One thing wbtrv32 does not know (Daydream addition, found in files Btrieve 6.15 grew in
+//! CI): the 31st PAT pair does not follow the 30th directly. Btrieve leaves 4096 bytes
+//! there, whatever the page length, so every physical page from that pair on sits 4096
+//! bytes further into the file than its number says ([`physical_offset`]). Files of up to
+//! 72 PAT pairs show no second gap.
 
 use super::error::{Fault, ReadError};
 use super::header::{Header, u16_at, u32_at};
 use super::pages::PageReader;
+
+/// PAT pairs before the 4096-byte gap.
+const PATS_BEFORE_GAP: u64 = 30;
+/// The gap before the 31st PAT pair.
+const GAP: u64 = 4096;
+
+/// The byte offset of physical page `page`: its number times the page length, plus the
+/// gap from the 31st PAT pair on.
+pub(crate) fn physical_offset(page: u32, page_length: u16) -> u64 {
+    let len = u64::from(page_length);
+    let page = u64::from(page);
+    let gap_at = 2 + PATS_BEFORE_GAP * (len / 4);
+    page * len + if page >= gap_at { GAP } else { 0 }
+}
 
 /// PAT entry type codes.
 pub(crate) mod kind {
@@ -122,12 +142,12 @@ impl Pat {
 
         // wbtrv32's paging: each further PAT pair is `page_length / 4` pages on.
         let mut logical = logical;
-        let mut pat_page: u64 = 2;
+        let mut pat_page: u32 = 2;
         while logical > pages_per_pat {
             logical -= pages_per_pat;
-            pat_page += u64::from(entries_per_page);
+            pat_page += entries_per_page;
         }
-        let at = pat_page * page_length;
+        let at = physical_offset(pat_page, header.page_length);
         // `physicalOffset >= fileLength - pageLength * 2` is "overflowed, junk".
         if at + 2 * page_length >= header.file_length {
             return Ok(PatEntry::UNMAPPED);
@@ -144,7 +164,7 @@ impl Pat {
         let active = active_copy(&self.pair, len);
         let index = logical as usize * 4 + 4;
         let (code, page) = decode_entry(&active[index..index + 4]);
-        let offset = (page != 0x00FF_FFFF).then(|| u64::from(page) * page_length);
+        let offset = (page != 0x00FF_FFFF).then(|| physical_offset(page, header.page_length));
         Ok(PatEntry { kind: code, offset })
     }
 }
@@ -157,6 +177,15 @@ mod tests {
     #[test]
     fn entry_bytes_are_high_type_low_mid() {
         assert_eq!(decode_entry(&[0x01, b'D', 0x03, 0x02]), (b'D', 0x01_02_03));
+    }
+
+    #[test]
+    fn pages_from_the_31st_page_table_on_are_4096_bytes_further() {
+        // as Btrieve 6.15 grew the message file (512) and the rooms file (1536)
+        assert_eq!(physical_offset(3841, 512), 3841 * 512);
+        assert_eq!(physical_offset(3842, 512), 0x1E_0400 + 4096);
+        assert_eq!(physical_offset(11_522, 1536), 17_701_888);
+        assert_eq!(physical_offset(2 + 71 * 384, 1536), 41_884_672);
     }
 
     #[test]

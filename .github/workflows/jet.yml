@@ -125,7 +125,20 @@ jobs:
       - name: test (through Btrieve)
         if: ${{ !cancelled() }}
         timeout-minutes: 10
+        env:
+          DAYDREAM_BTRIEVE_KEEP: ${{ github.workspace }}\_btrieve-keep
         run: cargo test -p daydream-wcc --locked --test all windows_btrieve -- --nocapture
+
+      # Btrieve 6.15's own filled clones of the rooms file (1536-byte pages) and the message
+      # file (512), both past 30 page tables: test files for other Btrieve readers
+      - name: Btrieve 6.15 files
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: btrieve-6.15-clones
+          path: _btrieve-keep
+          if-no-files-found: ignore
+          retention-days: 30
 
       # NMR's Database Importer, driven by tools/nmr/nmr-import.ps1: the controls NMR needs
       # come from Microsoft's VB6 SP6 update, extracted once and cached

@@ -8,12 +8,14 @@
 //! - [`db`]: one `.db`: convert a `.DAT`/`.VIR` into it, read, insert, update, delete.
 //! - [`key`]: wbtrv32's key columns, ported so Daydream's writes index exactly as wbtrv32's.
 //! - [`realm`]: a realm directory and its tables.
+//! - [`dat`]: writing a realm back into its Btrieve `WCC*.DAT` files.
 //!
 //! Writes assume nothing else has the file open: stop MBBSEmu (or the realm) before
 //! editing, until live writes are tested.
 
 #![forbid(unsafe_code)]
 
+pub mod dat;
 pub mod db;
 pub mod key;
 pub mod merge;

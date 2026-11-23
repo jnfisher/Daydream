@@ -10,10 +10,13 @@
 //! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
 //! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) and `dry_run`; as `modify` |
 //! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
+//! | `POST /api/tools/write-dat` | `{wcc, out?, backup, dry_run, force}`; `{files: [{stem, dest, action, records}], backup?}` |
 //!
 //! `options` is JSON: `tables` (names, or absent for all), `ranges` (`[{table, map?, from,
 //! to}]`), `skip_existing`, `room_parts` (`all`, `only_items`, `not_items`), `extra_parts`
 //! and `dry_run`. Like the editors, the tools write the realm's files: stop the realm first.
+//! `write-dat` writes the realm back into its Btrieve files (`daydream write-dat`): `wcc`
+//! is the folder the realm was converted from, on the machine the server runs on.
 
 use std::sync::Arc;
 
@@ -366,6 +369,84 @@ async fn run_plan(
             Some(crate::tables::report_json(&r))
         };
         Ok(Json(plan_json(&plan, dry_run, report)))
+    })
+    .await
+}
+
+/// The body of `write-dat`.
+#[derive(Debug, Deserialize)]
+pub struct WriteDatJson {
+    wcc: String,
+    #[serde(default)]
+    out: Option<String>,
+    #[serde(default = "yes")]
+    backup: bool,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    force: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+pub(crate) async fn write_dat(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<WriteDatJson>,
+) -> Result<Json<Value>, ApiError> {
+    use daydream_store::dat::{Action, DatError, WriteOptions};
+    blocking(move || {
+        let wcc = std::path::PathBuf::from(body.wcc.trim());
+        if body.wcc.trim().is_empty() || !wcc.is_dir() {
+            return Err(bad(format!("{}: not a folder", wcc.display())));
+        }
+        let out = body
+            .out
+            .map(|o| o.trim().to_string())
+            .filter(|o| !o.is_empty())
+            .map(std::path::PathBuf::from);
+        let backup = (out.is_none() && body.backup).then(|| {
+            let at = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
+            wcc.join(format!("daydream-backup-{at}"))
+        });
+        let options = WriteOptions {
+            out,
+            backup: backup.clone(),
+            dry_run: body.dry_run,
+            force: body.force,
+        };
+        let _writing = s.write.lock().map_err(internal)?;
+        let realm = Realm::open(&s.realm_dir)?;
+        let written =
+            daydream_store::dat::write_dat(&realm, &wcc, &options).map_err(|e| match e {
+                DatError::NoSource { .. }
+                | DatError::SourceChanged { .. }
+                | DatError::Build { .. } => ApiError(StatusCode::CONFLICT, e.to_string()),
+                e => internal(e),
+            })?;
+        let files: Vec<Value> = written
+            .iter()
+            .map(|w| {
+                let (action, records) = match w.action {
+                    Action::Unchanged => ("unchanged", None),
+                    Action::Updated(n) => ("updated", Some(n)),
+                    Action::Rebuilt(n) => ("rebuilt", Some(n)),
+                };
+                json!({
+                    "stem": w.stem,
+                    "dest": w.dest.display().to_string(),
+                    "action": action,
+                    "records": records,
+                })
+            })
+            .collect();
+        let backup = backup
+            .filter(|b| b.exists())
+            .map(|b| b.display().to_string());
+        Ok(Json(
+            json!({ "dry_run": body.dry_run, "files": files, "backup": backup }),
+        ))
     })
     .await
 }
