@@ -415,35 +415,6 @@ async fn a_silvermere_database_opens_into_a_working_copy() {
     .await;
     assert_eq!(st["running"], false, "{st}");
 
-    // with silvermere itself serving the database (SILVERMERE_BIN: CI keeps the release),
-    // the picker sees it run and nothing reads or writes the world under it
-    let bin = silvermere_bin();
-    if let Some(bin) = &bin {
-        let _serving = serve(bin, &url);
-        let (_, st) = call(
-            &app,
-            "GET",
-            &format!("/api/games/status?id={id}"),
-            None,
-            None,
-        )
-        .await;
-        assert_eq!(st["running"], true, "{st}");
-        let (status, body) = call(
-            &app,
-            "POST",
-            "/api/games/open",
-            Some(json!({"id": id})),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        assert!(
-            body["error"].as_str().unwrap().contains("Stop it first"),
-            "{body}"
-        );
-    }
-
     let (status, body) = call(
         &app,
         "POST",
@@ -477,11 +448,26 @@ async fn a_silvermere_database_opens_into_a_working_copy() {
     .await;
     assert_eq!(status, StatusCode::OK, "{res}");
 
-    // the export the card would make is refused while silvermere serves, and goes once stopped
-    if let Some(bin) = &bin {
+    // with silvermere itself serving the database (SILVERMERE_BIN: CI keeps the release),
+    // the picker sees it run, and neither a refresh nor the card's export goes under it
+    if let Some(bin) = &silvermere_bin() {
         let serving = serve(bin, &url);
         let (_, st) = call(&app, "GET", "/api/games/status?id=current", None, None).await;
         assert_eq!(st["running"], true, "{st}");
+        // reading it again would read a world silvermere is changing
+        let (status, body) = call(
+            &app,
+            "POST",
+            "/api/games/open",
+            Some(json!({"id": id, "refresh": true})),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(
+            body["error"].as_str().unwrap().contains("Stop it first"),
+            "{body}"
+        );
         let (status, res) = call(
             &app,
             "POST",
