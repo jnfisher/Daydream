@@ -51,12 +51,35 @@ pub(crate) async fn post(
         )
             .into_response();
     }
-    let answer = blocking(move || Ok(s.mcp.handle(&msg))).await;
+    let answer = blocking(move || {
+        if writes(&msg) {
+            // as the editors' saves: not into a running game's own files
+            let (_writing, _) = s.lock_write(false)?;
+        }
+        let cur = s.current();
+        let mcp = cur.mcp.as_ref().ok_or_else(|| {
+            crate::ApiError(
+                StatusCode::CONFLICT,
+                "no game is open: choose one in Daydream's web UI".into(),
+            )
+        })?;
+        Ok(mcp.handle(&msg))
+    })
+    .await;
     match answer {
         Ok(Some(v)) => Json(v).into_response(),
         Ok(None) => StatusCode::ACCEPTED.into_response(),
         Err(e) => e.into_response(),
     }
+}
+
+/// Whether an MCP message calls a tool that writes the realm.
+fn writes(msg: &Value) -> bool {
+    msg.get("method").and_then(Value::as_str) == Some("tools/call")
+        && matches!(
+            msg.pointer("/params/name").and_then(Value::as_str),
+            Some("apply_edits" | "undo" | "silvermere_import")
+        )
 }
 
 /// `/mcp/{token}`: [`crate::auth`] has matched the token; without one, there is no such route.

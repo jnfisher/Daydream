@@ -4,7 +4,7 @@
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
 //! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the realm
-//! in a silvermere database in [`silvermere`], the MCP
+//! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the MCP
 //! server for AI agents at `/mcp` ([`mcp`]), and the
 //! routes below serve each file's records
 //! decoded (every member by name, `unk_*` spans included), read only. Who may use it is
@@ -21,7 +21,7 @@
 //! bytes in base64.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use axum::extract::DefaultBodyLimit;
 use axum::extract::{Path as UrlPath, Query, State};
@@ -37,6 +37,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub mod auth;
+pub mod games;
 pub mod mcp;
 pub mod mme;
 pub mod reports;
@@ -50,15 +51,100 @@ pub const MAX_PAGE: i64 = 1000;
 /// What the handlers share.
 #[derive(Debug)]
 pub struct AppState {
-    realm_dir: PathBuf,
-    /// Held by every write, so two saves never interleave.
+    /// The game open, and its realm: swapped when another is opened ([`games`]).
+    current: RwLock<Arc<Current>>,
+    /// Held by every write, so two saves never interleave (and no game is opened mid-save).
     write: Mutex<()>,
-    /// The MCP server at `/mcp`.
-    mcp: daydream_mcp::Server,
     /// The access token, when the server takes requests from other machines ([`auth`]).
     token: Option<String>,
     /// The silvermere database the server was given ([`silvermere`]), as a URL.
     silvermere: Option<String>,
+    /// How games are found and opened.
+    games: games::Config,
+    /// The games found by the last search.
+    found: Mutex<Option<Vec<games::Found>>>,
+}
+
+/// The game open and its realm.
+#[derive(Debug)]
+pub struct Current {
+    /// The realm's folder; `None` until a game is opened.
+    pub realm_dir: Option<PathBuf>,
+    /// The game the realm is, when known.
+    pub game: Option<games::Game>,
+    /// The MCP server at `/mcp`, on this realm.
+    mcp: Option<daydream_mcp::Server>,
+}
+
+impl AppState {
+    /// The game open now.
+    pub fn current(&self) -> Arc<Current> {
+        self.current
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Opens another realm.
+    fn set_current(&self, realm_dir: PathBuf, game: Option<games::Game>) {
+        let silvermere = match &game {
+            Some(games::Game {
+                source: games::Source::Silvermere { url },
+                ..
+            }) => Some(url.clone()),
+            _ => self.silvermere.clone(),
+        };
+        let mcp = daydream_mcp::Server::new(
+            &realm_dir,
+            daydream_mcp::Options {
+                silvermere,
+                ..daydream_mcp::Options::default()
+            },
+        );
+        *self.current.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(Current {
+            realm_dir: Some(realm_dir),
+            game,
+            mcp: Some(mcp),
+        });
+    }
+
+    /// The open realm's folder, or a 409 asking for a game to be opened.
+    pub(crate) fn realm_dir(&self) -> Result<PathBuf, ApiError> {
+        self.current().realm_dir.clone().ok_or_else(|| {
+            ApiError(
+                StatusCode::CONFLICT,
+                "no game is open: choose one with the game picker at the top".into(),
+            )
+        })
+    }
+
+    /// Takes the write lock on the open realm. Unless `dry_run`, refuses when the realm is a
+    /// game's own files and the game is running.
+    pub(crate) fn lock_write(
+        &self,
+        dry_run: bool,
+    ) -> Result<(std::sync::MutexGuard<'_, ()>, PathBuf), ApiError> {
+        let guard = self
+            .write
+            .lock()
+            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let cur = self.current();
+        let dir = self.realm_dir()?;
+        if !dry_run && let Some(game) = cur.game.as_ref().filter(|g| g.live) {
+            let r = games::running::check(&dir);
+            if let Some(by) = r.by {
+                return Err(ApiError(
+                    StatusCode::CONFLICT,
+                    format!(
+                        "{} is running on these files ({by}): stop it before saving, \
+                         or its next write undoes yours",
+                        game.label
+                    ),
+                ));
+            }
+        }
+        Ok((guard, dir))
+    }
 }
 
 /// How the server is run.
@@ -69,31 +155,36 @@ pub struct Options {
     /// A silvermere database (a SQLite file's path or a URL) for the silvermere card and the
     /// MCP server's silvermere tools ([`silvermere`]).
     pub silvermere: Option<String>,
+    /// How games are found and opened from the browser ([`games`]).
+    pub games: games::Config,
 }
 
 /// The router for the realm in `realm_dir`, answering this machine only.
 pub fn router(realm_dir: &Path) -> Router {
-    router_with(realm_dir, Options::default())
+    router_with(Some(realm_dir), Options::default())
 }
 
-/// The router for the realm in `realm_dir`.
-pub fn router_with(realm_dir: &Path, options: Options) -> Router {
+/// The router for the realm in `realm_dir`, or for none until a game is opened in the
+/// browser.
+pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
     let state = Arc::new(AppState {
-        realm_dir: realm_dir.to_path_buf(),
+        current: RwLock::new(Arc::new(Current {
+            realm_dir: None,
+            game: None,
+            mcp: None,
+        })),
         write: Mutex::new(()),
-        mcp: daydream_mcp::Server::new(
-            realm_dir,
-            daydream_mcp::Options {
-                silvermere: options.silvermere.clone(),
-                ..daydream_mcp::Options::default()
-            },
-        ),
         token: options.token,
         silvermere: options
             .silvermere
             .as_deref()
             .map(daydream_silvermere::database_url),
+        games: options.games,
+        found: Mutex::new(None),
     });
+    if let Some(dir) = realm_dir {
+        state.set_current(dir.to_path_buf(), Some(games::Game::of_realm(dir)));
+    }
     Router::new()
         .route("/", get(index))
         .route("/login", get(auth::login_form).post(auth::login))
@@ -123,6 +214,9 @@ pub fn router_with(realm_dir: &Path, options: Options) -> Router {
         .route("/api/tools/preset", post(tools::preset))
         .route("/api/tools/renumber", post(tools::renumber))
         .route("/api/tools/write-dat", post(tools::write_dat))
+        .route("/api/games", get(games::list))
+        .route("/api/games/status", get(games::status))
+        .route("/api/games/open", post(games::open))
         .route("/api/silvermere", get(silvermere::configured))
         .route("/api/silvermere/info", post(silvermere::info))
         .route("/api/silvermere/export", post(silvermere::export))
@@ -166,7 +260,7 @@ impl From<StoreError> for ApiError {
     }
 }
 
-fn not_found(what: impl std::fmt::Display) -> ApiError {
+pub(crate) fn not_found(what: impl std::fmt::Display) -> ApiError {
     ApiError(StatusCode::NOT_FOUND, format!("{what} not found"))
 }
 
@@ -203,7 +297,8 @@ async fn health() -> Json<Value> {
 
 async fn realm(State(s): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let realm = Realm::open(&s.realm_dir)?;
+        let dir = s.realm_dir()?;
+        let realm = Realm::open(&dir)?;
         let mut files = Vec::new();
         for f in realm.files() {
             let db = WbtrvDb::open_read_only(&f.path)?;
@@ -216,7 +311,7 @@ async fn realm(State(s): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> 
                 "variable_length": meta.variable_length_records,
             }));
         }
-        Ok(Json(json!({ "dir": s.realm_dir, "files": files })))
+        Ok(Json(json!({ "dir": dir, "files": files })))
     })
     .await
 }
@@ -262,7 +357,7 @@ async fn records(
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (file, db, layout) = open_file(&s.realm_dir, &stem)?;
+        let (file, db, layout) = open_file(&s.realm_dir()?, &stem)?;
         let limit = q.limit.unwrap_or(100).clamp(1, MAX_PAGE);
         let page = db.page(q.after, limit)?;
         let next = if page.len() as i64 == limit {
@@ -289,7 +384,7 @@ async fn record(
     UrlPath((stem, id)): UrlPath<(String, i64)>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (file, db, layout) = open_file(&s.realm_dir, &stem)?;
+        let (file, db, layout) = open_file(&s.realm_dir()?, &stem)?;
         let data = db
             .get(id)?
             .ok_or_else(|| not_found(format!("{} record {id}", file.stem)))?;

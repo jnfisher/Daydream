@@ -833,7 +833,7 @@ async fn a_token_lets_in_whoever_has_it() {
     let token = "0123456789abcdef-token";
     let router = || {
         daydream_server::router_with(
-            dir.path(),
+            Some(dir.path()),
             daydream_server::Options {
                 token: Some(token.into()),
                 ..daydream_server::Options::default()
@@ -1026,7 +1026,7 @@ async fn with_a_token_every_route_asks_for_it() {
                 }
                 let req = req.body(Body::from("{}")).unwrap();
                 let router = daydream_server::router_with(
-                    dir.path(),
+                    Some(dir.path()),
                     daydream_server::Options {
                         token: Some(token.into()),
                         ..daydream_server::Options::default()

@@ -100,7 +100,7 @@ pub(crate) async fn rows(
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
         let t = record_table(&table)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let realm = Realm::open(&s.realm_dir()?)?;
         let (_, rows) = rows::load(&realm, t)?;
         let index = index_columns(t);
         let title = rows::TITLE_COLUMNS.iter().find_map(|c| rows.position(c));
@@ -151,7 +151,7 @@ pub(crate) async fn row(
     blocking(move || {
         let t = record_table(&table)?;
         let key = parse_key(t, &q.key)?;
-        let realm = Realm::open(&s.realm_dir)?;
+        let realm = Realm::open(&s.realm_dir()?)?;
         let (_, rows) = rows::load(&realm, t)?;
         let row = find_row(&rows, &index_columns(t), &key)
             .ok_or_else(|| not_found(format!("{} {}", t.name, q.key)))?;
@@ -177,11 +177,8 @@ fn key_json(raw: &str) -> Result<Value, ApiError> {
 
 /// Makes an edit under the write lock (the editors' save: no undo record).
 fn commit(s: &AppState, edit: &Edit) -> Result<Value, ApiError> {
-    let _writing = s
-        .write
-        .lock()
-        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let realm = Realm::open(&s.realm_dir)?;
+    let (_writing, dir) = s.lock_write(false)?;
+    let realm = Realm::open(&dir)?;
     Ok(report_json(&rows::commit(&realm, edit)?))
 }
 

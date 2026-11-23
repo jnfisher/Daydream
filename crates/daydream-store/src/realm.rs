@@ -113,6 +113,21 @@ pub struct Converted {
 /// Converts every Btrieve file in `src` (`*.DAT`, and `*.VIR` where no `.DAT` of the same
 /// stem exists) into `<STEM>.db` in `dest`, replacing what is there.
 pub fn convert_dir(src: &Path, dest: &Path) -> Result<Vec<Converted>, StoreError> {
+    convert_dir_matching(src, dest, |_| true)
+}
+
+/// Whether a Btrieve stem is one of MajorMUD's files (`WCC*`): what a game folder's working
+/// copy holds, leaving out the BBS's own files beside them (its user accounts, other modules).
+pub fn is_wcc_stem(stem: &str) -> bool {
+    stem.len() > 3 && stem[..3].eq_ignore_ascii_case("WCC")
+}
+
+/// [`convert_dir`], for the stems `keep` takes (upper case) only.
+pub fn convert_dir_matching(
+    src: &Path,
+    dest: &Path,
+    keep: impl Fn(&str) -> bool,
+) -> Result<Vec<Converted>, StoreError> {
     let io = |path: &Path| {
         let path = path.to_path_buf();
         move |source| StoreError::Io { path, source }
@@ -130,6 +145,9 @@ pub fn convert_dir(src: &Path, dest: &Path) -> Result<Vec<Converted>, StoreError
             "VIR" => false,
             _ => continue,
         };
+        if !keep(stem) {
+            continue;
+        }
         match sources.get(stem) {
             Some((true, _)) => {}
             _ => {

@@ -64,7 +64,7 @@ async fn read(
     + 'static,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let realm = Realm::open(&s.realm_dir)?;
+        let realm = Realm::open(&s.realm_dir()?)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         f(&realm, layout).map(Json)
     })
@@ -170,7 +170,7 @@ pub(crate) async fn quests(
             ));
         }
     };
-    let path = s.realm_dir.join(name);
+    let path = s.realm_dir()?.join(name);
     blocking(move || match std::fs::read(&path) {
         // NMR's files are Windows-1252; each byte is its character here, as NMR shows it
         Ok(bytes) => Ok(Json(json!({
