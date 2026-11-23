@@ -366,8 +366,6 @@ dependencies = [
 [[package]]
 name = "datacraft-jet"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0846b730a88e27c7b402ded890a6376e8cd77fc994b0a473e5900d2c9d1d84c"
 dependencies = [
  "datacraft-core",
  "serde",

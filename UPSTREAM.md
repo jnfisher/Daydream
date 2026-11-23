@@ -52,3 +52,8 @@ import's matching rules (`crates/daydream-nmr/src/import.rs` lists where Daydrea
 A dependency, pinned exactly (it is young and expects breaking changes). Daydream uses only
 its Jet 4 reader, to read `.mdb` files on any OS; it does not write index pages, so `.mdb`
 files are written through Windows' Jet instead.
+
+Its source is copied into `vendor/datacraft-jet` and patched in through `[patch.crates-io]`:
+0.2.0 misreads Jet's compressed text (values with NULs, or that switch between one- and
+two-byte characters), which NMR's files hold. `vendor/datacraft-jet/PATCHES.md` lists the
+changes; drop the copy once an upstream release has the same fixes.

@@ -8,6 +8,7 @@ members = [
     "crates/daydream-types",
     "crates/daydream-wcc",
 ]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -59,3 +60,7 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# datacraft-jet 0.2.0 with fixed Jet 4 text decoding (see vendor/datacraft-jet/PATCHES.md)
+[patch.crates-io]
+datacraft-jet = { path = "vendor/datacraft-jet" }

@@ -4,8 +4,7 @@
 #
 # Jet 4.0 is 32-bit, so this re-runs itself under the 32-bit Windows PowerShell when started
 # from a 64-bit one. The tables, columns and keys are created through ADOX exactly as Nightmare
-# Redux's CreateAccessTables creates them (except that text is not Unicode-compressed); the rows
-# go in through OLE DB in one transaction.
+# Redux's CreateAccessTables creates them; the rows go in through OLE DB in one transaction.
 # The plan format is described in crates/daydream-nmr/src/jet.rs.
 param(
     [Parameter(Mandatory = $true)][string]$Plan,
@@ -140,18 +139,11 @@ foreach ($t in $tables) {
     $table = New-Object -ComObject ADOX.Table
     $table.Name = $t.Name
     foreach ($c in $t.Columns) {
-        $col = New-Object -ComObject ADOX.Column
-        $col.Name = $c.Name
-        $col.Type = $types[$c.Type]
         if ($c.Type -eq 'Text' -or $c.Type -eq 'Memo') {
-            $col.DefinedSize = $c.Size
-            $col.ParentCatalog = $cat
-            # Stored as plain UCS-2. Jet keeps a text with NULs uncompressed but without a
-            # marker, and Daydream's reader (datacraft-jet 0.2.0) then misreads a compressed
-            # column's value that starts with a NUL. NMR reads either form the same.
-            $col.Properties.Item('Jet OLEDB:Compressed UNICODE Strings').Value = $false
+            $table.Columns.Append($c.Name, $types[$c.Type], $c.Size)
+        } else {
+            $table.Columns.Append($c.Name, $types[$c.Type])
         }
-        $table.Columns.Append($col)
     }
     [void]$cat.Tables.Append($table)
 }
