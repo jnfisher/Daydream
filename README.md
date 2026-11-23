@@ -1,4 +1,4 @@
-# Daydream
+# daydream
 
 A modern, cross-platform, web-based editor for MajorMUD 1.11p game data, built to replace
 Nightmare Redux (NMR).
