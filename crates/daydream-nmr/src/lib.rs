@@ -21,6 +21,7 @@ pub mod import;
 pub mod jet;
 pub mod mdb;
 pub mod modify;
+pub mod presets;
 pub mod schema;
 pub mod text;
 

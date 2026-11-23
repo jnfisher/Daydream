@@ -115,3 +115,7 @@ pre.errors { background: var(--bg); border: 1px solid var(--line); padding: .5re
 .tool fieldset input.number { width: 6rem; }
 .tool fieldset label { white-space: nowrap; }
 .tool fieldset .toolbar { margin: .3rem 0; }
+.tool .fix-inputs { margin: .25rem 0; }
+.tool .fix-inputs select, .tool .fix-inputs input.number { width: auto; }
+.tool .fix-inputs input.number { width: 6rem; }
+.tool .fix-inputs input[type=date] { width: auto; }
