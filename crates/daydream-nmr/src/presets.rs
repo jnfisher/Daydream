@@ -712,46 +712,6 @@ fn drop_pct(realm: &Realm, o: &DropPct, layout: LayoutSet) -> Result<Plan, Prese
     Ok(plan)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exp_splits_as_nmrs() {
-        assert_eq!(split_exp(0), (1, 1));
-        assert_eq!(split_exp(90_000), (90_000, 1));
-        // 200,000 = 20 × 10,000; the largest divisor up to 20
-        assert_eq!(split_exp(200_000), (10_000, 20));
-        // a prime above 100,000 loses 1 until it divides
-        // (100,002 = 2 × 3 × 7 × 2381)
-        assert_eq!(split_exp(100_003), (7143, 14));
-        let (e, m) = split_exp(2_000_000_000);
-        assert!(e * m == 2_000_000_000 && e <= 65538 * m, "{e} × {m}");
-    }
-
-    #[test]
-    fn exp_scales_as_nmrs() {
-        let mul = |by, cap| Preset::MultiplyExp { by, cap };
-        assert_eq!(scaled_exp(1000, 1, &mul(2, None)), (2000, 1));
-        assert_eq!(scaled_exp(1000, 0, &mul(2, None)), (2000, 1));
-        assert_eq!(scaled_exp(1000, 1, &mul(2, Some(1500))), (1500, 1));
-        assert_eq!(scaled_exp(60_000, 2, &mul(2, None)), (12_000, 20));
-        let div = |by| Preset::DivideExp { by };
-        // VB's Round: 5 / 2 = 2.5 rounds to 2
-        assert_eq!(scaled_exp(5, 1, &div(2)), (2, 1));
-        assert_eq!(scaled_exp(1, 0, &div(3)), (1, 0));
-        assert_eq!(scaled_exp(10_000, 30, &div(2)), (7500, 20));
-    }
-
-    #[test]
-    fn dates_are_dos_dates() {
-        assert_eq!(dos_date(1990, 1, 1).unwrap(), (10 << 9) | (1 << 5) | 1);
-        assert_eq!(KILL_TIME, 2081);
-        assert!(dos_date(1979, 1, 1).is_err());
-        assert!(dos_date(2000, 13, 1).is_err());
-    }
-}
-
 /// NMR's Monster Group/Index Changer (`frmMonsterIndexChanger.ScanMonsters` and
 /// `ScanRooms`). Its Add refuses a `from` already in the list; so does this.
 fn change_indexes(
@@ -819,5 +779,45 @@ fn change_indexes(
                 Step::Row(new)
             }))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exp_splits_as_nmrs() {
+        assert_eq!(split_exp(0), (1, 1));
+        assert_eq!(split_exp(90_000), (90_000, 1));
+        // 200,000 = 20 × 10,000; the largest divisor up to 20
+        assert_eq!(split_exp(200_000), (10_000, 20));
+        // a prime above 100,000 loses 1 until it divides
+        // (100,002 = 2 × 3 × 7 × 2381)
+        assert_eq!(split_exp(100_003), (7143, 14));
+        let (e, m) = split_exp(2_000_000_000);
+        assert!(e * m == 2_000_000_000 && e <= 65538 * m, "{e} × {m}");
+    }
+
+    #[test]
+    fn exp_scales_as_nmrs() {
+        let mul = |by, cap| Preset::MultiplyExp { by, cap };
+        assert_eq!(scaled_exp(1000, 1, &mul(2, None)), (2000, 1));
+        assert_eq!(scaled_exp(1000, 0, &mul(2, None)), (2000, 1));
+        assert_eq!(scaled_exp(1000, 1, &mul(2, Some(1500))), (1500, 1));
+        assert_eq!(scaled_exp(60_000, 2, &mul(2, None)), (12_000, 20));
+        let div = |by| Preset::DivideExp { by };
+        // VB's Round: 5 / 2 = 2.5 rounds to 2
+        assert_eq!(scaled_exp(5, 1, &div(2)), (2, 1));
+        assert_eq!(scaled_exp(1, 0, &div(3)), (1, 0));
+        assert_eq!(scaled_exp(10_000, 30, &div(2)), (7500, 20));
+    }
+
+    #[test]
+    fn dates_are_dos_dates() {
+        assert_eq!(dos_date(1990, 1, 1).unwrap(), (10 << 9) | (1 << 5) | 1);
+        assert_eq!(KILL_TIME, 2081);
+        assert!(dos_date(1979, 1, 1).is_err());
+        assert!(dos_date(2000, 13, 1).is_err());
     }
 }
