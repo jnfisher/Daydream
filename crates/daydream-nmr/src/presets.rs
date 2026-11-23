@@ -89,6 +89,13 @@ pub enum Preset {
     SetKillTimes { year: i32, month: u32, day: u32 },
     /// Monsters: NMR's drop % form.
     ItemDropPct(DropPct),
+    /// Shops: each item's stock to its max, where its regen number, regen % and regen
+    /// time are all set; gang shops (type 11) are left alone.
+    RestockShops,
+    /// Text blocks: `text` taken off the end of every part that ends with it.
+    StripTextblocks { text: String },
+    /// Rooms: items of the same number and uses, on the floor or hidden, put in one slot.
+    CombineRoomItems,
 }
 
 /// Why a fix cannot run.
@@ -335,6 +342,98 @@ pub fn plan(realm: &Realm, preset: &Preset, layout: LayoutSet) -> Result<Plan, P
             }))
         }
         Preset::ItemDropPct(o) => drop_pct(realm, o, layout),
+        Preset::RestockShops => {
+            let (t, rows) = load(realm, "Shops", layout)?;
+            let ty = at(&rows, "Type")?;
+            let slots = (0..20)
+                .map(|x| {
+                    Ok([
+                        at(&rows, &format!("Item {x}"))?,
+                        at(&rows, &format!("Regen Number{x}"))?,
+                        at(&rows, &format!("Regen %{x}"))?,
+                        at(&rows, &format!("Regen Time {x}"))?,
+                        at(&rows, &format!("Normal {x}"))?,
+                        at(&rows, &format!("Max {x}"))?,
+                    ])
+                })
+                .collect::<Result<Vec<_>, PresetError>>()?;
+            Ok(collect(t, &rows, |row| {
+                if num(&row[ty]) == 11.0 {
+                    return Step::Skip;
+                }
+                let mut new = row.to_vec();
+                for &[item, rnum, rpct, rtime, now, max] in &slots {
+                    if [item, rnum, rpct, rtime]
+                        .iter()
+                        .all(|&c| num(&row[c]) > 0.0)
+                    {
+                        new[now] = cell(&row[now], num(&row[max]));
+                    }
+                }
+                Step::Row(new)
+            }))
+        }
+        Preset::StripTextblocks { text } => {
+            if text.is_empty() {
+                return Err(bad("give the text to take off the end"));
+            }
+            let (t, rows) = load(realm, "Textblocks", layout)?;
+            let data = at(&rows, "Data")?;
+            Ok(collect(t, &rows, |row| {
+                let mut new = row.to_vec();
+                if let Value::Text(d) = &row[data]
+                    && let Some(kept) = d.strip_suffix(text.as_str())
+                {
+                    new[data] = Value::Text(kept.to_string());
+                }
+                Step::Row(new)
+            }))
+        }
+        Preset::CombineRoomItems => {
+            let (t, rows) = load(realm, "Rooms", layout)?;
+            let family = |stem: &str, n: usize| -> Result<Vec<[usize; 3]>, PresetError> {
+                (0..n)
+                    .map(|x| {
+                        Ok([
+                            at(&rows, &format!("{stem} {x}"))?,
+                            at(&rows, &format!("{stem} {x} USES"))?,
+                            at(&rows, &format!("{stem} {x} QTY"))?,
+                        ])
+                    })
+                    .collect()
+            };
+            let (floor, hidden) = (family("Room Item", 17)?, family("Hidden Item", 15)?);
+            Ok(collect(t, &rows, |row| {
+                let mut new = row.to_vec();
+                for slots in [&floor, &hidden] {
+                    combine(&mut new, slots);
+                }
+                Step::Row(new)
+            }))
+        }
+    }
+}
+
+/// NMR's `mnuRoomsCombineItems_Click`: while two slots hold the same item with the same
+/// uses, the later-found one's quantity (less one, as slots hold it) moves to the first.
+fn combine(row: &mut [Value], slots: &[[usize; 3]]) {
+    'again: loop {
+        for (x, &[ix, ux, qx]) in slots.iter().enumerate() {
+            if num(&row[ix]) <= 0.0 {
+                continue;
+            }
+            for (y, &[iy, uy, qy]) in slots.iter().enumerate() {
+                if y != x && num(&row[iy]) == num(&row[ix]) && num(&row[uy]) == num(&row[ux]) {
+                    let q = num(&row[qx]) + num(&row[qy]) + 1.0;
+                    row[qx] = cell(&row[qx], q);
+                    for c in [iy, uy, qy] {
+                        row[c] = cell(&row[c], 0.0);
+                    }
+                    continue 'again;
+                }
+            }
+        }
+        return;
     }
 }
 

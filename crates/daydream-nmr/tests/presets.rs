@@ -353,3 +353,109 @@ fn drop_percentages_follow_nmrs_form() {
         .is_err()
     );
 }
+
+#[test]
+fn shops_restock_rooms_combine_and_text_blocks_strip() {
+    use crate::support::{empty_realm, l, put, t};
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let slot = |x: usize, item, rnum, rpct, rtime, now, max| -> Vec<(String, Value)> {
+        vec![
+            (format!("Item {x}"), l(item)),
+            (format!("Regen Number{x}"), l(rnum)),
+            (format!("Regen %{x}"), l(rpct)),
+            (format!("Regen Time {x}"), l(rtime)),
+            (format!("Normal {x}"), l(now)),
+            (format!("Max {x}"), l(max)),
+        ]
+    };
+    let shop = |number, ty, slots: Vec<Vec<(String, Value)>>| {
+        let mut r = vec![
+            ("Number".to_string(), l(number)),
+            ("Type".to_string(), l(ty)),
+        ];
+        r.extend(slots.into_iter().flatten());
+        r
+    };
+    let shops = [
+        shop(
+            1,
+            0,
+            vec![slot(0, 5, 1, 50, 10, 0, 4), slot(1, 6, 0, 50, 10, 0, 4)],
+        ),
+        shop(2, 11, vec![slot(0, 5, 1, 50, 10, 0, 4)]),
+    ];
+    let owned: Vec<Vec<(&str, Value)>> = shops
+        .iter()
+        .map(|r| r.iter().map(|(c, v)| (c.as_str(), v.clone())).collect())
+        .collect();
+    let refs: Vec<&[(&str, Value)]> = owned.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Shops", &refs);
+    let plan = presets::plan(&realm, &Preset::RestockShops, Dos).unwrap();
+    let got: Vec<_> = plan
+        .changes
+        .iter()
+        .map(|c| (n(&c.key[0]), c.column.as_str(), n(&c.after)))
+        .collect();
+    // slot 1 has no regen number; shop 2 is a gang shop
+    assert_eq!(got, [(1.0, "Normal 0", 4.0)]);
+    assert_eq!(plan.skipped, 1);
+
+    put(
+        &realm,
+        "Rooms",
+        &[&[
+            ("Map Number", l(1)),
+            ("Room Number", l(1)),
+            ("Room Item 0", l(7)),
+            ("Room Item 0 QTY", l(0)),
+            ("Room Item 2", l(7)),
+            ("Room Item 2 QTY", l(2)),
+            ("Room Item 4", l(7)),
+            ("Room Item 4 USES", l(3)),
+            ("Hidden Item 1", l(8)),
+            ("Hidden Item 5", l(8)),
+        ]],
+    );
+    let plan = presets::plan(&realm, &Preset::CombineRoomItems, Dos).unwrap();
+    modify::apply(&realm, &plan, Dos).unwrap();
+    let rooms = table(&realm, "Rooms");
+    let at = |c: &str| n(&rooms.rows[0][rooms.position(c).unwrap()]);
+    // 1 + 3 copies make 4 (held as 3); the one with other uses stays apart
+    assert_eq!(
+        (at("Room Item 0"), at("Room Item 0 QTY"), at("Room Item 2")),
+        (7.0, 3.0, 0.0)
+    );
+    assert_eq!((at("Room Item 4"), at("Room Item 4 USES")), (7.0, 3.0));
+    assert_eq!(
+        (
+            at("Hidden Item 1"),
+            at("Hidden Item 1 QTY"),
+            at("Hidden Item 5")
+        ),
+        (8.0, 1.0, 0.0)
+    );
+
+    put(
+        &realm,
+        "Textblocks",
+        &[
+            &[("Number", l(1)), ("Part #", l(0)), ("Data", t("hello~~"))],
+            &[("Number", l(2)), ("Part #", l(0)), ("Data", t("bye"))],
+        ],
+    );
+    let plan = presets::plan(&realm, &Preset::StripTextblocks { text: "~~".into() }, Dos).unwrap();
+    assert_eq!(plan.changes.len(), 1);
+    assert_eq!(plan.changes[0].after, t("hello"));
+    assert!(
+        presets::plan(
+            &realm,
+            &Preset::StripTextblocks {
+                text: String::new()
+            },
+            Dos
+        )
+        .is_err()
+    );
+}

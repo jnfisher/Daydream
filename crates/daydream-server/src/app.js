@@ -1586,7 +1586,7 @@ function modifyResult(res) {
     h3(
       "p",
       {},
-      `${res.records} record${res.records === 1 ? "" : "s"} ${would} (${res.changed} value${res.changed === 1 ? "" : "s"}); ${res.unchanged} already as set; ${res.skipped} left out by the "only if" boxes.` + (res.dry_run ? " Preview: nothing was written." : "")
+      `${res.records} record${res.records === 1 ? "" : "s"} ${would} (${res.changed} value${res.changed === 1 ? "" : "s"}); ${res.unchanged} already as set; ${res.skipped} left out by its conditions.` + (res.dry_run ? " Preview: nothing was written." : "")
     )
   );
   if (res.notes?.length) box.append(h3("p", {}, "Worth a look (not changed):"), h3("pre", { class: "errors" }, res.notes.join("\n")));
@@ -1617,6 +1617,7 @@ function fixes() {
   const divBy = numberInput("2");
   const bossBy = numberInput("2");
   const date = input({ type: "date", value: "1990-01-01" });
+  const strip = input({ type: "text", class: "strip" });
   const dropMode = pick([["set", "Set to"], ["add", "Add (+/-)"]]);
   const dropValue = numberInput("20");
   const dropCmp = pick(CMPS, "le");
@@ -1697,6 +1698,27 @@ function fixes() {
       hint: "Every monster's last killed date and time to 0.",
       inputs: [],
       request: () => ["/api/tools/preset", { preset: "reset_kill_times" }]
+    },
+    {
+      title: "Restock All Shops",
+      hint: "Every shop item's stock to its max, where its regen number, regen % and regen time are all set. Gang shops are left alone.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "restock_shops" }]
+    },
+    {
+      title: "Combine Like Items on Floor",
+      hint: "In every room, items with the same number and uses (on the floor, or hidden) are put in one slot.",
+      inputs: [],
+      request: () => ["/api/tools/preset", { preset: "combine_room_items" }]
+    },
+    {
+      title: "Strip Characters off Text Blocks",
+      hint: "Takes this text off the end of every text block part that ends with it. Use it for strange characters at the end of every text block. ESC is \u241B.",
+      inputs: [h3("label", {}, "Text ", strip)],
+      request: () => {
+        if (!strip.value) throw new Error("Give the text to take off the end.");
+        return ["/api/tools/preset", { preset: "strip_textblocks", text: toWire(strip.value) }];
+      }
     },
     {
       title: "Modify Item Drop Percentages",

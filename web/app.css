@@ -134,3 +134,4 @@ pre.errors { background: var(--bg); border: 1px solid var(--line); padding: .5re
 .tool .mass-group select { width: auto; }
 .tool .toolbar input.number { width: 5rem; }
 .tool .mass-group:has(> label input:checked) { grid-column: 1 / -1; }
+.tool .fix-inputs input.strip { width: 14rem; }
