@@ -167,6 +167,28 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Write REALM back into the realm's Btrieve `WCC*.DAT` files. Unchanged files are
+    /// left alone, edits that keep every key go in place, and files with records added,
+    /// deleted or re-keyed are rebuilt. Stop the game first.
+    WriteDat {
+        /// The realm directory.
+        realm: PathBuf,
+        /// The folder holding the WCC files REALM was converted from.
+        wcc: PathBuf,
+        /// Write a complete set of files here instead of over WCC.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Writing over WCC, don't first copy each changed file to
+        /// `WCC/daydream-backup-<time>`.
+        #[arg(long, conflicts_with = "out")]
+        no_backup: bool,
+        /// Report what would be written without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Write even over WCC files that changed since REALM was converted from them.
+        #[arg(long)]
+        force: bool,
+    },
     /// Merge another user file's users into REALM's, as NMR's Merge Users does: users REALM
     /// lacks are copied byte for byte, users it has are skipped. Stop the realm first.
     MergeUsers {
@@ -332,7 +354,55 @@ fn main() -> anyhow::Result<()> {
             from,
             dry_run,
         } => merge_users(&realm, &from, dry_run),
+        Command::WriteDat {
+            realm,
+            wcc,
+            out,
+            no_backup,
+            dry_run,
+            force,
+        } => write_dat(&realm, &wcc, out, no_backup, dry_run, force),
     }
+}
+
+fn write_dat(
+    realm: &Path,
+    wcc: &Path,
+    out: Option<PathBuf>,
+    no_backup: bool,
+    dry_run: bool,
+    force: bool,
+) -> anyhow::Result<()> {
+    use daydream_store::dat::{Action, WriteOptions};
+    let realm = Realm::open(realm)?;
+    let backup = (out.is_none() && !no_backup).then(|| {
+        let at = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
+        wcc.join(format!("daydream-backup-{at}"))
+    });
+    let options = WriteOptions {
+        out,
+        backup: backup.clone(),
+        dry_run,
+        force,
+    };
+    let written = daydream_store::dat::write_dat(&realm, wcc, &options)?;
+    let mut changed = false;
+    for w in &written {
+        let name = w.dest.file_name().unwrap_or_default().to_string_lossy();
+        let what = match w.action {
+            Action::Unchanged => "unchanged".to_string(),
+            Action::Updated(n) => format!("{n} records updated in place"),
+            Action::Rebuilt(n) => format!("rebuilt with {n} records"),
+        };
+        changed |= w.action != Action::Unchanged;
+        println!("{name}: {what}");
+    }
+    if dry_run {
+        println!("(dry run: nothing written)");
+    } else if let Some(b) = backup.filter(|b| changed && b.exists()) {
+        println!("the files as they were are in {}", b.display());
+    }
+    Ok(())
 }
 
 fn convert(

@@ -277,6 +277,39 @@ impl WbtrvDb {
         })
     }
 
+    /// The fingerprint of the Btrieve file this `.db` was converted from (`source_t`), if
+    /// it records one.
+    pub fn source_fingerprint(&self) -> Result<Option<Fingerprint>, StoreError> {
+        let sql = sql_err(&self.path);
+        let has_table: bool = self
+            .conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'source_t'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(sql)?
+            > 0;
+        if !has_table {
+            return Ok(None);
+        }
+        self.conn
+            .query_row("SELECT size, modified, hash FROM source_t", [], |r| {
+                Ok(Fingerprint {
+                    size: r.get(0)?,
+                    modified: r.get(1)?,
+                    hash: r.get(2)?,
+                })
+            })
+            .optional()
+            .map_err(sql_err(&self.path))
+    }
+
+    /// Records `fp` as the Btrieve file this `.db` holds (after Daydream wrote it).
+    pub fn set_source_fingerprint(&mut self, fp: Fingerprint) -> Result<(), StoreError> {
+        set_fingerprint(&self.conn, fp).map_err(sql_err(&self.path))
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

@@ -1,6 +1,6 @@
-// NMR's database tools: the Database Importer, the Database Deleter, Merge Users and the
-// Export to MMUD Explorer (mme.ts), laid out as NMR's forms lay them out, over the server's
-// /api/tools and /api/mme routes.
+// NMR's database tools: the Database Importer, the Database Deleter, Merge Users, the
+// Export to MMUD Explorer (mme.ts) and writing back to the WCC files, laid out as NMR's
+// forms lay them out, over the server's /api/tools and /api/mme routes.
 
 import { ABILITIES } from './abilities';
 import { toShown, toWire } from './ansi';
@@ -245,6 +245,88 @@ function mergeUsers(): HTMLElement {
       if (res.skipped.length) out.append(h('pre', { class: 'errors' }, res.skipped.join('\n')));
     } catch (e) {
       out.replaceChildren(failure(e));
+    }
+  };
+  preview.addEventListener('click', () => void run(true));
+  go.addEventListener('click', () => void run(false));
+  return card;
+}
+
+/** Where the WCC folder was last written, so the card remembers it. */
+const WCC_KEY = 'daydream.wcc';
+const remembered = (): string => {
+  try {
+    return localStorage.getItem(WCC_KEY) ?? '';
+  } catch {
+    return '';
+  }
+};
+const remember = (dir: string) => {
+  try {
+    localStorage.setItem(WCC_KEY, dir);
+  } catch {
+    // private window: nothing to remember
+  }
+};
+
+interface WrittenFile {
+  stem: string;
+  dest: string;
+  action: 'unchanged' | 'updated' | 'rebuilt';
+  records: number | null;
+}
+
+/** Writes the realm back into its Btrieve WCC*.DAT files (`daydream write-dat`). */
+function writeDat(): HTMLElement {
+  const card = h('section', { class: 'tool' }, h('h2', {}, 'Write to WCC files'));
+  card.append(
+    h(
+      'p',
+      { class: 'hint' },
+      'Write this realm back into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Files nobody changed are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first.',
+    ),
+  );
+  const wcc = input({ type: 'text', placeholder: 'C:\\WGSERV', value: remembered() });
+  const out = input({ type: 'text', placeholder: 'leave empty to write over the WCC folder' });
+  const backup = input({ type: 'checkbox', checked: '' });
+  const force = input({ type: 'checkbox' });
+  const preview = h('button', { type: 'button' }, 'Preview');
+  const go = h('button', { type: 'button', class: 'primary' }, 'Write');
+  const result = h('div');
+  card.append(
+    h('label', { class: 'path' }, 'WCC folder (on the machine Daydream runs on) ', wcc),
+    h('label', { class: 'path' }, 'Write to another folder instead ', out),
+    h('label', { class: 'check' }, backup, ' Back up each file before changing it'),
+    h('label', { class: 'check' }, force, ' Write even over files the game changed since the realm was converted'),
+    h('div', { class: 'toolbar' }, preview, go),
+    result,
+  );
+  const run = async (dryRun: boolean) => {
+    const dir = wcc.value.trim();
+    if (!dir) {
+      result.replaceChildren(failure('Give the WCC folder.'));
+      return;
+    }
+    if (!dryRun && !confirm(`Write the realm into the WCC files${out.value.trim() ? ` in ${out.value.trim()}` : ` of ${dir}`}? Stop the game first.`)) return;
+    try {
+      const res = await post(
+        '/api/tools/write-dat',
+        JSON.stringify({ wcc: dir, out: out.value.trim() || null, backup: backup.checked, force: force.checked, dry_run: dryRun }),
+        true,
+      );
+      remember(dir);
+      const files = res.files as WrittenFile[];
+      const changed = files.filter((f) => f.action !== 'unchanged');
+      const would = dryRun ? 'would be ' : '';
+      const line = (f: WrittenFile) =>
+        `${f.dest}: ${f.action === 'updated' ? `${f.records} records ${would}updated in place` : `${would}rebuilt with ${f.records} records`}`;
+      result.replaceChildren(
+        h('p', {}, changed.length ? `${changed.length} of ${files.length} files ${dryRun ? 'would change' : 'written'}.` : `All ${files.length} files are as the realm has them: nothing to write.`),
+      );
+      if (changed.length) result.append(h('pre', {}, changed.map(line).join('\n')));
+      if (res.backup) result.append(h('p', { class: 'hint' }, `The files as they were are in ${res.backup}.`));
+    } catch (e) {
+      result.replaceChildren(failure(e));
     }
   };
   preview.addEventListener('click', () => void run(true));
@@ -664,7 +746,7 @@ function fixesCard(changed: () => void): HTMLElement {
 
 /** The tools page; `changed` runs after a write, so the editors reload what they show. */
 export function toolsPage(changed: () => void): HTMLElement {
-  const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers(), mmeExport(failure));
+  const page = h('div', { class: 'tools' }, importer(changed), deleter(changed), mergeUsers(), mmeExport(failure), writeDat());
   api
     .tables()
     .then((tables) => {

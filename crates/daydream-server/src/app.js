@@ -2848,6 +2848,75 @@ function mergeUsers() {
   go.addEventListener("click", () => void run(false));
   return card2;
 }
+var WCC_KEY = "daydream.wcc";
+var remembered = () => {
+  try {
+    return localStorage.getItem(WCC_KEY) ?? "";
+  } catch {
+    return "";
+  }
+};
+var remember = (dir) => {
+  try {
+    localStorage.setItem(WCC_KEY, dir);
+  } catch {
+  }
+};
+function writeDat() {
+  const card2 = h8("section", { class: "tool" }, h8("h2", {}, "Write to WCC files"));
+  card2.append(
+    h8(
+      "p",
+      { class: "hint" },
+      "Write this realm back into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Files nobody changed are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first."
+    )
+  );
+  const wcc = input({ type: "text", placeholder: "C:\\WGSERV", value: remembered() });
+  const out = input({ type: "text", placeholder: "leave empty to write over the WCC folder" });
+  const backup = input({ type: "checkbox", checked: "" });
+  const force = input({ type: "checkbox" });
+  const preview = h8("button", { type: "button" }, "Preview");
+  const go = h8("button", { type: "button", class: "primary" }, "Write");
+  const result = h8("div");
+  card2.append(
+    h8("label", { class: "path" }, "WCC folder (on the machine Daydream runs on) ", wcc),
+    h8("label", { class: "path" }, "Write to another folder instead ", out),
+    h8("label", { class: "check" }, backup, " Back up each file before changing it"),
+    h8("label", { class: "check" }, force, " Write even over files the game changed since the realm was converted"),
+    h8("div", { class: "toolbar" }, preview, go),
+    result
+  );
+  const run = async (dryRun) => {
+    const dir = wcc.value.trim();
+    if (!dir) {
+      result.replaceChildren(failure("Give the WCC folder."));
+      return;
+    }
+    if (!dryRun && !confirm(`Write the realm into the WCC files${out.value.trim() ? ` in ${out.value.trim()}` : ` of ${dir}`}? Stop the game first.`)) return;
+    try {
+      const res = await post(
+        "/api/tools/write-dat",
+        JSON.stringify({ wcc: dir, out: out.value.trim() || null, backup: backup.checked, force: force.checked, dry_run: dryRun }),
+        true
+      );
+      remember(dir);
+      const files = res.files;
+      const changed2 = files.filter((f2) => f2.action !== "unchanged");
+      const would = dryRun ? "would be " : "";
+      const line = (f2) => `${f2.dest}: ${f2.action === "updated" ? `${f2.records} records ${would}updated in place` : `${would}rebuilt with ${f2.records} records`}`;
+      result.replaceChildren(
+        h8("p", {}, changed2.length ? `${changed2.length} of ${files.length} files ${dryRun ? "would change" : "written"}.` : `All ${files.length} files are as the realm has them: nothing to write.`)
+      );
+      if (changed2.length) result.append(h8("pre", {}, changed2.map(line).join("\n")));
+      if (res.backup) result.append(h8("p", { class: "hint" }, `The files as they were are in ${res.backup}.`));
+    } catch (e) {
+      result.replaceChildren(failure(e));
+    }
+  };
+  preview.addEventListener("click", () => void run(true));
+  go.addEventListener("click", () => void run(false));
+  return card2;
+}
 var OPS = [["add", "+"], ["sub", "-"], ["mul", "*"], ["div", "/"], ["percent", "%"], ["set", "="]];
 var CMPS = [["eq", "="], ["le", "<="], ["ge", ">="], ["ne", "<>"]];
 var options = (pairs) => pairs.map(([v, label]) => h8("option", { value: v }, label));
@@ -3208,7 +3277,7 @@ function fixesCard(changed2) {
   return card2;
 }
 function toolsPage(changed2) {
-  const page = h8("div", { class: "tools" }, importer(changed2), deleter(changed2), mergeUsers(), mmeExport(failure));
+  const page = h8("div", { class: "tools" }, importer(changed2), deleter(changed2), mergeUsers(), mmeExport(failure), writeDat());
   api.tables().then((tables) => {
     page.append(universalModifier(tables, changed2));
     const rooms = tables.find((t2) => t2.name === "Rooms");

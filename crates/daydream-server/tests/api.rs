@@ -688,3 +688,48 @@ async fn users_are_edited_and_revived() {
     let (status, _) = send(dir.path(), "POST", "/api/tools/preset", nobody).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn write_dat_previews_then_writes_the_wcc_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wcc = tmp.path().join("wcc");
+    let realm = tmp.path().join("realm");
+    std::fs::create_dir(&wcc).unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../daydream-wcc/tests/fixtures/btrieve/MBBSEMU.DAT");
+    std::fs::copy(&fixture, wcc.join("MBBSEMU.DAT")).unwrap();
+    daydream_store::realm::convert_dir(&wcc, &realm).unwrap();
+    WbtrvDb::open(&realm.join("MBBSEMU.db"))
+        .unwrap()
+        .delete(2)
+        .unwrap();
+    let before = std::fs::read(wcc.join("MBBSEMU.DAT")).unwrap();
+    let run = |dry_run: bool| {
+        send(
+            &realm,
+            "POST",
+            "/api/tools/write-dat",
+            serde_json::json!({"wcc": wcc.display().to_string(), "dry_run": dry_run}),
+        )
+    };
+    let (status, body) = run(true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files"][0]["action"], "rebuilt");
+    assert_eq!(body["files"][0]["records"], 3);
+    assert_eq!(std::fs::read(wcc.join("MBBSEMU.DAT")).unwrap(), before);
+    let (status, body) = run(false).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_ne!(std::fs::read(wcc.join("MBBSEMU.DAT")).unwrap(), before);
+    let backup = std::path::PathBuf::from(body["backup"].as_str().unwrap());
+    assert_eq!(std::fs::read(backup.join("MBBSEMU.DAT")).unwrap(), before);
+    let (_, body) = run(false).await;
+    assert_eq!(body["files"][0]["action"], "unchanged");
+    let (status, _) = send(
+        &realm,
+        "POST",
+        "/api/tools/write-dat",
+        serde_json::json!({"wcc": tmp.path().join("nowhere").display().to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

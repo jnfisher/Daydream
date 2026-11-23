@@ -58,6 +58,21 @@ In the browser the same export is the Tools page's **Export to MMUD Explorer** c
 as NMR's form (its config `.ini` files load and save there too). On Windows it downloads the
 `.mdb`; elsewhere it downloads the plan and `write-mdb.ps1` to run on a Windows machine.
 
+Back to the WCC files themselves, with no `WBTRV32.DLL` or NMR: `write-dat` writes the realm
+into the `WCC*.DAT` files it was converted from. Files nobody changed are left alone, edits
+that keep every key are written in place, and files with records added, deleted or renumbered
+are rebuilt whole (checked in CI against Pervasive's own Btrieve 6.15 engine, which reads them
+back, deletes and inserts in them). Each changed file is copied to
+`WCC/daydream-backup-<time>` first, and a WCC file the game changed since the conversion is
+refused rather than overwritten. Stop the game first.
+
+```sh
+cargo run -p daydream -- write-dat ./realm /path/to/WGSERV --dry-run
+cargo run -p daydream -- write-dat ./realm /path/to/WGSERV           # or --out DIR for a copy
+```
+
+In the browser it is the Tools page's **Write to WCC files** card.
+
 `convert` only reads the source files. It writes one `.db` per Btrieve file, in the format of
 wbtrv32 (the `WBTRV32.DLL` replacement MBBSEmu uses), so MBBSEmu and legacy NMR can open the
 same files.
@@ -66,7 +81,7 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat` |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
