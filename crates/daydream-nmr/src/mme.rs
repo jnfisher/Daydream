@@ -14,6 +14,8 @@
 
 use std::collections::HashMap;
 
+mod walk;
+
 use daydream_store::Realm;
 use daydream_types::records::LayoutSet;
 
@@ -834,6 +836,11 @@ pub fn export(realm: &Realm, layout: LayoutSet, o: &MmeOptions) -> Result<NmrDat
             .collect(),
         rows: Vec::new(),
     });
+
+    let rooms = Src::load(realm, "Rooms", layout)?;
+    let textblocks = Src::load(realm, "Textblocks", layout)?;
+    let world = walk::World::read(&rooms, &shops, &monsters, &spells, &items, &textblocks);
+    walk::locate(&mut data, &world, &excl, o.hide_excluded);
     Ok(data)
 }
 

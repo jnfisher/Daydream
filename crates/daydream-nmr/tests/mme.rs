@@ -10,18 +10,9 @@ use daydream_types::records::LayoutSet::Dos;
 
 use crate::support::{empty_realm, l, put, t};
 
-/// Columns NMR fills from its walk of the world, its lairs and its attack simulation,
+/// Columns NMR fills from its lairs and its attack simulation,
 /// which Daydream does not compute yet; and the export's date and time.
 const NOT_YET: &[&str] = &[
-    "In Game",
-    "Obtained From",
-    "References",
-    "Learnable",
-    "Learned From",
-    "Casted By",
-    "Classes",
-    "Summoned By",
-    "Assigned To",
     "AvgDmg",
     "AvgDmgPhys",
     "AvgDmgSpell",
@@ -35,7 +26,7 @@ const NOT_YET: &[&str] = &[
     "Date",
     "Time",
 ];
-const NOT_YET_TABLES: &[&str] = &["Lairs", "TBInfo"];
+const NOT_YET_TABLES: &[&str] = &["Lairs"];
 
 fn key(t: &NmrRows, r: &[Value]) -> String {
     let cols: &[&str] = match t.name.as_str() {
@@ -363,5 +354,99 @@ fn monster_attacks_are_named_as_nmr_names_them() {
             &t("Unknown"),
             &t("Spell 99")
         ]
+    );
+}
+
+#[test]
+fn the_walk_follows_what_players_can_reach() {
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    put(
+        &realm,
+        "Rooms",
+        &[&[
+            ("Map Number", l(1)),
+            ("Room Number", l(1)),
+            ("Name", t("Square")),
+            ("Type", l(1)),
+            ("Shop Number", l(2)),
+            ("Mon Type", l(3)),
+            ("Min Index", l(1)),
+            ("Max Index", l(1)),
+            ("Command Text", l(10)),
+            ("Placed Item 0", l(5)),
+        ]],
+    );
+    put(
+        &realm,
+        "Shops",
+        &[&[("Number", l(2)), ("Name", t("pawn")), ("Item 0", l(6))]],
+    );
+    put(
+        &realm,
+        "Monsters",
+        &[&[
+            ("Number", l(7)),
+            ("Name", t("rat")),
+            ("Group", l(3)),
+            ("Index", l(1)),
+            ("Item Number 0", l(8)),
+            ("Item Drop % 0", l(25)),
+        ]],
+    );
+    let items: Vec<Vec<(&str, Value)>> = [5, 6, 8, 9, 11, 12]
+        .iter()
+        .map(|&n| vec![("Number", l(n)), ("Name", t("thing"))])
+        .collect();
+    let items: Vec<&[(&str, Value)]> = items.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Items", &items);
+    put(
+        &realm,
+        "Spells",
+        &[&[("Number", l(4)), ("Name", t("light"))]],
+    );
+    put(
+        &realm,
+        "Textblocks",
+        &[&[
+            ("Number", l(10)),
+            ("Part #", l(0)),
+            (
+                "Data",
+                t("giveitem 9\nclass 2 learnspell 4\ncheckitem 12 giveitem 11\n"),
+            ),
+        ]],
+    );
+    let data = mme::export(&realm, Dos, &MmeOptions::default()).unwrap();
+    let items = data.table("Items").unwrap();
+    let item = |n: i32, c: &str| get(items, &format!("Long({n})"), c).clone();
+    assert_eq!(item(5, "In Game"), l(1));
+    assert_eq!(item(5, "Obtained From"), t("Room 1/1"));
+    // a shop that only buys it: noted, not in the game
+    assert_eq!(item(6, "In Game"), l(0));
+    assert_eq!(item(6, "Obtained From"), t("Shop(sell) #2"));
+    assert_eq!(item(8, "Obtained From"), t("Monster #7(25%)"));
+    assert_eq!(item(9, "Obtained From"), t("Textblock #10"));
+    // held back on the first pass, as item 12 is not in the game; but NMR counts an item
+    // a block checks for as found, so the next pass gives it
+    assert_eq!(item(11, "In Game"), l(1));
+    assert_eq!(item(11, "Obtained From"), t("Textblock #10"));
+    assert_eq!(item(12, "In Game"), l(0));
+    assert_eq!(item(12, "References"), t("Textblock #10"));
+    let spells = data.table("Spells").unwrap();
+    assert_eq!(get(spells, "Long(4)", "Learnable"), &l(1));
+    assert_eq!(get(spells, "Long(4)", "Learned From"), &t("Textblock #10"));
+    assert_eq!(get(spells, "Long(4)", "Classes"), &t("(2)"));
+    let mons = data.table("Monsters").unwrap();
+    assert_eq!(get(mons, "Long(7)", "In Game"), &l(1));
+    assert_eq!(get(mons, "Long(7)", "Summoned By"), &t("Group: 1/1"));
+    let shops = data.table("Shops").unwrap();
+    assert_eq!(get(shops, "Long(2)", "Assigned To"), &t("Room 1/1"));
+    let tb = data.table("TBInfo").unwrap();
+    assert_eq!(get(tb, "Long(10)", "Called From"), &t("Room 1/1"));
+    assert_eq!(
+        get(tb, "Long(10)", "Action"),
+        &t("giveitem 9\nclass 2 learnspell 4\ncheckitem 12 giveitem 11\n")
     );
 }
