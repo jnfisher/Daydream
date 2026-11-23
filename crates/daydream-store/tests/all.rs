@@ -4,5 +4,6 @@ mod support;
 
 mod dat_write;
 mod oracle;
+mod realm_fixture;
 mod roundtrip;
 mod writes;
