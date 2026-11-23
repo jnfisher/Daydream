@@ -242,9 +242,16 @@ try {
     $importer = Wait-For 'the Database Importer' $proc {
         [W]::Children($main) | Where-Object { [W]::Text($_) -eq 'Database Importer' } | Select-Object -First 1
     } 30
+    $importer = [IntPtr]$importer
     $controls = [W]::Children($importer)
     $button = { param($caption) $controls | Where-Object { [W]::Class($_) -like '*CommandButton' -and [W]::Text($_) -eq $caption } | Select-Object -First 1 }
     $list = $controls | Where-Object { [W]::Class($_) -like '*FileListBox' } | Select-Object -First 1
+    if (-not $list) {
+        $controls | ForEach-Object { Write-Host ("  control {0} '{1}'" -f [W]::Class($_), [W]::Text($_)) }
+        Shot 'no file list'
+        throw 'the importer has no file list'
+    }
+    $list = [IntPtr]$list
     $name = Split-Path $Mdb -Leaf
     Wait-For "$name in the file list" $proc { ([W]::ListItems($list)) -contains $name } 10 | Out-Null
     $items = @([W]::ListItems($list))
