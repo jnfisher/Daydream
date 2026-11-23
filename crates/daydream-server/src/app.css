@@ -168,3 +168,15 @@ pre.errors { background: var(--bg); border: 1px solid var(--line); padding: .5re
 .mark.shop { background: #30e0e0; }
 .mark.npc { background: #ff9b30; }
 .toolbar .button-link { align-self: center; margin-left: .25rem; }
+.quest-body { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; margin-top: .5rem; }
+.quest-tree { flex: 1 1 20rem; max-height: 36rem; overflow: auto; }
+.quest-detail { flex: 2 1 24rem; min-width: 0; }
+.quest-section > summary { cursor: pointer; font-weight: 600; padding: .1rem 0; }
+.quest-section .quest-section { margin-left: 1.1rem; }
+.quest-section > button { display: block; margin: .1rem 0 .1rem 1.1rem; background: none; border: 0; padding: .1rem .3rem; text-align: left; color: var(--text); font: inherit; cursor: pointer; border-radius: 3px; }
+.quest-section > button.quest-comment { color: var(--muted); font-style: italic; }
+.quest-section > button:hover, .quest-section > button.picked { background: var(--select); }
+.quest-detail dl { display: grid; grid-template-columns: auto 1fr; gap: .2rem .75rem; margin: .5rem 0; }
+.quest-detail dt { color: var(--muted); }
+.quest-detail dd { margin: 0; }
+.quest-detail a { color: var(--accent); }
