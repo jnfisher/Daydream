@@ -13,7 +13,9 @@ workspace = true
 
 [dependencies]
 axum.workspace = true
+daydream-nmr.workspace = true
 daydream-store.workspace = true
+daydream-types.workspace = true
 daydream-wcc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

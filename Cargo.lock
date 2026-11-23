@@ -429,7 +429,9 @@ name = "daydream-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "daydream-nmr",
  "daydream-store",
+ "daydream-types",
  "daydream-wcc",
  "serde",
  "serde_json",
