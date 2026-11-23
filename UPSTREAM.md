@@ -14,7 +14,7 @@ hand. When you fix a bug in copied code, check whether the upstream copy has it 
 | `crates/daydream-wcc/src/{dos_time,json,zip}.rs` | same names in `silvermere-import/src/` | None. |
 | `crates/daydream-wcc/src/stock.rs` | `silvermere-import/src/stock.rs` | The URL override is `DAYDREAM_STOCK_URL`; messages name `daydream`. |
 | `crates/daydream-wcc/tests/{btrieve_fixtures,decode_offsets,stock_vir}.rs`, `tests/fixtures/btrieve/` | `silvermere-import/tests/` | Adjusted for the renames and the `to_*` functions. |
-| `crates/daydream-silvermere/migrations/{sqlite,postgres}/` | `crates/silvermere-db/migrations/` | None. The adapter refuses a database whose migrations are not these (or a prefix of them). |
+| `crates/daydream-silvermere/migrations/{sqlite,postgres}/` | `crates/silvermere-db/migrations/` | None. `0001` and `0002` are 0.1.18's; `0003_moderation.sql` (bans, mutes, IP bans, a closed realm: no world tables) is silvermere 1.0.1's, taken from the 1.0.1 release binary, which embeds each migration after its SHA-384 checksum, and checked against that checksum. The adapter refuses a database whose migrations are not these (or a prefix of them). |
 | `crates/daydream-silvermere/src/db/{dialect,guard,world_import}.rs`, `db/repo/` (rooms, items, monsters, spells, classes, races, shops, messages, text_blocks) | same names in `crates/silvermere-db/src/` | `silvermere_types` became `daydream_types` and `crate::` became `crate::db::`. Test modules left out. A new `DbError` stands in for silvermere-db's error type. |
 | `crates/daydream-silvermere/src/db/pool.rs` | `crates/silvermere-db/src/pool.rs` | Trimmed to `Db`: no `TestDb`, no accessors for the player tables. |
 

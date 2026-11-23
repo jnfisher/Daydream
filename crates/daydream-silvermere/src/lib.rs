@@ -9,7 +9,7 @@
 //!   runs: an exclusive lock on `<database>.lock` beside a SQLite file, or a PostgreSQL
 //!   advisory lock. Both directions take the same guard first and refuse while it is held, so
 //!   Daydream never writes under a running server or reads a world it is still changing.
-//! - **The schema.** silvermere 0.1.18's migrations are copied here ([`db`]); an empty
+//! - **The schema.** silvermere 1.0.1's migrations are copied here ([`db`]); an empty
 //!   database is given them, and a database with migrations Daydream does not know (a newer
 //!   silvermere) is refused rather than guessed at.
 //! - **The tables.** The world content: rooms, items, known monsters, spells, classes, races,
@@ -219,7 +219,7 @@ async fn check_schema(db: &Db, shown: &str, create: bool) -> Result<()> {
     if let Some(v) = versions.iter().find(|v| !known.contains(v)) {
         return Err(schema(format!(
             "written by a newer silvermere (migration {v}); this Daydream knows \
-             silvermere 0.1.18's schema (migrations {known:?})"
+             silvermere 1.0.1's schema (migrations {known:?})"
         )));
     }
     if versions.len() < known.len() {

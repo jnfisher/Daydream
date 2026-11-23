@@ -41,7 +41,7 @@ env:
   CARGO_INCREMENTAL: 0
   # the silvermere release the adapter's tests serve with (its schema is the one copied into
   # crates/daydream-silvermere/migrations)
-  SILVERMERE_VERSION: 0.1.18
+  SILVERMERE_VERSION: 1.0.1
 
 jobs:
   web:
