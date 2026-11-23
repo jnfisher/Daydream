@@ -289,6 +289,85 @@ var ARMOUR = {
   9: "Platemail"
 };
 var COST_TYPE = { 0: "Copper", 1: "Silver", 2: "Gold", 3: "Platinum", 4: "Runic" };
+var MAGERY = { 0: "None", 1: "Mage", 2: "Priest", 3: "Druid", 4: "Bard", 5: "Kai" };
+var list = (...labels) => Object.fromEntries(labels.map((l, i) => [i, l]));
+var CLASS_ARMOUR = list(
+  "Natural",
+  "Robes",
+  "Padded",
+  "Soft Leather",
+  "Soft Studded Leather",
+  "Rigid Leather",
+  "Studded Rigid Leather",
+  "Chainmail",
+  "Scalemail",
+  "Platemail"
+);
+var CLASS_WEAPONS = list(
+  "1H Blunt",
+  "2H Blunt",
+  "1H Sharp",
+  "2H Sharp",
+  "Any 1H",
+  "Any 2H",
+  "Any Sharp",
+  "Any Blunt",
+  "All Weapons",
+  "Limited (staff)"
+);
+var MONSTER_GROUP = list(
+  "Lair",
+  "Wanderer",
+  "NPC",
+  "Living",
+  "Random",
+  "Guard",
+  ...Array.from({ length: 30 }, (_, i) => `Group ${i + 1}`),
+  "Arena",
+  "Angel",
+  "Quest",
+  "Other"
+);
+var MONSTER_TYPE = list("Solo", "Leader", "Follower", "Stationary");
+var ALIGNMENT = list("Good", "Evil", "Chaotic Evil", "Neutral", "Lawful Good", "Neutral Evil", "Lawful Evil");
+var GENDER = list("It", "He", "She");
+var ATTACK_TYPE = list("None", "Normal", "Spell", "Rob");
+var SPELL_TYPE = list("Auto-Combat", "Poison", "Change me", "General");
+var TARGET = list(
+  "Single",
+  "Self",
+  "Self or Single",
+  "Divided Area Not You",
+  "Monster",
+  "Divided Area Incl. You",
+  "Any",
+  "Item",
+  "Monster or Single",
+  "Divided Attack Area",
+  "Divided Party Area",
+  "Full Area",
+  "Full Attack Area",
+  "Full Party Area"
+);
+var RESIST_ABILITY = list("Magic Resistance", "Strength", "Agility", "Health", "Intellect", "Wisdom", "Charm");
+var ELEMENT = list("Cold", "Hot", "Stone", "Lightning", "Normal", "Water", "Poison");
+var RESISTS = list("Never", "Anti-Magic Only", "Everyone");
+var YES_NO = list("Yes", "No");
+var SHOP_TYPE = list(
+  "General",
+  "Weapons",
+  "Armour",
+  "Items",
+  "Spells",
+  "Hospital",
+  "Tavern",
+  "Bank",
+  "Training",
+  "Inn",
+  "Specific",
+  "Gang Shop",
+  "Deed Shop"
+);
 var f = (col, label, pick) => ({ col, label, pick });
 var wide = (col, label) => ({ col, label, wide: true });
 var abilities = (from, to) => ({
@@ -364,6 +443,214 @@ var LAYOUTS = {
     },
     { title: "Abilities p1", grid: abilities(0, 9) },
     { title: "Abilities p2", grid: abilities(10, 19) }
+  ],
+  // frmMonster
+  Monsters: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("Group", "Group", { options: MONSTER_GROUP }),
+        f("Index"),
+        f("Type", "Type", { options: MONSTER_TYPE }),
+        f("Alignment", "Alignment", { options: ALIGNMENT }),
+        f("Gender", "Gender", { options: GENDER }),
+        f("Active"),
+        f("Undead"),
+        f("Experience"),
+        f("Exp Multiplier", "Multiplier"),
+        f("Hit Points", "Hitpoints"),
+        f("HP Regen"),
+        f("Energy"),
+        f("AC"),
+        f("DR"),
+        f("MR", "M.R."),
+        f("Follow", "Follow %"),
+        f("Charm LvL", "Charm Lvl"),
+        f("Charm RES", "Charm Resist"),
+        f("BS Defense"),
+        f("Game Limit"),
+        f("Regen Time"),
+        f("Date Killed", "Last Killed (date)"),
+        f("Time Killed", "Last Killed (time)")
+      ]
+    },
+    {
+      title: "Drop",
+      fields: [f("Runic"), f("Platinum"), f("Gold"), f("Silver"), f("Copper")],
+      grid: {
+        columns: [
+          { template: "Item Number #", label: "Item", pick: { ref: "Items" } },
+          { template: "Item Uses #", label: "Uses" },
+          { template: "Item Drop % #", label: "%" }
+        ],
+        from: 0,
+        to: 9
+      }
+    },
+    {
+      title: "Spells/Attacks",
+      grid: {
+        columns: [
+          { template: "Attack Type #", label: "Type", pick: { options: ATTACK_TYPE } },
+          { template: "Attack Accu/Spell #", label: "Accu/Spell" },
+          { template: "Attack % #", label: "Attack%" },
+          { template: "Attack Min Hit/Cast % #", label: "MinH/Cast%" },
+          { template: "Attack Max Hit/Cast LVL #", label: "MaxH/CastLvL" },
+          { template: "Attack Energy #", label: "Energy" },
+          { template: "Attack Hit Msg #", label: "Hit Msg", pick: { ref: "Messages" } },
+          { template: "Attack Dodge Msg #", label: "Dodge Msg", pick: { ref: "Messages" } },
+          { template: "Attack Miss Msg #", label: "Miss Msg", pick: { ref: "Messages" } },
+          { template: "Attack Hit Spell #", label: "Hit Spell", pick: { ref: "Spells" } }
+        ],
+        from: 0,
+        to: 4,
+        across: "Attack"
+      }
+    },
+    {
+      title: "Between-Round Spells",
+      grid: {
+        columns: [
+          { template: "Spell Number #", label: "Spell", pick: { ref: "Spells" } },
+          { template: "Spell Cast % #", label: "%" },
+          { template: "Spell Cast LVL #", label: "LvL" }
+        ],
+        from: 0,
+        to: 4
+      }
+    },
+    {
+      title: "Weapon/Txt/Msg",
+      fields: [
+        f("Weapon Number", "Weapon", { ref: "Items" }),
+        f("Death Spell", "Death Spell", { ref: "Spells" }),
+        f("Create Spell", "Create Spell", { ref: "Spells" }),
+        f("Move Msg", "Move Msg", { ref: "Messages" }),
+        f("Death Msg", "Death Msg", { ref: "Messages" }),
+        f("Greet Txt"),
+        f("Desc Txt"),
+        f("Talk Txt"),
+        wide("Desc 1", "Description"),
+        wide("Desc 2", ""),
+        wide("Desc 3", ""),
+        wide("Desc 4", "")
+      ]
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmSpell
+  Spells: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("Short Name"),
+        f("Level", "Req. Level"),
+        f("Level Cap"),
+        f("Magery A", "Magery", { options: MAGERY }),
+        f("Magery B", "Magery Level"),
+        f("Spell Type", "Spell Type", { options: SPELL_TYPE }),
+        f("Target", "Target", { options: TARGET }),
+        f("Attack Type", "Type of Attack", { options: ELEMENT }),
+        f("Type of Resists", "Type of Resists", { options: RESISTS }),
+        f("Resist Ability", "Resist Ability", { options: RESIST_ABILITY }),
+        f("Difficulty"),
+        f("Energy"),
+        f("Mana"),
+        f("Min", "Base Min"),
+        f("Max", "Base Max"),
+        f("Duration", "Base Duration"),
+        f("Min Increase", "Min increase"),
+        f("LVLS Min Increase", "LVLs/Min increase"),
+        f("Max Increase", "Max increase"),
+        f("LVLS Max Increase", "LVLs/Max increase"),
+        f("Dur Increase", "Dur. increase"),
+        f("LVLS Dur Increase", "LVLs/Dur. increase"),
+        f("MSG Style", "Norm Msg Style", { options: YES_NO }),
+        f("Cast MSG A", "Cast Msg A", { ref: "Messages" }),
+        f("Cast MSG B", "Cast Msg B", { ref: "Messages" }),
+        wide("Desc 1", "Description Line 1"),
+        wide("Desc 2", "Description Line 2"),
+        f("UNDEFINED01", "unknown 1"),
+        f("UNDEFINED02", "unknown 2")
+      ]
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmClass
+  Classes: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("EXP %", "Exp %"),
+        f("Min HP", "HP (min)"),
+        f("Max HP", "HP (max)"),
+        f("Armour", "Armour", { options: CLASS_ARMOUR }),
+        f("Weapon", "Weapons", { options: CLASS_WEAPONS }),
+        f("Combat"),
+        f("Magic Type", "Magery", { options: MAGERY }),
+        f("Magic LVL", "Magery Level"),
+        f("Title Text")
+      ]
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmRace
+  Races: [
+    {
+      title: "General",
+      fields: [f("Number"), f("Name"), f("EXP %", "Exp %"), f("CP", "Starting Cp"), f("HP Bonus", "Hp Bonus")],
+      matrix: {
+        headers: ["Min", "Max"],
+        rows: [
+          { label: "Strength", cols: ["Min STR", "Max STR"] },
+          { label: "Agility", cols: ["Min AGL", "Max AGL"] },
+          { label: "Intellect", cols: ["Min INT", "Max INT"] },
+          { label: "Health", cols: ["Min HEA", "Max HEA"] },
+          { label: "Willpower", cols: ["Min WIL", "Max WIL"] },
+          { label: "Charm", cols: ["Min CHM", "Max CHM"] }
+        ]
+      }
+    },
+    { title: "Abilities", grid: abilities(0, 9) }
+  ],
+  // frmShop
+  Shops: [
+    {
+      title: "General",
+      fields: [
+        f("Number"),
+        f("Name"),
+        f("Type", "Type", { options: SHOP_TYPE }),
+        f("Min Lvl", "Min LVL"),
+        f("Max Lvl", "Max LVL"),
+        f("MarkUp", "Markup %"),
+        f("Class Limit", "Class", { ref: "Classes" }),
+        wide("Desc A", "Description"),
+        wide("Desc B", ""),
+        wide("Desc C", "")
+      ]
+    },
+    {
+      title: "Items Sold",
+      grid: {
+        columns: [
+          { template: "Item #", label: "Item", pick: { ref: "Items" } },
+          { template: "Max #", label: "Max" },
+          { template: "Normal #", label: "Normal" },
+          { template: "Regen Time #", label: "Time" },
+          { template: "Regen Number#", label: "Rgn#" },
+          { template: "Regen %#", label: "Rgn%" }
+        ],
+        from: 0,
+        to: 19
+      }
+    }
   ]
 };
 function families(t2) {
@@ -376,9 +663,9 @@ function families(t2) {
       continue;
     }
     const template = `${m[1]}#${m[3]}`;
-    const list = byTemplate.get(template) ?? [];
-    list.push(Number(m[2]));
-    byTemplate.set(template, list);
+    const list2 = byTemplate.get(template) ?? [];
+    list2.push(Number(m[2]));
+    byTemplate.set(template, list2);
   }
   const grids = /* @__PURE__ */ new Map();
   for (const [template, numbers] of byTemplate) {
@@ -425,6 +712,7 @@ function columnsShown(layout) {
   const shown = /* @__PURE__ */ new Set();
   for (const tab of layout) {
     for (const field of tab.fields ?? []) shown.add(field.col);
+    for (const row of tab.matrix?.rows ?? []) for (const c of row.cols) shown.add(c);
     if (tab.grid) {
       for (let n = tab.grid.from; n <= tab.grid.to; n++) {
         for (const c of tab.grid.columns) shown.add(c.template.replace("#", String(n)));
@@ -500,8 +788,8 @@ async function names(table) {
   m = /* @__PURE__ */ new Map();
   state.names.set(table, m);
   try {
-    const list = await api.rows(table);
-    for (const [key, title] of list.rows) {
+    const list2 = await api.rows(table);
+    for (const [key, title] of list2.rows) {
       if (typeof key[0] === "number") m.set(key[0], show(title));
     }
   } catch {
@@ -528,8 +816,8 @@ function renderNav() {
   }
 }
 function renderList() {
-  const list = $("#rows");
-  list.replaceChildren();
+  const list2 = $("#rows");
+  list2.replaceChildren();
   const needle = state.filter.trim().toLowerCase();
   const matches = state.rows.filter(
     ([key, title]) => !needle || `${keyText(key)} ${show(title)}`.toLowerCase().includes(needle)
@@ -538,7 +826,7 @@ function renderList() {
     const li = h("li", {}, h("span", { class: "key" }, keyText(key)), " ", show(title).trimEnd());
     if (state.row && sameKey(state.row.key, key)) li.classList.add("selected");
     li.addEventListener("click", () => select(key));
-    list.append(li);
+    list2.append(li);
   }
   $("#count").textContent = matches.length > LIST_LIMIT ? `${LIST_LIMIT} of ${matches.length}; filter to narrow` : `${matches.length} of ${state.rows.length}`;
 }
@@ -606,8 +894,45 @@ function renderTab(tabIndex) {
     for (const field of tab.fields) grid.append(renderField(field));
     body.append(grid);
   }
+  if (tab.matrix) {
+    const m = tab.matrix;
+    const table = h("table", { class: "grid matrix" });
+    const head = h("tr", {}, h("th"));
+    for (const label of m.headers) head.append(h("th", {}, label));
+    table.append(h("thead", {}, head));
+    const tbody = h("tbody");
+    for (const row of m.rows) {
+      const tr = h("tr", {}, h("td", { class: "n" }, row.label));
+      for (const col of row.cols) {
+        const info = column(col);
+        tr.append(h("td", { title: col }, info ? input({ col }, info) : ""));
+      }
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    body.append(table);
+  }
   if (tab.grid) {
     const g = tab.grid;
+    if (g.across) {
+      const table2 = h("table", { class: "grid across" });
+      const head2 = h("tr", {}, h("th"));
+      for (let n = g.from; n <= g.to; n++) head2.append(h("th", {}, `${g.across} ${n - g.from + 1}`));
+      table2.append(h("thead", {}, head2));
+      const tbody2 = h("tbody");
+      for (const c of g.columns) {
+        const tr = h("tr", {}, h("td", { class: "n" }, c.label ?? c.template));
+        for (let n = g.from; n <= g.to; n++) {
+          const col = c.template.replace("#", String(n));
+          const info = column(col);
+          tr.append(h("td", { title: col }, info ? input({ col, pick: c.pick }, info) : ""));
+        }
+        tbody2.append(tr);
+      }
+      table2.append(tbody2);
+      body.append(table2);
+      return body;
+    }
     const table = h("table", { class: "grid" });
     const head = h("tr", {}, h("th", {}, "#"));
     for (const c of g.columns) head.append(h("th", {}, c.label ?? c.template));
@@ -687,9 +1012,9 @@ async function openTable(name, key) {
     $("#filter").value = "";
     renderNav();
     status(`Loading ${t2.name}\u2026`);
-    const list = await api.rows(t2.name);
-    state.rows = list.rows;
-    status(`${t2.name}: ${list.rows.length} records`);
+    const list2 = await api.rows(t2.name);
+    state.rows = list2.rows;
+    status(`${t2.name}: ${list2.rows.length} records`);
     const refs = /* @__PURE__ */ new Set();
     for (const tab of state.layout) {
       for (const f2 of tab.fields ?? []) if (f2.pick && "ref" in f2.pick) refs.add(f2.pick.ref);
@@ -773,8 +1098,8 @@ async function insert() {
   t2.key.forEach((c, i) => values[c] = key[i] ?? null);
   try {
     await api.insert(t2.name, values);
-    const list = await api.rows(t2.name);
-    state.rows = list.rows;
+    const list2 = await api.rows(t2.name);
+    state.rows = list2.rows;
     state.row = null;
     state.names.delete(t2.name);
     status(`Inserted ${t2.name} ${keyText(key)}.`, "ok");

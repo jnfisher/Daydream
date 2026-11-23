@@ -225,8 +225,45 @@ function renderTab(tabIndex: number): HTMLElement {
     for (const field of tab.fields) grid.append(renderField(field));
     body.append(grid);
   }
+  if (tab.matrix) {
+    const m = tab.matrix;
+    const table = h('table', { class: 'grid matrix' });
+    const head = h('tr', {}, h('th'));
+    for (const label of m.headers) head.append(h('th', {}, label));
+    table.append(h('thead', {}, head));
+    const tbody = h('tbody');
+    for (const row of m.rows) {
+      const tr = h('tr', {}, h('td', { class: 'n' }, row.label));
+      for (const col of row.cols) {
+        const info = column(col);
+        tr.append(h('td', { title: col }, info ? input({ col }, info) : ''));
+      }
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    body.append(table);
+  }
   if (tab.grid) {
     const g = tab.grid;
+    if (g.across) {
+      const table = h('table', { class: 'grid across' });
+      const head = h('tr', {}, h('th'));
+      for (let n = g.from; n <= g.to; n++) head.append(h('th', {}, `${g.across} ${n - g.from + 1}`));
+      table.append(h('thead', {}, head));
+      const tbody = h('tbody');
+      for (const c of g.columns) {
+        const tr = h('tr', {}, h('td', { class: 'n' }, c.label ?? c.template));
+        for (let n = g.from; n <= g.to; n++) {
+          const col = c.template.replace('#', String(n));
+          const info = column(col);
+          tr.append(h('td', { title: col }, info ? input({ col, pick: c.pick }, info) : ''));
+        }
+        tbody.append(tr);
+      }
+      table.append(tbody);
+      body.append(table);
+      return body;
+    }
     const table = h('table', { class: 'grid' });
     const head = h('tr', {}, h('th', {}, '#'));
     for (const c of g.columns) head.append(h('th', {}, c.label ?? c.template));
