@@ -1,0 +1,27 @@
+[package]
+name = "daydream"
+description = "Daydream: a web-based editor for MajorMUD 1.11p realms."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+daydream-server.workspace = true
+daydream-store.workspace = true
+daydream-wcc.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

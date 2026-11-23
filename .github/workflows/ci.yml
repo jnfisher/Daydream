@@ -1,0 +1,82 @@
+name: CI
+
+# One job: fmt, clippy, then every test. It stays fast by doing no work twice:
+# - Swatinem/rust-cache keeps the dependency builds between runs.
+# - The stock MajorMUD 1.11p package is downloaded once and kept by actions/cache, keyed by
+#   its pinned sha256 (crates/daydream-wcc/src/stock.rs), so it is fetched again only when
+#   the pin changes.
+# - wbtrv32's converter (the oracle for the store's differential tests) is built once and
+#   kept, keyed by the commit pinned in tools/wbtrv32/build-oracle.sh.
+# - Changes to prose only (docs, README, LICENSE) do not run it.
+# The full differential suite against NMR arrives later in M1 and will run nightly and
+# before a release, not on every pull request (docs/approach.md, "Keeping CI fast").
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".gitignore"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".gitignore"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # incremental builds only help a local tree; in CI they bloat the cache
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache keys (stock package sha256, wbtrv32 commit)
+        id: keys
+        run: |
+          echo "stock=$(sed -n 's/^pub const SHA256: &str = "\(.*\)";/\1/p' crates/daydream-wcc/src/stock.rs)" >> "$GITHUB_OUTPUT"
+          echo "wbtrv32=$(sed -n 's/^COMMIT=//p' tools/wbtrv32/build-oracle.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Stock data cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/daydream/stock/WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip
+          key: stock-${{ steps.keys.outputs.stock }}
+
+      - name: wbtrv32 oracle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/daydream/wbtrv32
+          key: wbtrv32-${{ runner.os }}-${{ steps.keys.outputs.wbtrv32 }}
+
+      - name: wbtrv32 oracle (built when not cached)
+        run: tools/wbtrv32/build-oracle.sh >> "$GITHUB_ENV"
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: test
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --locked
