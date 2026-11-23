@@ -449,20 +449,19 @@ pub(crate) fn compare(key: &Key, a: &[u8], b: &[u8]) -> Option<Ordering> {
     Some(Ordering::Equal)
 }
 
-fn signed(v: &[u8]) -> i128 {
-    let mut bytes = [if v.last().is_some_and(|b| b & 0x80 != 0) {
-        0xFF
-    } else {
-        0
-    }; 16];
-    bytes[..v.len()].copy_from_slice(v);
-    i128::from_le_bytes(bytes)
+/// A little-endian two's complement integer of any length, as a sortable byte string.
+fn signed(v: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = v.iter().rev().copied().collect();
+    if let Some(top) = out.first_mut() {
+        *top ^= 0x80;
+    }
+    out
 }
 
-fn unsigned(v: &[u8]) -> u128 {
-    let mut bytes = [0u8; 16];
-    bytes[..v.len()].copy_from_slice(v);
-    u128::from_le_bytes(bytes)
+/// A little-endian unsigned integer of any length (MajorMUD has 18-byte keys), as a
+/// sortable byte string.
+fn unsigned(v: &[u8]) -> Vec<u8> {
+    v.iter().rev().copied().collect()
 }
 
 fn lstring(v: &[u8]) -> &[u8] {
@@ -499,5 +498,10 @@ mod tests {
     fn integers_compare_by_sign() {
         assert!(signed(&[0xFF, 0xFF]) < signed(&[0x01, 0x00]));
         assert!(unsigned(&[0xFF, 0xFF]) > unsigned(&[0x01, 0x00]));
+        // WCCTEXT's key is an 18-byte unsigned number
+        let (mut low, mut high) = ([0u8; 18], [0u8; 18]);
+        low[0] = 0xFF;
+        high[17] = 0x01;
+        assert!(unsigned(&low) < unsigned(&high));
     }
 }
