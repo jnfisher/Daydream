@@ -147,14 +147,15 @@ fn every_stock_file_rebuilds() {
 #[test]
 fn large_files_get_deep_trees_and_more_page_tables() {
     let source = BtrieveFile::open(&fixture("MBBSEMU.DAT")).unwrap();
-    for n in [0, 1, 5, 6, 400, 3000] {
+    for n in [0, 1, 5, 6, 400, 20_000] {
         let data = synthetic(&source, n);
         let mut file = rebuilt(&source, &data);
         let report = file.verify_indexes().unwrap();
-        if n == 3000 {
+        if n == 20_000 {
             assert!(report.keys.iter().any(|k| k.depth >= 3), "{report:?}");
-            // 512-byte pages: a page table maps 126 pages
-            assert!(file.header.page_count > 2 * 126);
+            // 512-byte pages: a page table maps 126 pages, and past 30 of them Btrieve
+            // leaves a 4096-byte gap
+            assert!(file.header.page_count > 31 * 126);
         }
     }
 }

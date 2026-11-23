@@ -17,7 +17,8 @@
 //!   first active). Logical page `L` is physical `L + 3` plus two for every further PAT
 //!   pair before it; pair `p` sits at physical `2 + p * page_length / 4`, and each maps
 //!   `page_length / 4 - 2` logical pages. Every entry of a PAT page is pre-mapped, with
-//!   type 0 where the page is not in use, as Btrieve leaves a new file.
+//!   type 0 where the page is not in use, as Btrieve leaves a new file. From the 31st
+//!   pair on, pages sit 4096 bytes further into the file, as Btrieve puts them.
 //! - Logical pages 1.. hold each key's index pages in key order, then the data pages.
 //!   An empty file is a lone empty leaf per key and one data page of free slots, which is
 //!   what Btrieve's own Create writes.
@@ -37,7 +38,7 @@ use super::BtrieveFile;
 use super::btree::{self, Tree};
 use super::index::{compare, is_null};
 use super::keys::{KEY_DEF_LENGTH, Key, KeyAttributes};
-use super::pat::kind;
+use super::pat::{kind, physical_offset};
 
 /// Bytes in front of a data page's first slot.
 const DATA_HEADER: usize = 6;
@@ -132,6 +133,11 @@ impl Plan {
     /// Physical page of logical page `l` (1 or more).
     fn physical(&self, l: u32) -> u32 {
         l + 3 + 2 * ((l - 1) / self.pages_per_pat)
+    }
+
+    /// The byte offset of physical page `page` (see [`physical_offset`]).
+    fn offset(&self, page: u32) -> usize {
+        physical_offset(page, self.page_length as u16) as usize
     }
 
     fn pat_physical(&self, p: u32) -> u32 {
@@ -243,8 +249,7 @@ pub fn build(
         pages_per_pat,
         pats: (page_count - 1).div_ceil(pages_per_pat).max(1),
     };
-    let physical_pages = plan.physical(page_count - 1) as usize + 1;
-    let mut out = vec![0u8; physical_pages * page_length];
+    let mut out = vec![0u8; plan.offset(plan.physical(page_count - 1)) + page_length];
 
     // PAT: what each logical page is
     let mut kinds = vec![0u8; page_count as usize];
@@ -363,7 +368,7 @@ fn key_records(key: &Key, records: &[impl AsRef<[u8]>]) -> Vec<Vec<u8>> {
 fn write_pats(out: &mut [u8], plan: &Plan, kinds: &[u8]) {
     let len = plan.page_length;
     for p in 0..plan.pats {
-        let at = plan.pat_physical(p) as usize * len;
+        let at = plan.offset(plan.pat_physical(p));
         for (copy, usage) in [(0, 1u32), (1, 0)] {
             let page = &mut out[at + copy * len..at + (copy + 1) * len];
             put(page, 0, b"PP");
@@ -391,7 +396,7 @@ fn write_index(out: &mut [u8], plan: &Plan, k: u8, values: Vec<Vec<u8>>, index: 
     let key_len = values.first().map_or(0, Vec::len);
     for (p, page) in index.tree.pages.iter().enumerate() {
         let l = index.logical[p];
-        let at = plan.physical(l) as usize * plan.page_length;
+        let at = plan.offset(plan.physical(l));
         let buf = &mut out[at..at + plan.page_length];
         put(buf, 0, &page_pointer(l, flag));
         put_u16(buf, 6, page.entries.len() as u16);
@@ -420,13 +425,13 @@ fn write_data(
     let len = plan.page_length;
     for d in 0..plan.data_pages {
         let l = plan.first_data + d;
-        let at = plan.physical(l) as usize * len;
+        let at = plan.offset(plan.physical(l));
         put(&mut out[at..], 0, &page_pointer(l, kind::DATA));
         put_u16(&mut out[at..], 4, 0x8000);
     }
     let slot_at = |i: usize| {
         let ptr = plan.record_pointer(i) as usize;
-        plan.physical(ptr as u32 / len as u32) as usize * len + ptr % len
+        plan.offset(plan.physical(ptr as u32 / len as u32)) + ptr % len
     };
     for (i, r) in records.iter().enumerate() {
         let at = slot_at(i);

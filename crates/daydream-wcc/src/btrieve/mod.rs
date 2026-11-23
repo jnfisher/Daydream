@@ -307,7 +307,8 @@ impl BtrieveFile {
                 self.reader.read_at(2 * page_length, &mut pair)?;
                 let mut acs = None;
                 for page in pat::scan_first_pat(&pair, usize::from(self.header.page_length))? {
-                    acs = self.acs_at_physical(u64::from(page) * page_length)?;
+                    acs =
+                        self.acs_at_physical(pat::physical_offset(page, self.header.page_length))?;
                 }
                 acs
             }

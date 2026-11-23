@@ -227,38 +227,6 @@ fn btrieve_reads_the_stock_files_as_daydream_does_and_writes_them() {
                 std::fs::write(&rebuilt, &bytes).unwrap();
                 list.push(rebuilt);
             }
-            // the first records alone, to place a failure on the file's size: the 4096-byte
-            // page files cross into a second page table at about 2,040 records
-            let sizes: &[usize] = match stem.to_ascii_uppercase().as_str() {
-                "WCCMP001" => &[10_000, 15_000, 20_000, 25_000],
-                "WCCMSG" => &[500, 1000, 2000, 3000, 3500],
-                _ => &[],
-            };
-            if !sizes.is_empty() {
-                let all = payloads(&copy);
-                let source = open(&copy);
-                for (k, key) in source.keys.iter().enumerate() {
-                    println!("{stem} key {k}: {:?}", key.segments);
-                }
-                for &n in sizes {
-                    let bytes = build(&source, &all[..n], 0x6B04_459B).unwrap();
-                    let part = tmp.path().join(format!("{}{n}.DAT", &stem[3..5]));
-                    std::fs::write(&part, &bytes).unwrap();
-                    let mut part_file = OpenOptions::new().open_bytes("part", bytes).unwrap();
-                    let h = part_file.header.clone();
-                    let report = part_file.verify_indexes().unwrap();
-                    println!(
-                        "{stem} first {n}: page length {}, {} pages, record length {}, \
-                         physical {}, indexes {:?}",
-                        h.page_length,
-                        h.page_count,
-                        h.record_length,
-                        h.physical_record_length,
-                        report.keys
-                    );
-                    files.push(part);
-                }
-            }
         }
         files.push(copy);
     }
@@ -361,38 +329,12 @@ fn btrieve_clones_the_stock_files() {
                 println!("  FCR page {p}:");
                 print!("{}", nonzero_rows(&bytes[p * page..(p + 1) * page]));
             }
-            if bytes.len() > 256 * 1024 {
-                // where the page tables are, by byte offset: past 30 of them Btrieve leaves
-                // a 4096-byte hole, so look on every 512-byte boundary
-                let tables: Vec<String> = (0..bytes.len() - 8)
-                    .step_by(512)
-                    .filter(|&at| bytes[at..at + 2] == *b"PP" && bytes[at + 3] == 0)
-                    .map(|at| {
-                        let seq = u16::from_le_bytes([bytes[at + 2], bytes[at + 3]]);
-                        format!("{seq}@{at:#x}")
-                    })
-                    .collect();
-                println!("  page tables: {}", tables.join(" "));
-                let holes: Vec<String> = (0..bytes.len() / 512)
-                    .filter(|&b| bytes[b * 512..(b + 1) * 512].iter().all(|&x| x == 0))
-                    .map(|b| format!("{:#x}", b * 512))
-                    .collect();
-                println!("  zero 512-byte blocks: {}", holes.join(" "));
-            }
             for (p, chunk) in bytes.chunks(page).enumerate().skip(fcr_pages) {
-                // after 30 page tables Btrieve's pages shift by 8: show what is there
-                let after_30 = 2 + 30 * page / 4;
-                let near = p + 4 >= after_30 && p < after_30 + 16;
-                if bytes.len() <= 16 * 1024
-                    || (bytes.len() > 256 * 1024 && (chunk[..2] == *b"PP" || near))
-                {
-                    // small files whole, so every byte of Btrieve's layout is on record; of
-                    // a large one, the page tables
+                if bytes.len() <= 16 * 1024 {
+                    // small files whole, so every byte of Btrieve's layout is on record
                     println!("  page {p}:");
                     print!("{}", nonzero_rows(chunk));
-                } else if bytes.len() > 256 * 1024 {
-                    continue;
-                } else {
+                } else if bytes.len() <= 256 * 1024 {
                     let hex: Vec<String> = chunk[..16].iter().map(|b| format!("{b:02x}")).collect();
                     println!("  page {p}: {}", hex.join(" "));
                 }
