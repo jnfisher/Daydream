@@ -28,7 +28,8 @@ revisited. Pull requests merged once CI was green.
 | #11 | M3: NMR's one-click fixes (limited items, exp, uses, kill times, drop %) | merged (squash c2536d0) |
 | #12 | M3: NMR's lists, the Mass Room Editor, and the rest of its fixes | merged (squash 0f7b6dc) |
 | #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | merged (squash e839b9d) |
-| #14 | M3: the Record Number Changer | open |
+| #14 | M3: the Record Number Changer | merged (squash 8725f04) |
+| #15 | M3: the Map Editor (digging rooms) and CSV downloads of lists | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -70,6 +71,12 @@ revisited. Pull requests merged once CI was green.
   `text`, `teleport`). Change Map Number moves a whole map. Previews first, like the rest.
   Tried on the 1.11p realm: item 1276 (crane totem) to 9000 changes the item, its monster
   drop and text block 2903's `checkitem`/`takeitem`.
+- **The Map Editor and CSV** (#15). The Map page gains NMR's Map Editor: pick a room, then
+  a direction on the keypad to dig a new room there (a copy of the current room, as NMR's,
+  with its NPC, coins, items and exits cleared) or join an existing room, with the exits made
+  both ways (a map change exit when the maps differ). A room whose way back is already used
+  is joined one way only, unless "replace" is ticked. Every built list (Lists page) has a
+  Download CSV button.
 
 ## Decisions taken
 
@@ -142,7 +149,8 @@ revisited. Pull requests merged once CI was green.
     realm's folder, or a file opened in the browser, so NMR users keep their own.
 18. **The Map shows one map at a time, and follows NMR's walk.** Map-change exits are drawn
     as stubs that open the other map; hidden exits are followed unless unticked, as NMR's
-    option. NMR's map editing (frmMapEditor) and favourites are not in yet.
+    option. NMR's map editing came in #15 (digging and joining rooms); its favourites list is
+    not in yet.
 
 19. **The Record Number Changer refuses what NMR lets go wrong.** New numbers must be free
     and each number moves once; NMR logs a taken number and goes on, which leaves the
