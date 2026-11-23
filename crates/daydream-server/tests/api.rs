@@ -545,10 +545,29 @@ async fn the_lists_answer() {
         "/api/reports/control-rooms",
         "/api/reports/monster-groups",
         "/api/reports/npc-rooms",
+        "/api/map?map=2",
+        "/api/reports/room-indexes",
     ] {
         let (status, body) = get(dir.path(), uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
     }
     let (status, _) = get(dir.path(), "/api/reports/find-item").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn quest_files_come_from_the_realm_folder() {
+    let dir = realm();
+    let (status, _) = get(dir.path(), "/api/quests").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    std::fs::write(
+        dir.path().join("NMR-QuestsCustom.txt"),
+        b"-Caf\xe9 Quest\r\n1|0|2|x\r\n",
+    )
+    .unwrap();
+    let (status, body) = get(dir.path(), "/api/quests?file=custom").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["text"], "-Caf\u{e9} Quest\r\n1|0|2|x\r\n");
+    let (status, _) = get(dir.path(), "/api/quests?file=../x").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }

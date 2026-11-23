@@ -3,6 +3,7 @@
 // record they name links to its editor.
 
 import { MONSTER_GROUP } from './layouts';
+import { questOrganizer } from './quests';
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -168,5 +169,5 @@ function npcRooms(): HTMLElement {
 }
 
 export function listsPage(): HTMLElement {
-  return h('div', { class: 'tools' }, limitedItems(), findItem(), controlRooms(), monsterGroups(), npcRooms());
+  return h('div', { class: 'tools' }, limitedItems(), findItem(), controlRooms(), monsterGroups(), npcRooms(), questOrganizer());
 }

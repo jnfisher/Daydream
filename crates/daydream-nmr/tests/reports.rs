@@ -218,3 +218,53 @@ fn monster_groups_keep_nmrs_fifteen() {
         .collect();
     assert_eq!(got, [(1, 2, 1), (3, 5, 15)]);
 }
+
+#[test]
+fn a_map_view_has_its_rooms_exits_and_the_maps() {
+    use daydream_nmr::map::map_view;
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let rows = [
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(1)),
+            ("Name", t("Square")),
+            ("Exit 0", l(2)),
+            ("Exit 6", l(9)),
+            ("Type 6", l(8)),
+            ("Para1 6", l(3)),
+            ("Shop Number", l(4)),
+        ],
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(2)),
+            ("Name", t("Road")),
+            ("Exit 1", l(1)),
+        ],
+        vec![
+            ("Map Number", l(3)),
+            ("Room Number", l(9)),
+            ("Name", t("Far")),
+        ],
+    ];
+    let refs: Vec<&[(&str, Value)]> = rows.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Rooms", &refs);
+    let view = map_view(&realm, Dos, 1).unwrap();
+    assert_eq!(view.maps, [(1, 2), (3, 1)]);
+    let names: Vec<_> = view
+        .rooms
+        .iter()
+        .map(|r| (r.room, r.name.as_str()))
+        .collect();
+    assert_eq!(names, [(1, "Square"), (2, "Road")]);
+    let square = &view.rooms[0];
+    assert_eq!(square.shop, 4);
+    let exits: Vec<_> = square
+        .exits
+        .iter()
+        .map(|e| (e.dir, e.to, e.kind, e.para1))
+        .collect();
+    assert_eq!(exits, [(0, 2, 0, 0), (6, 9, 8, 3)]);
+    assert!(map_view(&realm, Dos, 7).unwrap().rooms.is_empty());
+}

@@ -68,12 +68,12 @@ impl Default for Scan {
     }
 }
 
-fn n(v: &Value) -> i64 {
+pub(crate) fn n(v: &Value) -> i64 {
     schema::number(v).unwrap_or(0.0) as i64
 }
 
 /// Text up to its first NUL, as NMR's `ClipNull` reads it.
-fn text(v: &Value) -> String {
+pub(crate) fn text(v: &Value) -> String {
     match v {
         Value::Text(s) => s.split('\0').next().unwrap_or("").trim_end().to_string(),
         _ => String::new(),
@@ -81,15 +81,15 @@ fn text(v: &Value) -> String {
 }
 
 /// A table's rows and a lookup of its columns.
-struct Rows(NmrRows);
+pub(crate) struct Rows(pub(crate) NmrRows);
 
 impl Rows {
-    fn load(realm: &Realm, name: &str, layout: LayoutSet) -> Result<Self, ReportError> {
+    pub(crate) fn load(realm: &Realm, name: &str, layout: LayoutSet) -> Result<Self, ReportError> {
         let t = schema::table(name).expect("an NMR table");
         Ok(Rows(export_table(realm, t, layout)?))
     }
 
-    fn at(&self, column: &str) -> Result<usize, ReportError> {
+    pub(crate) fn at(&self, column: &str) -> Result<usize, ReportError> {
         self.0
             .position(column)
             .ok_or_else(|| ReportError::NoColumn {
@@ -99,7 +99,12 @@ impl Rows {
     }
 
     /// The positions of `stem 0`, `stem 1`, ... `stem {count - 1}`, with `suffix`.
-    fn family(&self, stem: &str, count: usize, suffix: &str) -> Result<Vec<usize>, ReportError> {
+    pub(crate) fn family(
+        &self,
+        stem: &str,
+        count: usize,
+        suffix: &str,
+    ) -> Result<Vec<usize>, ReportError> {
         (0..count)
             .map(|x| self.at(&format!("{stem} {x}{suffix}")))
             .collect()
@@ -432,4 +437,76 @@ pub fn npc_rooms(realm: &Realm, layout: LayoutSet) -> Result<Vec<NpcRoom>, Repor
             .then((a.map, a.room).cmp(&(b.map, b.room)))
     });
     Ok(list)
+}
+
+/// A run of monster indexes in one group that rooms' Min-Max Index ranges cover.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct IndexRun {
+    pub group: i64,
+    pub from: i64,
+    pub to: i64,
+    /// The rooms (map, room) whose ranges fall in the run, at most 12.
+    pub rooms: Vec<(i64, i64)>,
+}
+
+/// The Monster Group/Index Changer's "List Indexes by Rooms": for each group, the indexes
+/// that rooms with a range (Min or Max Index above 0) cover, joined into runs of
+/// consecutive indexes, with the rooms in each.
+pub fn room_index_runs(realm: &Realm, layout: LayoutSet) -> Result<Vec<IndexRun>, ReportError> {
+    let rooms = Rows::load(realm, "Rooms", layout)?;
+    let (map, room, group, min, max) = (
+        rooms.at("Map Number")?,
+        rooms.at("Room Number")?,
+        rooms.at("Mon Type")?,
+        rooms.at("Min Index")?,
+        rooms.at("Max Index")?,
+    );
+    // group -> index -> rooms covering it
+    let mut cover: BTreeMap<i64, BTreeMap<i64, Vec<(i64, i64)>>> = BTreeMap::new();
+    for r in &rooms.0.rows {
+        let (lo, hi) = (n(&r[min]), n(&r[max]));
+        if lo <= 0 && hi <= 0 {
+            continue;
+        }
+        let at = (n(&r[map]), n(&r[room]));
+        // a room's range far past any real index is a data error: cap the walk
+        for i in lo.max(0)..=hi.min(lo.max(0) + 10_000) {
+            cover
+                .entry(n(&r[group]))
+                .or_default()
+                .entry(i)
+                .or_default()
+                .push(at);
+        }
+    }
+    let mut out: Vec<IndexRun> = Vec::new();
+    for (g, indexes) in cover {
+        for (i, rs) in indexes {
+            match out.last_mut() {
+                Some(run) if run.group == g && run.to + 1 == i => {
+                    run.to = i;
+                    for r in rs {
+                        if run.rooms.len() < 12 && !run.rooms.contains(&r) {
+                            run.rooms.push(r);
+                        }
+                    }
+                }
+                _ => {
+                    let mut list: Vec<(i64, i64)> = Vec::new();
+                    for r in rs {
+                        if list.len() < 12 && !list.contains(&r) {
+                            list.push(r);
+                        }
+                    }
+                    out.push(IndexRun {
+                        group: g,
+                        from: i,
+                        to: i,
+                        rooms: list,
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
 }

@@ -26,7 +26,8 @@ revisited. Pull requests merged once CI was green.
 | #9 | The importer, deleter and Merge Users in the browser (Tools) | merged (squash 3435600) |
 | #10 | M3: the Universal Modifier, with a preview | merged (squash f4eb920) |
 | #11 | M3: NMR's one-click fixes (limited items, exp, uses, kill times, drop %) | merged (squash c2536d0) |
-| #12 | M3: NMR's lists, the Mass Room Editor, and the rest of its fixes | open |
+| #12 | M3: NMR's lists, the Mass Room Editor, and the rest of its fixes | merged (squash 0f7b6dc) |
+| #13 | M3: the Map, the Quest Organizer and the Monster Group/Index Changer | open |
 
 - **NMR's import options and tools are in** (library and command line): which tables, a
   range per table (rooms by map), Skip or Update, a room's items only or all but them, the
@@ -53,6 +54,15 @@ revisited. Pull requests merged once CI was green.
   Editor (NMR's groups of fields over a map's room range, values taken from a room) and the
   fixes Restock All Shops, Combine Like Items on Floor, Strip Characters off Text Blocks and
   Insert / Delete Buffer Rooms.
+- **The Map and the Quest Organizer** (#13). A Map page draws a map's rooms as NMR's Map form
+  does: a 41 × 41 grid with the start room in the middle, rooms placed by a walk of their
+  exits, each exit's line coloured by its type, and marks for shops, permanent NPCs, command
+  text and up/down exits. Clicking a room centres on it; each room links to its editor, and
+  the room editor has a Map button. The Lists page gains NMR's Quest Organizer, which reads
+  NMR's quest file (its tree of quests and the text blocks in each) and shows each text block.
+  The Tools page gains NMR's Monster Group/Index Changer: a change list of group/index moves,
+  run over the monsters and the rooms whose index ranges hold them, with the rooms' index
+  runs listed to pick from.
 
 ## Decisions taken
 
@@ -119,6 +129,13 @@ revisited. Pull requests merged once CI was green.
 16. **Insert Buffer Rooms does what NMR's prompt says** (a room for every missing number
     below a map's last room). NMR's loop walks every map's rooms from the start of the file,
     so on maps after the first it can stop at the first room that already exists.
+
+17. **NMR's quest file is not copied into Daydream.** It is NMR's content, with no licence to
+    copy it; the Quest Organizer reads `NMR-Quests.txt` or `NMR-QuestsCustom.txt` from the
+    realm's folder, or a file opened in the browser, so NMR users keep their own.
+18. **The Map shows one map at a time, and follows NMR's walk.** Map-change exits are drawn
+    as stubs that open the other map; hidden exits are followed unless unticked, as NMR's
+    option. NMR's map editing (frmMapEditor) and favourites are not in yet.
 
 ## Known gaps
 

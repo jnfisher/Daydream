@@ -81,6 +81,9 @@ pub fn router(realm_dir: &Path) -> Router {
         .route("/api/reports/control-rooms", get(reports::control_rooms))
         .route("/api/reports/monster-groups", get(reports::monster_groups))
         .route("/api/reports/npc-rooms", get(reports::npc_rooms))
+        .route("/api/reports/room-indexes", get(reports::room_indexes))
+        .route("/api/map", get(reports::map))
+        .route("/api/quests", get(reports::quests))
         .route(
             "/api/tools/merge-users",
             post(tools::merge_users).layer(DefaultBodyLimit::max(tools::MAX_UPLOAD)),
