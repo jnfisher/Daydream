@@ -108,6 +108,31 @@ pub enum Preset {
         #[serde(default)]
         map: Option<i64>,
     },
+    /// NMR's Monster Group/Index Changer, over `table` ("monsters" or "rooms"): a monster
+    /// whose group and index are a change's `from` takes its `to`; a room whose Mon Type is
+    /// a change's group and whose Min-Max Index range holds its index (the first such
+    /// change, in list order) moves its range to start at the new index, keeping its width.
+    ChangeMonsterIndexes {
+        table: IndexTable,
+        changes: Vec<IndexChange>,
+    },
+}
+
+/// Which table the Monster Group/Index Changer runs over: NMR's runs over both, in turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexTable {
+    Monsters,
+    Rooms,
+}
+
+/// One line of NMR's change list: group/index -> group/index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct IndexChange {
+    pub from_group: i64,
+    pub from_index: i64,
+    pub to_group: i64,
+    pub to_index: i64,
 }
 
 /// Why a fix cannot run.
@@ -402,6 +427,9 @@ pub fn plan(realm: &Realm, preset: &Preset, layout: LayoutSet) -> Result<Plan, P
             }))
         }
         Preset::InsertBufferRooms { map } => insert_buffer_rooms(realm, *map, layout),
+        Preset::ChangeMonsterIndexes { table, changes } => {
+            change_indexes(realm, *table, changes, layout)
+        }
         Preset::DeleteBufferRooms { map } => {
             let (t, rows) = load(realm, "Rooms", layout)?;
             let (m, r, name) = (
@@ -721,5 +749,75 @@ mod tests {
         assert_eq!(KILL_TIME, 2081);
         assert!(dos_date(1979, 1, 1).is_err());
         assert!(dos_date(2000, 13, 1).is_err());
+    }
+}
+
+/// NMR's Monster Group/Index Changer (`frmMonsterIndexChanger.ScanMonsters` and
+/// `ScanRooms`). Its Add refuses a `from` already in the list; so does this.
+fn change_indexes(
+    realm: &Realm,
+    table: IndexTable,
+    changes: &[IndexChange],
+    layout: LayoutSet,
+) -> Result<Plan, PresetError> {
+    if changes.is_empty() {
+        return Err(bad("the change list is empty"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for c in changes {
+        if c.from_index < 0 || c.to_index < 0 {
+            return Err(bad("indexes cannot be negative"));
+        }
+        if !(0..=39).contains(&c.from_group) || !(0..=39).contains(&c.to_group) {
+            return Err(bad("groups run from 0 to 39"));
+        }
+        if !seen.insert((c.from_group, c.from_index)) {
+            return Err(bad(format!(
+                "group {} index {} is changed twice",
+                c.from_group, c.from_index
+            )));
+        }
+    }
+    match table {
+        IndexTable::Monsters => {
+            let (t, rows) = load(realm, "Monsters", layout)?;
+            let (group, index) = (at(&rows, "Group")?, at(&rows, "Index")?);
+            Ok(collect(t, &rows, |row| {
+                let (g, i) = (num(&row[group]) as i64, num(&row[index]) as i64);
+                let Some(c) = changes
+                    .iter()
+                    .find(|c| c.from_group == g && c.from_index == i)
+                else {
+                    return Step::Out;
+                };
+                let mut new = row.to_vec();
+                new[group] = cell(&row[group], c.to_group as f64);
+                new[index] = cell(&row[index], c.to_index as f64);
+                Step::Row(new)
+            }))
+        }
+        IndexTable::Rooms => {
+            let (t, rows) = load(realm, "Rooms", layout)?;
+            let (group, min, max) = (
+                at(&rows, "Mon Type")?,
+                at(&rows, "Min Index")?,
+                at(&rows, "Max Index")?,
+            );
+            Ok(collect(t, &rows, |row| {
+                let g = num(&row[group]) as i64;
+                let (lo, hi) = (num(&row[min]) as i64, num(&row[max]) as i64);
+                let Some(c) = changes
+                    .iter()
+                    .find(|c| c.from_group == g && (lo..=hi).contains(&c.from_index))
+                else {
+                    return Step::Out;
+                };
+                let mut new = row.to_vec();
+                new[group] = cell(&row[group], c.to_group as f64);
+                new[min] = cell(&row[min], c.to_index as f64);
+                new[max] = cell(&row[max], (c.to_index + hi - lo) as f64);
+                Step::Row(new)
+            }))
+        }
     }
 }

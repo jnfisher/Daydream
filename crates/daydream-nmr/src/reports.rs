@@ -438,3 +438,75 @@ pub fn npc_rooms(realm: &Realm, layout: LayoutSet) -> Result<Vec<NpcRoom>, Repor
     });
     Ok(list)
 }
+
+/// A run of monster indexes in one group that rooms' Min-Max Index ranges cover.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct IndexRun {
+    pub group: i64,
+    pub from: i64,
+    pub to: i64,
+    /// The rooms (map, room) whose ranges fall in the run, at most 12.
+    pub rooms: Vec<(i64, i64)>,
+}
+
+/// The Monster Group/Index Changer's "List Indexes by Rooms": for each group, the indexes
+/// that rooms with a range (Min or Max Index above 0) cover, joined into runs of
+/// consecutive indexes, with the rooms in each.
+pub fn room_index_runs(realm: &Realm, layout: LayoutSet) -> Result<Vec<IndexRun>, ReportError> {
+    let rooms = Rows::load(realm, "Rooms", layout)?;
+    let (map, room, group, min, max) = (
+        rooms.at("Map Number")?,
+        rooms.at("Room Number")?,
+        rooms.at("Mon Type")?,
+        rooms.at("Min Index")?,
+        rooms.at("Max Index")?,
+    );
+    // group -> index -> rooms covering it
+    let mut cover: BTreeMap<i64, BTreeMap<i64, Vec<(i64, i64)>>> = BTreeMap::new();
+    for r in &rooms.0.rows {
+        let (lo, hi) = (n(&r[min]), n(&r[max]));
+        if lo <= 0 && hi <= 0 {
+            continue;
+        }
+        let at = (n(&r[map]), n(&r[room]));
+        // a room's range far past any real index is a data error: cap the walk
+        for i in lo.max(0)..=hi.min(lo.max(0) + 10_000) {
+            cover
+                .entry(n(&r[group]))
+                .or_default()
+                .entry(i)
+                .or_default()
+                .push(at);
+        }
+    }
+    let mut out: Vec<IndexRun> = Vec::new();
+    for (g, indexes) in cover {
+        for (i, rs) in indexes {
+            match out.last_mut() {
+                Some(run) if run.group == g && run.to + 1 == i => {
+                    run.to = i;
+                    for r in rs {
+                        if run.rooms.len() < 12 && !run.rooms.contains(&r) {
+                            run.rooms.push(r);
+                        }
+                    }
+                }
+                _ => {
+                    let mut list: Vec<(i64, i64)> = Vec::new();
+                    for r in rs {
+                        if list.len() < 12 && !list.contains(&r) {
+                            list.push(r);
+                        }
+                    }
+                    out.push(IndexRun {
+                        group: g,
+                        from: i,
+                        to: i,
+                        rooms: list,
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
+}

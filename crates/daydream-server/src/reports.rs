@@ -8,6 +8,7 @@
 //! | `GET /api/reports/monster-groups` | each monster group and index, and its monsters |
 //! | `GET /api/reports/npc-rooms` | each room's permanent NPC |
 //! | `GET /api/quests?file=default\|custom` | the realm folder's `NMR-Quests.txt` or `NMR-QuestsCustom.txt`, as text |
+//! | `GET /api/reports/room-indexes` | the monster index runs rooms' ranges cover, by group |
 //! | `GET /api/map?map=` | one map's rooms and exits, and the realm's maps (map 1 when none is given) |
 //!
 //! `rooms`, `shops` and `users` default to true.
@@ -110,6 +111,13 @@ pub(crate) async fn monster_groups(
 ) -> Result<Json<Value>, ApiError> {
     read(s, |realm, layout| {
         Ok(json!({ "groups": reports::monster_groups(realm, layout).map_err(failed)? }))
+    })
+    .await
+}
+
+pub(crate) async fn room_indexes(State(s): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
+    read(s, |realm, layout| {
+        Ok(json!({ "runs": reports::room_index_runs(realm, layout).map_err(failed)? }))
     })
     .await
 }

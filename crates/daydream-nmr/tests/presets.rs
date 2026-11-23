@@ -522,3 +522,91 @@ fn buffer_rooms_fill_the_gaps_and_go_again() {
     modify::apply(&realm, &plan, Dos).unwrap();
     assert_eq!(keys(&realm), [(1, 1), (1, 2), (1, 5), (2, 3)]);
 }
+
+#[test]
+fn monster_indexes_change_with_the_rooms_ranges() {
+    use crate::support::{empty_realm, l, put, t};
+    use daydream_nmr::presets::{IndexChange, IndexTable};
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let mon = |number, group, index| {
+        vec![
+            ("Number", l(number)),
+            ("Name", t("m")),
+            ("Group", l(group)),
+            ("Index", l(index)),
+        ]
+    };
+    let monsters = [mon(1, 2, 5), mon(2, 2, 6), mon(3, 2, 7), mon(4, 3, 5)];
+    let refs: Vec<&[(&str, Value)]> = monsters.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Monsters", &refs);
+    let room = |n, group, lo, hi| {
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(n)),
+            ("Mon Type", l(group)),
+            ("Min Index", l(lo)),
+            ("Max Index", l(hi)),
+        ]
+    };
+    let rooms = [
+        room(1, 2, 5, 6),
+        room(2, 2, 6, 7),
+        room(3, 3, 5, 5),
+        room(4, 2, 1, 2),
+    ];
+    let refs: Vec<&[(&str, Value)]> = rooms.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Rooms", &refs);
+
+    // group 2 indexes 5 to 7 become group 4 indexes 20 to 22
+    let changes: Vec<IndexChange> = (0..3)
+        .map(|i| IndexChange {
+            from_group: 2,
+            from_index: 5 + i,
+            to_group: 4,
+            to_index: 20 + i,
+        })
+        .collect();
+    for table in [IndexTable::Monsters, IndexTable::Rooms] {
+        let p = Preset::ChangeMonsterIndexes {
+            table,
+            changes: changes.clone(),
+        };
+        let plan = presets::plan(&realm, &p, Dos).unwrap();
+        modify::apply(&realm, &plan, Dos).unwrap();
+    }
+    let mons = table(&realm, "Monsters");
+    let (g, i) = (
+        mons.position("Group").unwrap(),
+        mons.position("Index").unwrap(),
+    );
+    let got: Vec<_> = mons.rows.iter().map(|r| (n(&r[g]), n(&r[i]))).collect();
+    assert_eq!(got, [(4.0, 20.0), (4.0, 21.0), (4.0, 22.0), (3.0, 5.0)]);
+    let rooms = table(&realm, "Rooms");
+    let (g, lo, hi) = (
+        rooms.position("Mon Type").unwrap(),
+        rooms.position("Min Index").unwrap(),
+        rooms.position("Max Index").unwrap(),
+    );
+    let got: Vec<_> = rooms
+        .rows
+        .iter()
+        .map(|r| (n(&r[g]), n(&r[lo]), n(&r[hi])))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (4.0, 20.0, 21.0),
+            (4.0, 21.0, 22.0),
+            (3.0, 5.0, 5.0),
+            (2.0, 1.0, 2.0)
+        ]
+    );
+
+    let twice = Preset::ChangeMonsterIndexes {
+        table: IndexTable::Monsters,
+        changes: vec![changes[0], changes[0]],
+    };
+    assert!(presets::plan(&realm, &twice, Dos).is_err());
+}
