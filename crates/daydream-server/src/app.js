@@ -289,6 +289,8 @@ var api = {
   realm: () => call("GET", "/api/realm"),
   tables: () => call("GET", "/api/tables").then((r) => r.tables),
   rows: (table) => call("GET", `${t(table)}/rows`),
+  /** Each row's key, title and the values of `columns`. */
+  rowsWith: (table, columns) => call("GET", `${t(table)}/rows?columns=${encodeURIComponent(columns.join(","))}`),
   row: (table, key) => call("GET", `${t(table)}/row${k(key)}`),
   save: (table, key, values) => call("PUT", `${t(table)}/row${k(key)}`, { values }),
   insert: (table, values) => call("POST", `${t(table)}/row`, { values }),
@@ -1808,16 +1810,16 @@ var GROUPS = [
 ];
 function massRoomEditor(rooms, post2, show2, changed2) {
   const textual = new Set(rooms.columns.filter((c) => c.type === "text" || c.type === "memo").map((c) => c.name));
-  const num2 = (value = "") => h4("input", { type: "text", inputmode: "numeric", class: "number", value });
+  const num3 = (value = "") => h4("input", { type: "text", inputmode: "numeric", class: "number", value });
   const card2 = h4("section", { class: "tool" }, h4("h2", {}, "Mass Room Editor"));
   card2.append(
     h4("p", { class: "hint" }, "Set the checked fields on every room of a map from one room to another. Take the values from a room, or type them. Item quantities are the count less one (0 for 1).")
   );
-  const map = num2("1");
-  const from = num2("1");
-  const to = num2("1");
-  const srcMap = num2("1");
-  const srcRoom = num2("1");
+  const map = num3("1");
+  const from = num3("1");
+  const to = num3("1");
+  const srcMap = num3("1");
+  const srcRoom = num3("1");
   const take = h4("button", { type: "button" }, "Take Values");
   card2.append(
     h4("div", { class: "toolbar" }, h4("label", {}, "Map ", map), h4("label", {}, "From: ", from), h4("label", {}, "To: ", to)),
@@ -2373,10 +2375,10 @@ function rangeOf(r) {
 function rangeRow(table, withUse) {
   const use = input({ type: "checkbox", checked: "" });
   const all = input({ type: "checkbox", checked: "" });
-  const num2 = () => input({ type: "text", inputmode: "numeric", class: "number", disabled: "" });
-  const map = table === "Rooms" ? num2() : null;
-  const from = num2();
-  const to = num2();
+  const num3 = () => input({ type: "text", inputmode: "numeric", class: "number", disabled: "" });
+  const map = table === "Rooms" ? num3() : null;
+  const from = num3();
+  const to = num3();
   if (table === "Actions") all.disabled = true;
   all.addEventListener("change", () => {
     for (const i of [map, from, to]) if (i) i.disabled = all.checked;
@@ -3083,6 +3085,192 @@ function importUser(text, o) {
   }
   return out;
 }
+var PASTE_CHAR = /[a-z()\-_,: '".`0-9]/i;
+var EQUIP = {
+  HEAD: 0,
+  EARS: 1,
+  NECK: 2,
+  BACK: 3,
+  TORSO: 4,
+  ARMS: 5,
+  WRIST: 6,
+  WAIST: 7,
+  HANDS: 8,
+  FINGER: 9,
+  LEGS: 11,
+  FEET: 12,
+  WORN: 13,
+  "OFF-HAND": 14,
+  WEAPONHAND: 15,
+  TWOHANDED: 15
+};
+var COINS = [
+  ["platinumpieces", "Platinum"],
+  ["goldcrowns", "Gold"],
+  ["silvernobles", "Silver"],
+  ["copperfarthings", "Copper"]
+];
+function parseInventory(text) {
+  const out = { items: [], equipped: Array(16).fill(""), coins: {} };
+  let t2 = "";
+  let amount = "";
+  let paren = -1;
+  const store = () => {
+    const rest = t2.slice(amount.length);
+    const coin = COINS.find(([c]) => c === rest);
+    if (coin) out.coins[coin[1]] = amount;
+    else if (rest.startsWith("runiccoin")) out.coins["Runic"] = amount;
+    else if (amount !== "" && t2 !== "") out.items.push({ name: rest, amount });
+    else out.items.push({ name: t2, amount: "" });
+    clear();
+  };
+  const clear = () => {
+    t2 = "";
+    amount = "";
+    paren = -1;
+  };
+  for (let p = 0; p < text.length; p++) {
+    const c = text[p];
+    if (!PASTE_CHAR.test(c)) continue;
+    t2 = (t2 + c).replace(/ /g, "");
+    const marker = ["isequippedwith:", "arecarrying", "followingkeys:", "wealth:"].find((m) => t2.toLowerCase().includes(m));
+    if (marker) {
+      t2 = t2.slice(0, t2.length - marker.length);
+      store();
+      continue;
+    }
+    if (/[0-9]/.test(c) && t2.length === amount.length + 1) amount += c;
+    if (c === "," || c === ".") {
+      t2 = t2.slice(0, -1);
+      store();
+      continue;
+    }
+    if (c === "(") paren = t2.length;
+    else if (c === ")") {
+      if (paren >= 0) {
+        const place = EQUIP[t2.slice(paren, t2.length - 1).toUpperCase()];
+        const name = t2.slice(0, paren - 1);
+        if (place === 9 && out.equipped[9] !== "") out.equipped[10] = name;
+        else if (place !== void 0) out.equipped[place] = name;
+      }
+      clear();
+      continue;
+    }
+    if (p === text.length - 1) store();
+  }
+  return out;
+}
+var num2 = (v, c) => Number(v[c] ?? 0) || 0;
+function placeInventory(p, items, current, clear) {
+  const item = range(100).map((i) => num2(current, `Item ${i}`));
+  const itemUses = range(100).map((i) => num2(current, `Item ${i} Uses`));
+  const key = range(50).map((i) => num2(current, `Key ${i}`));
+  const keyUses = range(50).map((i) => num2(current, `Key ${i} Uses`));
+  let worn = range(20).map((i) => num2(current, `Worn ${i}`));
+  let weapon = num2(current, "Weapon");
+  const equipped = [...p.equipped];
+  if (clear) {
+    item.fill(0), itemUses.fill(-1), key.fill(0), keyUses.fill(-2);
+    worn = worn.map(() => 0);
+    weapon = 0;
+  } else if (equipped.some((e) => e !== "")) {
+    worn = worn.map(() => 0);
+    weapon = 0;
+  }
+  const names2 = p.items.map((i) => i.name);
+  const found = names2.map(() => ["", []]);
+  let curItem = 0;
+  let curKey = 0;
+  let curWorn = 0;
+  const addItem = (it) => {
+    while (curItem < 100 && item[curItem] !== 0) curItem++;
+    if (curItem >= 100) return;
+    item[curItem] = it.number;
+    if ((it.uses ?? 0) > 0) itemUses[curItem] = it.uses;
+    curItem++;
+  };
+  for (const it of items) {
+    const name = it.name.split("\0")[0].replace(/ /g, "");
+    if (name === "") continue;
+    equipped.forEach((e, x) => {
+      if (e !== name) return;
+      if (x === 15) weapon = it.number;
+      else if (curWorn < 20) worn[curWorn++] = it.number;
+      addItem(it);
+      equipped[x] = "";
+    });
+    names2.forEach((n, x) => {
+      if (n !== name) return;
+      const times = Math.max(1, Math.trunc(Number(p.items[x].amount) || 0));
+      for (let y = 0; y < times; y++) {
+        if (it.type === 7) {
+          while (curKey < 50 && key[curKey] !== 0) curKey++;
+          if (curKey < 50) {
+            key[curKey] = it.number;
+            keyUses[curKey] = it.uses ?? 0;
+            curKey++;
+          }
+        } else addItem(it);
+      }
+      found[x] = [name, [it.number]];
+      names2[x] = "";
+    });
+    const dup = found.find(([n, nums]) => n === name && nums[0] !== it.number);
+    if (dup) dup[1].push(it.number);
+  }
+  const values = {};
+  range(100).forEach((i) => (values[`Item ${i}`] = String(item[i]), values[`Item ${i} Uses`] = String(itemUses[i])));
+  range(50).forEach((i) => (values[`Key ${i}`] = String(key[i]), values[`Key ${i} Uses`] = String(keyUses[i])));
+  range(20).forEach((i) => values[`Worn ${i}`] = String(worn[i]));
+  values["Weapon"] = String(weapon);
+  const has = (n) => item.includes(n);
+  range(20).forEach((i) => worn[i] > 0 && !has(worn[i]) && (values[`Worn ${i}`] = "0"));
+  if (weapon > 0 && !has(weapon)) values["Weapon"] = "0";
+  Object.assign(values, p.coins);
+  const ambiguous = found.filter(([, nums]) => nums.length > 1).map(([name, numbers]) => ({ name, numbers }));
+  return { values, ambiguous };
+}
+function chooseItem(values, from, to) {
+  for (const i of range(100)) if (values[`Item ${i}`] === String(from)) values[`Item ${i}`] = String(to.number), values[`Item ${i} Uses`] = String(to.uses ?? 0);
+  for (const i of range(50)) if (values[`Key ${i}`] === String(from)) values[`Key ${i}`] = String(to.number), values[`Key ${i} Uses`] = String(to.uses ?? 0);
+  for (const i of range(20)) if (values[`Worn ${i}`] === String(from)) values[`Worn ${i}`] = String(to.number);
+  if (values["Weapon"] === String(from)) values["Weapon"] = String(to.number);
+}
+function parseSpellbook(text) {
+  const out = [];
+  for (let line of text.split(/\r|\n/)) {
+    for (const h9 of ["you have the following spells:", "level mana short spell name"]) {
+      const at = line.toLowerCase().lastIndexOf(h9);
+      if (at >= 0) line = line.slice(at + h9.length);
+    }
+    if (line.length > 17) out.push(line.slice(17));
+  }
+  return out;
+}
+function placeSpells(names2, spells, current, clear) {
+  const book = range(100).map((i) => clear ? 0 : num2(current, `Spellbook ${i}`));
+  const want = [...names2];
+  const found = want.map(() => ["", []]);
+  let cur = 0;
+  for (const s of spells) {
+    const name = s.name.split("\0")[0];
+    if (name === "") continue;
+    want.forEach((n, x) => {
+      if (n !== name) return;
+      while (cur < 100 && book[cur] !== 0) cur++;
+      if (cur >= 100) return;
+      book[cur++] = s.number;
+      found[x] = [name, [s.number]];
+      want[x] = "";
+    });
+    const dup = found.find(([n, nums]) => n === name && nums[0] !== s.number);
+    if (dup) dup[1].push(s.number);
+  }
+  const values = {};
+  range(100).forEach((i) => values[`Spellbook ${i}`] = String(book[i]));
+  const ambiguous = found.filter(([, nums]) => nums.length > 1).map(([name, numbers]) => ({ name, numbers }));
+  return { values, ambiguous };
+}
 
 // src/main.ts
 var ORDER = ["Items", "Monsters", "Spells", "Classes", "Races", "Shops", "Rooms", "Messages", "Textblocks", "Actions", "Users", "BankBooks", "Gangs"];
@@ -3410,6 +3598,8 @@ function toolbar(t2) {
   if (state.row && t2.name === "Users") {
     button("Revive", "NMR's Revive Character: HP and Mana to full, then lives, spells cast and where to move them", () => void revive());
     button("Paste Stats", "NMR's Paste Character: read a capture of the game's stat output into the fields", () => void pasteStats());
+    button("Paste Items", "NMR's Paste Items/Keys/Worn/$$: read a capture of the game's inventory into the lists", () => void pasteItems());
+    button("Paste Spells", "NMR's Paste Spellbook: read a capture of the game's spellbook into the spellbook", () => void pasteSpells());
     button("Export", "NMR's character export: copy this user as text", () => void exportCharacter());
     button("Import", "NMR's character import: fill this user from exported text", () => void importCharacter());
   }
@@ -3529,6 +3719,76 @@ async function pasteStats() {
     for (const [n, title] of await names(table)) if (title === name) values[col] = String(n);
   }
   fillFields(values, "Paste Stats");
+}
+async function named(table) {
+  const cols = table === "Items" ? ["Number", "Name", "Type", "Uses"] : ["Number", "Name"];
+  const { rows } = await api.rowsWith(table, cols);
+  return rows.map(([, , [n, name, type, uses]]) => ({ number: Number(n), name: String(name ?? ""), type: Number(type ?? 0), uses: Number(uses ?? 0) })).sort((a, b) => a.number - b.number);
+}
+async function chooseAmong(ambiguous, records, what) {
+  const chosen = /* @__PURE__ */ new Map();
+  if (!ambiguous.length) return chosen;
+  const byNumber = new Map(records.map((r) => [r.number, r]));
+  const selects = ambiguous.map((a) => {
+    const sel = h8("select", {}, ...a.numbers.map((n) => h8("option", { value: String(n) }, `${n}  ${byNumber.get(n)?.name ?? ""}`)));
+    return [a, sel];
+  });
+  const form = h8(
+    "form",
+    { method: "dialog" },
+    h8("p", {}, `More than one ${what} has these names. Which is it?`),
+    ...selects.map(([a, sel]) => h8("label", { class: "choose" }, `${a.name} `, sel)),
+    h8("div", { class: "toolbar" }, h8("button", { type: "submit", value: "OK", class: "primary" }, "OK"), h8("button", { type: "submit", value: "Cancel" }, "Cancel"))
+  );
+  const dialog = h8("dialog", { class: "paste-dialog" }, form);
+  document.body.append(dialog);
+  dialog.showModal();
+  const answer = await new Promise((done) => dialog.addEventListener("close", () => done(dialog.returnValue), { once: true }));
+  dialog.remove();
+  if (answer !== "OK") return null;
+  for (const [a, sel] of selects) chosen.set(a.numbers[0], byNumber.get(Number(sel.value)));
+  return chosen;
+}
+function onlyChanged(values) {
+  return Object.fromEntries(Object.entries(values).filter(([c, v]) => state.edits.get(c) !== v));
+}
+function currentValues() {
+  return Object.fromEntries(state.edits);
+}
+async function pasteItems() {
+  const text = textBox("Inventory capture");
+  try {
+    text.value = await navigator.clipboard.readText();
+  } catch {
+  }
+  const intro = "Paste a capture of the game's inventory (i). Items, keys, worn items and coins are read. Clear First empties the items, keys and worn lists; Add puts what is found after what is there (the worn list is replaced either way when the capture names places).";
+  const answer = await textDialog(intro, text, ["Clear First", "Add", "Cancel"]);
+  if (answer !== "Clear First" && answer !== "Add" || text.value.length < 10) return;
+  const items = await named("Items");
+  const { values, ambiguous } = placeInventory(parseInventory(text.value), items, currentValues(), answer === "Clear First");
+  const chosen = await chooseAmong(ambiguous, items, "item");
+  if (!chosen) return;
+  for (const [from, to] of chosen) if (from !== to.number) chooseItem(values, from, to);
+  fillFields(onlyChanged(values), "Paste Items");
+}
+async function pasteSpells() {
+  const text = textBox("Spellbook capture");
+  try {
+    text.value = await navigator.clipboard.readText();
+  } catch {
+  }
+  const intro = "Paste a capture of the game's spellbook (spells). Clear First empties the spellbook; Add puts what is found after what is there.";
+  const answer = await textDialog(intro, text, ["Clear First", "Add", "Cancel"]);
+  if (answer !== "Clear First" && answer !== "Add" || text.value.length < 10) return;
+  const spells = await named("Spells");
+  const { values, ambiguous } = placeSpells(parseSpellbook(text.value), spells, currentValues(), answer === "Clear First");
+  const chosen = await chooseAmong(ambiguous, spells, "spell");
+  if (!chosen) return;
+  for (const [from, to] of chosen) {
+    if (from === to.number) continue;
+    for (const [c, v] of Object.entries(values)) if (v === String(from)) values[c] = String(to.number);
+  }
+  fillFields(onlyChanged(values), "Paste Spells");
 }
 async function exportCharacter() {
   if (!state.row) return;

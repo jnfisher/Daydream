@@ -9,7 +9,20 @@ import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './l
 import { listsPage } from './lists';
 import { mapPage } from './map';
 import { toolsPage } from './tools';
-import { exportUser, IMPORT_DEFAULTS, importUser, parseStats, type ImportOptions } from './users';
+import {
+  type Ambiguous,
+  chooseItem,
+  exportUser,
+  IMPORT_DEFAULTS,
+  importUser,
+  type ImportOptions,
+  type Named,
+  parseInventory,
+  parseSpellbook,
+  parseStats,
+  placeInventory,
+  placeSpells,
+} from './users';
 
 /** The editors' tables, in NMR's menu order. */
 const ORDER = ['Items', 'Monsters', 'Spells', 'Classes', 'Races', 'Shops', 'Rooms', 'Messages', 'Textblocks', 'Actions', 'Users', 'BankBooks', 'Gangs'];
@@ -396,6 +409,8 @@ function toolbar(t: TableInfo): HTMLElement {
   if (state.row && t.name === 'Users') {
     button('Revive', 'NMR\'s Revive Character: HP and Mana to full, then lives, spells cast and where to move them', () => void revive());
     button('Paste Stats', 'NMR\'s Paste Character: read a capture of the game\'s stat output into the fields', () => void pasteStats());
+    button('Paste Items', 'NMR\'s Paste Items/Keys/Worn/$$: read a capture of the game\'s inventory into the lists', () => void pasteItems());
+    button('Paste Spells', 'NMR\'s Paste Spellbook: read a capture of the game\'s spellbook into the spellbook', () => void pasteSpells());
     button('Export', 'NMR\'s character export: copy this user as text', () => void exportCharacter());
     button('Import', 'NMR\'s character import: fill this user from exported text', () => void importCharacter());
   }
@@ -529,6 +544,94 @@ async function pasteStats() {
     for (const [n, title] of await names(table)) if (title === name) values[col] = String(n);
   }
   fillFields(values, 'Paste Stats');
+}
+
+/** Items or spells as the pastes match them, in file order. */
+async function named(table: 'Items' | 'Spells'): Promise<Named[]> {
+  const cols = table === 'Items' ? ['Number', 'Name', 'Type', 'Uses'] : ['Number', 'Name'];
+  const { rows } = await api.rowsWith(table, cols);
+  return rows
+    .map(([, , [n, name, type, uses]]) => ({ number: Number(n), name: String(name ?? ''), type: Number(type ?? 0), uses: Number(uses ?? 0) }))
+    .sort((a, b) => a.number - b.number);
+}
+
+/** NMR's question when one name matched several records: which one. Answers the chosen
+ *  record for each name, or null when cancelled. */
+async function chooseAmong(ambiguous: Ambiguous[], records: Named[], what: string): Promise<Map<number, Named> | null> {
+  const chosen = new Map<number, Named>();
+  if (!ambiguous.length) return chosen;
+  const byNumber = new Map(records.map((r) => [r.number, r]));
+  const selects = ambiguous.map((a) => {
+    const sel = h('select', {}, ...a.numbers.map((n) => h('option', { value: String(n) }, `${n}  ${byNumber.get(n)?.name ?? ''}`)));
+    return [a, sel] as const;
+  });
+  const form = h(
+    'form',
+    { method: 'dialog' },
+    h('p', {}, `More than one ${what} has these names. Which is it?`),
+    ...selects.map(([a, sel]) => h('label', { class: 'choose' }, `${a.name} `, sel)),
+    h('div', { class: 'toolbar' }, h('button', { type: 'submit', value: 'OK', class: 'primary' }, 'OK'), h('button', { type: 'submit', value: 'Cancel' }, 'Cancel')),
+  );
+  const dialog = h('dialog', { class: 'paste-dialog' }, form);
+  document.body.append(dialog);
+  dialog.showModal();
+  const answer = await new Promise<string>((done) => dialog.addEventListener('close', () => done(dialog.returnValue), { once: true }));
+  dialog.remove();
+  if (answer !== 'OK') return null;
+  for (const [a, sel] of selects) chosen.set(a.numbers[0]!, byNumber.get(Number(sel.value))!);
+  return chosen;
+}
+
+/** The values that differ from the editor's. */
+function onlyChanged(values: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(values).filter(([c, v]) => state.edits.get(c) !== v));
+}
+
+/** The record's values as the editor has them, edits included. */
+function currentValues(): Record<string, string> {
+  return Object.fromEntries(state.edits);
+}
+
+/** NMR's Paste Items/Keys/Worn/$$: the capture goes into the lists, to be saved. */
+async function pasteItems() {
+  const text = textBox('Inventory capture');
+  try {
+    text.value = await navigator.clipboard.readText();
+  } catch {
+    // paste by hand
+  }
+  const intro =
+    "Paste a capture of the game's inventory (i). Items, keys, worn items and coins are read. Clear First empties the items, keys and worn lists; Add puts what is found after what is there (the worn list is replaced either way when the capture names places).";
+  const answer = await textDialog(intro, text, ['Clear First', 'Add', 'Cancel']);
+  if ((answer !== 'Clear First' && answer !== 'Add') || text.value.length < 10) return;
+  const items = await named('Items');
+  const { values, ambiguous } = placeInventory(parseInventory(text.value), items, currentValues(), answer === 'Clear First');
+  const chosen = await chooseAmong(ambiguous, items, 'item');
+  if (!chosen) return;
+  for (const [from, to] of chosen) if (from !== to.number) chooseItem(values, from, to);
+  fillFields(onlyChanged(values), 'Paste Items');
+}
+
+/** NMR's Paste Spellbook: the capture goes into the spellbook, to be saved. */
+async function pasteSpells() {
+  const text = textBox('Spellbook capture');
+  try {
+    text.value = await navigator.clipboard.readText();
+  } catch {
+    // paste by hand
+  }
+  const intro = "Paste a capture of the game's spellbook (spells). Clear First empties the spellbook; Add puts what is found after what is there.";
+  const answer = await textDialog(intro, text, ['Clear First', 'Add', 'Cancel']);
+  if ((answer !== 'Clear First' && answer !== 'Add') || text.value.length < 10) return;
+  const spells = await named('Spells');
+  const { values, ambiguous } = placeSpells(parseSpellbook(text.value), spells, currentValues(), answer === 'Clear First');
+  const chosen = await chooseAmong(ambiguous, spells, 'spell');
+  if (!chosen) return;
+  for (const [from, to] of chosen) {
+    if (from === to.number) continue;
+    for (const [c, v] of Object.entries(values)) if (v === String(from)) values[c] = String(to.number);
+  }
+  fillFields(onlyChanged(values), 'Paste Spells');
 }
 
 /** NMR's user Export: the saved record as NMR's Key:value text, copied to the clipboard. */

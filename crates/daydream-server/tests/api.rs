@@ -198,6 +198,14 @@ async fn rows_list_their_keys_and_titles() {
         body["rows"],
         serde_json::json!([[[1], "Human"], [[2], "Dwarf"]])
     );
+    let (status, body) = get(dir.path(), "/api/tables/races/rows?columns=Name,Number").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["rows"][1],
+        serde_json::json!([[2], "Dwarf", ["Dwarf", 2]])
+    );
+    let (status, _) = get(dir.path(), "/api/tables/races/rows?columns=Nope").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = get(
         dir.path(),
         &format!("/api/tables/Races/row?key={}", key(serde_json::json!([2]))),

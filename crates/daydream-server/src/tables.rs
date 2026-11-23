@@ -14,7 +14,7 @@
 //! | Route | Answer |
 //! |---|---|
 //! | `GET /api/tables` | every table: name, index columns, columns with type and size |
-//! | `GET /api/tables/{table}/rows` | every row's key and title (`Name`, `Line 1`, ...) |
+//! | `GET /api/tables/{table}/rows?columns=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked |
 //! | `GET /api/tables/{table}/row?key=[...]` | one row: `{key, values: {column: value}}` |
 //! | `PUT /api/tables/{table}/row?key=[...]` | `{values}` over the row; the import's report |
 //! | `POST /api/tables/{table}/row` | `{values}` as a new row; the import's report |
@@ -303,21 +303,48 @@ pub(crate) async fn tables() -> Json<Value> {
     Json(json!({ "tables": tables }))
 }
 
+/// `?columns=`: more columns for each row of a row list, comma separated.
+#[derive(Debug, Default, Deserialize)]
+pub struct RowsQuery {
+    columns: Option<String>,
+}
+
 pub(crate) async fn rows(
     State(s): State<Arc<AppState>>,
     UrlPath(table): UrlPath<String>,
+    Query(q): Query<RowsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
         let t = record_table(&table)?;
         let (_, _, rows) = load(&s, t)?;
         let index = index_columns(t);
         let title = TITLE_COLUMNS.iter().find_map(|c| rows.position(c));
+        let more: Vec<usize> = q
+            .columns
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .filter(|c| !c.is_empty())
+            .map(|c| {
+                rows.position(c)
+                    .ok_or_else(|| bad(format!("{} has no column {c}", t.name)))
+            })
+            .collect::<Result<_, _>>()?;
         let list: Vec<Value> = rows
             .rows
             .iter()
             .map(|r| {
                 let key: Vec<Value> = key_of_row(&rows, r, &index).iter().map(cell_json).collect();
-                json!([key, title.map(|i| title_json(&r[i]))])
+                let title = title.map(|i| title_json(&r[i]));
+                if more.is_empty() {
+                    json!([key, title])
+                } else {
+                    json!([
+                        key,
+                        title,
+                        more.iter().map(|&i| cell_json(&r[i])).collect::<Vec<_>>()
+                    ])
+                }
             })
             .collect();
         Ok(Json(json!({ "table": t.name, "key": index, "rows": list })))

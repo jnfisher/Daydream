@@ -73,6 +73,9 @@ export const api = {
   realm: () => call<{ dir: string }>('GET', '/api/realm'),
   tables: () => call<{ tables: TableInfo[] }>('GET', '/api/tables').then((r) => r.tables),
   rows: (table: string) => call<RowList>('GET', `${t(table)}/rows`),
+  /** Each row's key, title and the values of `columns`. */
+  rowsWith: (table: string, columns: string[]) =>
+    call<{ rows: [Cell[], Cell, Cell[]][] }>('GET', `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}`),
   row: (table: string, key: Cell[]) => call<Row>('GET', `${t(table)}/row${k(key)}`),
   save: (table: string, key: Cell[], values: Record<string, Cell>) =>
     call<Report>('PUT', `${t(table)}/row${k(key)}`, { values }),
