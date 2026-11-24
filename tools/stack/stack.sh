@@ -249,6 +249,9 @@ svc_start() {
     if [ "$OS" = Darwin ]; then
         launchctl bootout "gui/$UID/$(label "$1")" 2>/dev/null || true
         launchctl bootstrap "gui/$UID" "$AGENTS/$(label "$1").plist"
+        # launchd may hold a RunAtLoad job as a "speculative" spawn and start it later, or not at
+        # all: start it now
+        launchctl kickstart "gui/$UID/$(label "$1")"
     else
         systemctl --user enable --quiet "$(unit "$1")"
         systemctl --user restart "$(unit "$1")"
