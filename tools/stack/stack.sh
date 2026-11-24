@@ -650,6 +650,17 @@ install_self() {
     fi
 }
 
+# Run from a checkout (bash tools/stack/stack.sh), the checkout's script replaces the installed one
+# replaces it, so `daydream-stack` is never behind a `git pull`.
+refresh_self() {
+    [ -f "$SELF" ] && [ -f "$0" ] || return 0
+    [ "$(abspath "$0")" != "$(abspath "$SELF")" ] || return 0
+    cmp -s "$0" "$SELF" && return 0
+    install -m 755 "$0" "$SELF.new" && mv -f "$SELF.new" "$SELF" &&
+        note "updated $SELF from $(abspath "$0")"
+    return 0
+}
+
 update() {
     local c=${1:-all} v="" back=0
     shift || true
@@ -712,6 +723,7 @@ each() {
     esac
 }
 
+refresh_self
 cmd=${1:-help}
 shift || true
 case "$cmd" in
