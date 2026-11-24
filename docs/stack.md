@@ -42,10 +42,10 @@ Daydream writes only while silvermere is stopped:
 |---|---|
 | `init` | Everything above, then prints the addresses and the login. Safe to run again. |
 | `up [silvermere\|daydream]`, `down [...]` | Start or stop the services (both, or one). |
-| `connect` | Open SyncTERM on the `daydream-stack` entry. |
+| `connect` | Open SyncTERM on the `daydream-stack` entry (telnet in this terminal without SyncTERM). |
 | `edit`, `play` | Stop silvermere for an edit; start it again and reconnect. |
 | `seed` | Make the test character again from the settings (stops silvermere for it). |
-| `update [silvermere\|daydream\|syncterm] [--version V \| --rollback]` | The newest (or given) release, checked against its `SHA256SUMS`; silvermere's database is backed up first. SyncTERM through Homebrew or apt. |
+| `update [silvermere\|daydream\|syncterm] [--version V \| --rollback]` | The newest (or given) release, checked against its `SHA256SUMS`; silvermere's database is backed up first. SyncTERM through apt (on macOS, by hand). |
 | `reset` | Back up, then the stock world again and a fresh character. |
 | `status` | Versions, running state, addresses and the login. |
 | `logs silvermere\|daydream` | Follow a log. |
@@ -83,8 +83,11 @@ The file's checksum is checked before it is used, and the path is saved in `stac
 
 ## SyncTERM
 
-`init` installs it with Homebrew (`brew install --cask syncterm`) on macOS or apt on Linux, and
-otherwise points at [syncterm.bbsdev.net](https://syncterm.bbsdev.net/). The entry goes into
+`init` installs it with apt on Linux. Homebrew disabled its SyncTERM cask in September 2026
+(the app does not pass Gatekeeper), so on macOS get it from
+[syncterm.bbsdev.net](https://syncterm.bbsdev.net/), move it to Applications and open it once
+with right-click > Open. Without SyncTERM, `connect` and `play` run `telnet` in the current
+terminal instead (`brew install telnet` on macOS). The entry goes into
 SyncTERM's dialing directory (`~/.syncterm/syncterm.lst` on Linux,
 `~/Library/Preferences/SyncTERM/syncterm.lst` on macOS); other entries are kept. Should
 SyncTERM stop at `Username:` instead of logging in, type the login `daydream-stack status`
