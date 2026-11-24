@@ -490,9 +490,13 @@ syncterm_found() {
 
 install_syncterm() {
     if syncterm_found; then note "SyncTERM is installed"; return 0; fi
-    if [ "$OS" = Darwin ] && command -v brew >/dev/null; then
-        note "installing SyncTERM with Homebrew"
-        brew install --cask syncterm && return 0
+    if [ "$OS" = Darwin ]; then
+        # Homebrew disabled its cask (2026-09-01: SyncTERM does not pass Gatekeeper)
+        note "SyncTERM is not installed. Get the macOS build from https://syncterm.bbsdev.net/,"
+        note "move it to Applications, run 'xattr -dr com.apple.quarantine /Applications/SyncTERM.app'"
+        note "(Gatekeeper will not open it otherwise), then 'daydream-stack connect'."
+        note "Until then 'daydream-stack connect' plays in this terminal with telnet (brew install telnet)."
+        return 1
     elif command -v apt-get >/dev/null; then
         note "installing SyncTERM with apt (asks for sudo)"
         sudo apt-get install -y syncterm && return 0
@@ -530,11 +534,21 @@ LST
 }
 
 connect() {
-    syncterm_found || die "SyncTERM is not installed: https://syncterm.bbsdev.net/ (or rerun init)"
     port_open "$TELNET_PORT" || die "silvermere is not running: daydream-stack up"
     if [ -n "${STACK_CLIENT_CMD:-}" ]; then
         sh -c "$STACK_CLIENT_CMD" &
-    elif [ "$OS" = Darwin ] && ! command -v syncterm >/dev/null; then
+        return 0
+    elif ! syncterm_found; then
+        # no SyncTERM: play in this terminal
+        command -v telnet >/dev/null ||
+            die "SyncTERM is not installed (https://syncterm.bbsdev.net/), and neither is telnet (brew install telnet, or apt install telnet)"
+        note "no SyncTERM: telnet in this terminal. Log in as $USER_NAME / ${STACK_PASSWORD:-?}; Ctrl-] then 'quit' leaves."
+        telnet 127.0.0.1 "$TELNET_PORT" || true
+        return 0
+    fi
+    # SyncTERM may have been installed after init: make sure our entry is there
+    write_syncterm_entry
+    if [ "$OS" = Darwin ] && ! command -v syncterm >/dev/null; then
         open -a SyncTERM --args "$ENTRY"
     else
         nohup syncterm "$ENTRY" >/dev/null 2>&1 &
@@ -666,9 +680,7 @@ update() {
         ;;
     syncterm)
         say "SyncTERM"
-        if [ "$OS" = Darwin ] && command -v brew >/dev/null; then
-            brew upgrade --cask syncterm || true
-        elif command -v apt-get >/dev/null; then
+        if [ "$OS" != Darwin ] && command -v apt-get >/dev/null; then
             sudo apt-get install --only-upgrade -y syncterm || true
         else
             note "update SyncTERM from https://syncterm.bbsdev.net/"
