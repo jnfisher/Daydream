@@ -58,8 +58,8 @@ fi
 # Stock 1.11p items a Warrior can use, none of them limited: the best armour for each place,
 # a one-handed hammer and a shield. An item the class cannot use is carried, not worn, and
 # `seed` says so.
-# Checked against the stock 1.11p world: every piece is worn or wielded by a Human Warrior,
-# and with the gold the pack is at 4201 of 4800.
+# Checked against the stock 1.11p world: every piece is worn or wielded by a Dwarf Warrior,
+# and with the gold the pack is at 4201 of 6768.
 DEFAULT_ITEMS="stormhammer;aegis shield;mithril chainmail hauberk;starsteel greathelm;starsteel plate gauntlets;starsteel plate boots;starsteel plate leggings;stormmetal bracers;hero's tabard;glowing red amulet;belt of the crimson flame;sapphire ring;moonstone ring"
 
 HOME_DIR=${DAYDREAM_STACK_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/daydream-stack}
@@ -70,7 +70,7 @@ ADMIN_PORT=${STACK_ADMIN_PORT:-8081}
 DD_PORT=${STACK_DAYDREAM_PORT:-7350}
 USER_NAME=${STACK_USER:-tester}
 CHAR_NAME=${STACK_NAME:-Tester}
-RACE=${STACK_RACE:-Human}
+RACE=${STACK_RACE:-Dwarf}  # a Dwarf sees in the dark
 CLASS=${STACK_CLASS:-Warrior}
 LEVEL=${STACK_LEVEL:-70}
 GOLD=${STACK_GOLD:-500}  # coins weigh: three to a unit

@@ -7,7 +7,7 @@ macOS machine:
   the stock MajorMUD 1.11p world;
 - a **test character**: the account `tester` (a sysop with the `DEBUG` permission, so the
   developer commands such as `SYSOP EXPRESS_TRAIN` and `SYSOP SUMMON` work) and its level 70
-  Human Warrior, every stat at the race's maximum, wearing the best stock armour a Warrior
+  Dwarf Warrior (a Dwarf sees in the dark), every stat at the race's maximum, wearing the best stock armour a Warrior
   can use, made with `silvermere character create` (silvermere 1.0.2 or later);
 - **Daydream**, from its newest release (built from source while it has none), on
   `http://127.0.0.1:7350/`, finding that silvermere game;
@@ -59,7 +59,7 @@ Put them in `stack.env` or the environment, then run `init` (or `seed` for the c
 |---|---|
 | `STACK_TELNET_PORT`, `STACK_ADMIN_PORT`, `STACK_DAYDREAM_PORT` | 2323, 8081, 7350 |
 | `STACK_USER`, `STACK_PASSWORD` | `tester`, a random password |
-| `STACK_NAME`, `STACK_RACE`, `STACK_CLASS`, `STACK_LEVEL`, `STACK_GOLD` | Tester, Human, Warrior, 70, 500 (coins weigh, so more than the pack can take is refused) |
+| `STACK_NAME`, `STACK_RACE`, `STACK_CLASS`, `STACK_LEVEL`, `STACK_GOLD` | Tester, Dwarf (night vision), Warrior, 70, 500 (coins weigh, so more than the pack can take is refused) |
 | `STACK_ITEMS` | stock items separated by `;` (stormhammer, aegis shield, mithril chainmail hauberk, starsteel greathelm, ...) |
 | `STACK_CLIENT_CMD` | a command to run in place of SyncTERM |
 | `STACK_SILVERMERE_BIN` | a silvermere binary to use in place of the release (a build not yet released) |
