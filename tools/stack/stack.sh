@@ -493,7 +493,8 @@ install_syncterm() {
     if [ "$OS" = Darwin ]; then
         # Homebrew disabled its cask (2026-09-01: SyncTERM does not pass Gatekeeper)
         note "SyncTERM is not installed. Get the macOS build from https://syncterm.bbsdev.net/,"
-        note "move it to Applications, open it once with right-click > Open, then 'daydream-stack connect'."
+        note "move it to Applications, run 'xattr -dr com.apple.quarantine /Applications/SyncTERM.app'"
+        note "(Gatekeeper will not open it otherwise), then 'daydream-stack connect'."
         note "Until then 'daydream-stack connect' plays in this terminal with telnet (brew install telnet)."
         return 1
     elif command -v apt-get >/dev/null; then

@@ -85,8 +85,9 @@ The file's checksum is checked before it is used, and the path is saved in `stac
 
 `init` installs it with apt on Linux. Homebrew disabled its SyncTERM cask in September 2026
 (the app does not pass Gatekeeper), so on macOS get it from
-[syncterm.bbsdev.net](https://syncterm.bbsdev.net/), move it to Applications and open it once
-with right-click > Open. Without SyncTERM, `connect` and `play` run `telnet` in the current
+[syncterm.bbsdev.net](https://syncterm.bbsdev.net/), move it to Applications and clear
+the download flag Gatekeeper refuses it for (`xattr -dr com.apple.quarantine /Applications/SyncTERM.app`;
+"Open Anyway" in Privacy & Security is not always enough). Without SyncTERM, `connect` and `play` run `telnet` in the current
 terminal instead (`brew install telnet` on macOS). The entry goes into
 SyncTERM's dialing directory (`~/.syncterm/syncterm.lst` on Linux,
 `~/Library/Preferences/SyncTERM/syncterm.lst` on macOS); other entries are kept. Should
