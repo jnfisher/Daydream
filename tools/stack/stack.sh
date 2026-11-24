@@ -201,6 +201,8 @@ svc_write() {
                 echo "        <key>$(xesc "${kv%%=*}")</key><string>$(xesc "${kv#*=}")</string>"
             done <<< "$env"
             echo '    </dict>'
+            # without RunAtLoad, a SuccessfulExit KeepAlive waits for an exit that never comes
+            echo '    <key>RunAtLoad</key><true/>'
             echo '    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>'
             echo "    <key>StandardOutPath</key><string>$(xesc "$MACLOGS/$c.log")</string>"
             echo "    <key>StandardErrorPath</key><string>$(xesc "$MACLOGS/$c.log")</string>"
