@@ -544,7 +544,10 @@ connect() {
         note "no SyncTERM: telnet in this terminal. Log in as $USER_NAME / ${STACK_PASSWORD:-?}; Ctrl-] then 'quit' leaves."
         telnet 127.0.0.1 "$TELNET_PORT" || true
         return 0
-    elif [ "$OS" = Darwin ] && ! command -v syncterm >/dev/null; then
+    fi
+    # SyncTERM may have been installed after init: make sure our entry is there
+    write_syncterm_entry
+    if [ "$OS" = Darwin ] && ! command -v syncterm >/dev/null; then
         open -a SyncTERM --args "$ENTRY"
     else
         nohup syncterm "$ENTRY" >/dev/null 2>&1 &
