@@ -42,7 +42,9 @@ button at the top of the page (the game picker) opens another. Daydream assumes 
 the machine that hosts the game, and looks for games where they are usually installed: the
 drives' top folders on Windows (`C:\WGSERV`, `C:\MBBSEmu`, `C:\Silvermere`), your home
 folder, the folder it was started in, `/opt` and `/srv`, a few levels down, plus any folder
-given with `--search DIR`. It finds:
+given with `--search DIR`. On macOS it leaves out your Desktop, Documents, Downloads,
+Pictures, Movies and Music, so macOS does not ask whether Daydream may read them; give
+`--search ~/Documents/mud` (say) for a game kept there. It finds:
 
 | Game | Found by | Edited in | Written back by |
 |---|---|---|---|
