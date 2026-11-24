@@ -8,6 +8,10 @@
 //! into hidden or system folders, and stops after [`MAX_DIRS`] folders, so a search takes a
 //! moment and never wanders the whole disk.
 //!
+//! On macOS the home folder's Desktop, Documents, Downloads, Pictures, Movies and Music are
+//! looked in only when given with `--search`: reading them makes macOS ask the person, once
+//! for each, whether Daydream may ([`MACOS_GUARDED`]).
+//!
 //! A folder is a game when it holds MajorMUD's item file and one of its other world files:
 //!
 //! - **`WCC*.db`** (MBBSEmu's own store, or wbtrv32's beside a Worldgroup): [`Source::Db`],
@@ -52,6 +56,16 @@ const SKIP: &[&str] = &[
     "snap",
 ];
 
+/// The home folder's folders macOS asks the person about before a program reads them.
+pub const MACOS_GUARDED: &[&str] = &[
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Pictures",
+    "Movies",
+    "Music",
+];
+
 /// A game found on this machine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Found {
@@ -70,6 +84,8 @@ pub struct Roots {
     pub dirs: Vec<(PathBuf, usize)>,
     /// Folders not to look in (Daydream's own working copies).
     pub skip: Vec<PathBuf>,
+    /// Folders looked in only when they are a root themselves (macOS's guarded folders).
+    pub guarded: Vec<PathBuf>,
 }
 
 impl Roots {
@@ -96,9 +112,17 @@ impl Roots {
                 }
             }
         }
+        // the home folder's real path, as the walk sees it (the guarded folders are not read)
+        let guarded = match home().and_then(|h| canonical(&h)) {
+            Some(home) if cfg!(target_os = "macos") => {
+                MACOS_GUARDED.iter().map(|d| home.join(d)).collect()
+            }
+            _ => Vec::new(),
+        };
         Self {
             dirs,
             skip: Vec::new(),
+            guarded,
         }
     }
 }
@@ -113,6 +137,11 @@ fn home() -> Option<PathBuf> {
 pub fn discover(roots: &Roots) -> Vec<Found> {
     let mut out = Vec::new();
     let skip: Vec<PathBuf> = roots.skip.iter().filter_map(|d| canonical(d)).collect();
+    // no canonical path for a guarded folder: that would read it
+    let avoid = Avoid {
+        skip,
+        guarded: roots.guarded.clone(),
+    };
     let mut seen = BTreeSet::new();
     let mut budget = MAX_DIRS;
     for (root, depth) in &roots.dirs {
@@ -122,7 +151,7 @@ pub fn discover(roots: &Roots) -> Vec<Found> {
         walk(
             &root,
             *depth,
-            &skip,
+            &avoid,
             &mut seen,
             &mut budget,
             &mut out,
@@ -162,16 +191,25 @@ fn strip_verbatim(p: PathBuf) -> PathBuf {
     }
 }
 
+/// The folders a walk does not go into.
+struct Avoid {
+    skip: Vec<PathBuf>,
+    guarded: Vec<PathBuf>,
+}
+
 fn walk(
     dir: &Path,
     depth: usize,
-    skip: &[PathBuf],
+    avoid: &Avoid,
     seen: &mut BTreeSet<PathBuf>,
     budget: &mut usize,
     out: &mut Vec<Found>,
     root: &Path,
 ) {
-    if *budget == 0 || skip.iter().any(|s| dir.starts_with(s)) || !seen.insert(dir.to_path_buf()) {
+    if *budget == 0
+        || avoid.skip.iter().any(|s| dir.starts_with(s))
+        || !seen.insert(dir.to_path_buf())
+    {
         return;
     }
     *budget -= 1;
@@ -186,8 +224,12 @@ fn walk(
         if ft.is_dir() {
             // no symlinks: they can loop, and lead off the roots
             let lower = name.to_ascii_lowercase();
-            if !name.starts_with('.') && !SKIP.contains(&lower.as_str()) {
-                subdirs.push(e.path());
+            let path = e.path();
+            if !name.starts_with('.')
+                && !SKIP.contains(&lower.as_str())
+                && !avoid.guarded.contains(&path)
+            {
+                subdirs.push(path);
             }
         } else if ft.is_file() {
             names.push(name);
@@ -200,7 +242,7 @@ fn walk(
     }
     subdirs.sort();
     for d in subdirs {
-        walk(&d, depth - 1, skip, seen, budget, out, root);
+        walk(&d, depth - 1, avoid, seen, budget, out, root);
     }
 }
 
@@ -514,6 +556,7 @@ mod tests {
         let roots = Roots {
             dirs: vec![(tmp.path().to_path_buf(), 3)],
             skip: Vec::new(),
+            guarded: Vec::new(),
         };
         let found: Vec<_> = discover(&roots)
             .into_iter()
@@ -530,11 +573,42 @@ mod tests {
         let roots = Roots {
             dirs: vec![(tmp.path().to_path_buf(), 1)],
             skip: Vec::new(),
+            guarded: Vec::new(),
         };
         assert!(
             discover(&roots)
                 .iter()
                 .all(|f| matches!(f.source, Source::Silvermere { .. }))
         );
+    }
+
+    #[test]
+    fn a_guarded_folder_is_searched_only_when_it_is_the_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = canonical(tmp.path()).unwrap();
+        let game = home.join("Documents").join("WGSERV");
+        std::fs::create_dir_all(&game).unwrap();
+        for f in ["WCCITEMS.DAT", "WCCKNMSR.DAT"] {
+            std::fs::write(game.join(f), b"").unwrap();
+        }
+        let wcc = |roots: &Roots| {
+            discover(roots)
+                .into_iter()
+                .filter(|f| matches!(f.source, Source::Wcc { .. }))
+                .count()
+        };
+        let guarded = vec![home.join("Documents")];
+        let from_home = Roots {
+            dirs: vec![(home.clone(), 3)],
+            skip: Vec::new(),
+            guarded: guarded.clone(),
+        };
+        assert_eq!(wcc(&from_home), 0);
+        let given = Roots {
+            dirs: vec![(home.join("Documents"), 3)],
+            skip: Vec::new(),
+            guarded,
+        };
+        assert_eq!(wcc(&given), 1);
     }
 }
