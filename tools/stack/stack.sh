@@ -29,6 +29,7 @@
 #   STACK_ITEMS               its gear, item names separated by `;` (see DEFAULT_ITEMS)
 #   STACK_SILVERMERE_REPO, STACK_DAYDREAM_REPO   GitHub owner/name of each release
 #   STACK_SILVERMERE_BIN      a silvermere binary to use in place of the release
+#   STACK_STOCK_ZIP           a saved WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip, when the download is blocked
 #
 # Runs as yourself, never root. It never touches ~/silvermere or a daydream-funnel install.
 set -euo pipefail
@@ -200,6 +201,8 @@ svc_write() {
                 echo "        <key>$(xesc "${kv%%=*}")</key><string>$(xesc "${kv#*=}")</string>"
             done <<< "$env"
             echo '    </dict>'
+            # without RunAtLoad, a SuccessfulExit KeepAlive waits for an exit that never comes
+            echo '    <key>RunAtLoad</key><true/>'
             echo '    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>'
             echo "    <key>StandardOutPath</key><string>$(xesc "$MACLOGS/$c.log")</string>"
             echo "    <key>StandardErrorPath</key><string>$(xesc "$MACLOGS/$c.log")</string>"
@@ -269,7 +272,18 @@ svc_remove() {
     fi
 }
 logs_cmd() {
-    if [ "$OS" = Darwin ]; then echo "tail -f $MACLOGS/$1.log"; else echo "journalctl --user -u $(unit "$1") -f"; fi
+    if [ "$OS" = Darwin ]; then
+        # launchd writes nothing to the log when it never started the program: say what it knows
+        if [ ! -s "$MACLOGS/$1.log" ]; then
+            launchctl print "gui/$UID/$(label "$1")" 2>&1 |
+                grep -iE 'state =|last exit|spawn|error' | sed 's/^[[:space:]]*/    launchd: /' >&2 || true
+            launchctl print-disabled "gui/$UID" 2>/dev/null | grep -qE "\"$(label "$1")\" => (true|disabled)" &&
+                echo "    launchd: the job is disabled (System Settings > General > Login Items & Extensions)" >&2
+        fi
+        echo "tail -f $MACLOGS/$1.log"
+    else
+        echo "journalctl --user -u $(unit "$1") -f"
+    fi
 }
 
 # Waits up to $2 seconds for PORT to answer (or, with "closed", to stop answering).
@@ -304,6 +318,59 @@ daydream_service() {
 DAYDREAM_STOCK_CACHE=$SM/data/cache"
     svc_write daydream "$DD" "$env" "$(abspath "$DD")/releases/current/daydream" serve \
         --listen "127.0.0.1:$DD_PORT" --search "$SM" --silvermere "$SM/data/silvermere.db"
+}
+
+# MajorMUD 1.11p's stock files, which `silvermere setup` downloads once into its cache.
+STOCK_ZIP=WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip
+STOCK_SHA256=815f7b35cdbc6c4de8deb0b686031e34905da147f360655858058a1f642d3583
+
+# Puts the stock zip at PATH into silvermere's cache, if it is the right file.
+cache_stock_zip() {
+    local zip=$1
+    zip=${zip/#\~/$HOME}
+    [ -f "$zip" ] || { note "no file at $zip"; return 1; }
+    if [ "$(sha256 "$zip" | awk '{print $1}')" != "$STOCK_SHA256" ]; then
+        note "$zip is not $STOCK_ZIP (its checksum differs)"
+        return 1
+    fi
+    mkdir -p "$SM/data/cache"
+    cp "$zip" "$SM/data/cache/$STOCK_ZIP"
+    note "using $zip"
+}
+
+# Builds the stock world. The download can be blocked (a company network that inspects
+# HTTPS, for one): then a copy of the zip is taken from STACK_STOCK_ZIP, ~/Downloads, or
+# a path typed at the prompt.
+stock_world() {
+    if [ ! -f "$SM/data/cache/$STOCK_ZIP" ]; then
+        if [ -n "${STACK_STOCK_ZIP:-}" ]; then
+            cache_stock_zip "$STACK_STOCK_ZIP" || die "STACK_STOCK_ZIP is not a usable $STOCK_ZIP"
+        elif [ -f "$HOME/Downloads/$STOCK_ZIP" ]; then
+            cache_stock_zip "$HOME/Downloads/$STOCK_ZIP" || true
+        fi
+    fi
+    note "building the stock world (downloads MajorMUD 1.11p once)"
+    while ! sm setup --yes < /dev/null 2>&1 | sed 's/^/    /'; do
+        rm -f "$SM/data/cache/$STOCK_ZIP"
+        if ! { [ -t 1 ] && : < /dev/tty; } 2>/dev/null; then
+            die "the stock world could not be built. If its download is blocked, get $STOCK_ZIP another way and run again with STACK_STOCK_ZIP=/path/to/it"
+        fi
+        printf '\n    The stock download failed. If your network blocks it, download\n'
+        printf '    %s another way and give its path here.\n' "$STOCK_ZIP"
+        local path
+        while :; do
+            path=
+            read -r -p "    Path to $STOCK_ZIP (Enter to give up): " path < /dev/tty || path=
+            # a file dragged into Terminal arrives quoted or with escaped spaces, and a space after
+            path=${path%"${path##*[![:space:]]}"}
+            path=${path#\'}; path=${path%\'}; path=${path#\"}; path=${path%\"}
+            path=${path//\\ / }
+            [ -n "$path" ] || die "no stock world: run again with STACK_STOCK_ZIP=/path/to/$STOCK_ZIP"
+            cache_stock_zip "$path" && break
+        done
+        save_setting STACK_STOCK_ZIP "${path/#\~/$HOME}"
+        note "trying again"
+    done
 }
 
 fetch_silvermere() {
@@ -498,8 +565,7 @@ init() {
     # The account first: setup then has a sysop and asks nothing.
     sm migrate >/dev/null
     seed_account_only
-    note "building the stock world (downloads MajorMUD 1.11p once)"
-    sm setup --yes < /dev/null | sed 's/^/    /'
+    stock_world
 
     say "The test character"
     seed
@@ -637,7 +703,7 @@ reset)
     rm -f "$SM/data/silvermere.db-wal" "$SM/data/silvermere.db-shm"
     sm migrate >/dev/null
     seed_account_only
-    sm setup --yes < /dev/null | sed 's/^/    /'
+    stock_world
     seed
     up_silvermere
     ;;

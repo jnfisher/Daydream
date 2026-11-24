@@ -63,7 +63,23 @@ Put them in `stack.env` or the environment, then run `init` (or `seed` for the c
 | `STACK_ITEMS` | stock items separated by `;` (stormhammer, aegis shield, mithril chainmail hauberk, starsteel greathelm, ...) |
 | `STACK_CLIENT_CMD` | a command to run in place of SyncTERM |
 | `STACK_SILVERMERE_BIN` | a silvermere binary to use in place of the release (a build not yet released) |
+| `STACK_STOCK_ZIP` | a saved `WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip`, for when its download is blocked (see below) |
 | `DAYDREAM_STACK_HOME` | `~/.local/share/daydream-stack` |
+
+## When the stock download is blocked
+
+`init` and `reset` build the stock world from MajorMUD 1.11p's MBBSEmu package, which silvermere
+downloads once. A network that inspects HTTPS (a company laptop, say) can stop that download with
+an error such as `invalid peer certificate: UnknownIssuer`. Get
+`WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip` another way (a browser, another network), then any of these
+works:
+
+- leave it in `~/Downloads`, where `init` looks for it;
+- run with `STACK_STOCK_ZIP=/path/to/WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip`;
+- or just run `init`: when the download fails it asks for the file's path (dragging the file into
+  Terminal works), and tries again.
+
+The file's checksum is checked before it is used, and the path is saved in `stack.env`.
 
 ## SyncTERM
 
