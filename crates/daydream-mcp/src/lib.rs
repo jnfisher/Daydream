@@ -138,6 +138,56 @@ fn number_arg(args: &Map<String, Value>, name: &str) -> Result<Option<i64>, Tool
     }
 }
 
+const INSTRUCTIONS: &str = "Daydream edits a MajorMUD realm in Nightmare Redux's terms. Read with list_tables, describe_table, list_rows, get_row, get_map and free_numbers. To change anything, call preview_edits, show the user the changes, and only then apply_edits with its token; undo takes the token back. The game must be stopped while its realm is edited.";
+
+fn initialize(id: &Value, params: &Value, more: &str) -> Value {
+    let asked = params.get("protocolVersion").and_then(Value::as_str);
+    let version = asked
+        .filter(|v| PROTOCOL_VERSIONS.contains(v))
+        .unwrap_or(PROTOCOL_VERSIONS[0]);
+    rpc_result(
+        id,
+        json!({
+            "protocolVersion": version,
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "daydream", "version": env!("CARGO_PKG_VERSION") },
+            "instructions": format!("{INSTRUCTIONS}{more}"),
+        }),
+    )
+}
+
+/// Answers one JSON-RPC message while no realm is open: the handshake and the tool list
+/// work, and every tool call is a tool error saying `why`. `None` for a notification.
+pub fn handle_closed(msg: &Value, silvermere: bool, why: &str) -> Option<Value> {
+    let id = msg.get("id").cloned()?;
+    let Some(method) = msg.get("method").and_then(Value::as_str) else {
+        return Some(rpc_error(&id, -32600, "not a JSON-RPC request"));
+    };
+    let params = msg.get("params").cloned().unwrap_or(json!({}));
+    Some(match method {
+        "initialize" => initialize(&id, &params, &format!(" {why}")),
+        "ping" => rpc_result(&id, json!({})),
+        "tools/list" => rpc_result(&id, tool_list(silvermere)),
+        "tools/call" => rpc_result(
+            &id,
+            json!({ "content": [{ "type": "text", "text": why }], "isError": true }),
+        ),
+        other => rpc_error(&id, -32601, format!("no method {other}")),
+    })
+}
+
+/// A tool's answer as `tools/call` gives it.
+pub fn tool_result(result: Result<Value, String>) -> Value {
+    match result {
+        Ok(v) => json!({
+            "content": [{ "type": "text", "text": v.to_string() }],
+            "structuredContent": v,
+            "isError": false,
+        }),
+        Err(e) => json!({ "content": [{ "type": "text", "text": e }], "isError": true }),
+    }
+}
+
 /// The tools' descriptions and input schemas, as `tools/list` gives them.
 fn tool_list(silvermere: bool) -> Value {
     let table = json!({ "type": "string", "description": "An NMR table name, as list_tables gives it (Items, Monsters, Rooms, ...)" });
@@ -352,21 +402,7 @@ impl Server {
         };
         let params = msg.get("params").cloned().unwrap_or(json!({}));
         Some(match method {
-            "initialize" => {
-                let asked = params.get("protocolVersion").and_then(Value::as_str);
-                let version = asked
-                    .filter(|v| PROTOCOL_VERSIONS.contains(v))
-                    .unwrap_or(PROTOCOL_VERSIONS[0]);
-                rpc_result(
-                    &id,
-                    json!({
-                        "protocolVersion": version,
-                        "capabilities": { "tools": {} },
-                        "serverInfo": { "name": "daydream", "version": env!("CARGO_PKG_VERSION") },
-                        "instructions": "Daydream edits a MajorMUD realm in Nightmare Redux's terms. Read with list_tables, describe_table, list_rows, get_row, get_map and free_numbers. To change anything, call preview_edits, show the user the changes, and only then apply_edits with its token; undo takes the token back. The game must be stopped while its realm is edited."
-                    }),
-                )
-            }
+            "initialize" => initialize(&id, &params, ""),
             "ping" => rpc_result(&id, json!({})),
             "tools/list" => rpc_result(&id, tool_list(self.options.silvermere.is_some())),
             "tools/call" => {

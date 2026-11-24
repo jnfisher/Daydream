@@ -558,3 +558,89 @@ fn serve(bin: &Path, url: &str) -> Serving {
         }
     }
 }
+
+#[tokio::test]
+async fn the_mcp_server_connects_with_no_game_open_and_opens_one() {
+    let m = machine();
+    let app = m.router(None, false);
+    let rpc = |id: u64, method: &str, params: Value| serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+    let (status, init) = call(
+        &app,
+        "POST",
+        "/mcp",
+        Some(rpc(1, "initialize", serde_json::json!({}))),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{init}");
+    assert!(
+        init["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("open_game")
+    );
+    let (_, list) = call(
+        &app,
+        "POST",
+        "/mcp",
+        Some(rpc(2, "tools/list", serde_json::json!({}))),
+        None,
+    )
+    .await;
+    let names: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"list_tables") && names.contains(&"open_game"),
+        "{names:?}"
+    );
+
+    let call_tool = |id: u64, name: &str, args: Value| {
+        rpc(
+            id,
+            "tools/call",
+            serde_json::json!({ "name": name, "arguments": args }),
+        )
+    };
+    let (_, closed) = call(
+        &app,
+        "POST",
+        "/mcp",
+        Some(call_tool(3, "list_tables", serde_json::json!({}))),
+        None,
+    )
+    .await;
+    assert_eq!(closed["result"]["isError"], true, "{closed}");
+
+    let (_, games) = call(
+        &app,
+        "POST",
+        "/mcp",
+        Some(call_tool(4, "list_games", serde_json::json!({}))),
+        None,
+    )
+    .await;
+    assert_eq!(games["result"]["isError"], false, "{games}");
+    let emu = game(&games["result"]["structuredContent"], "db")["id"].clone();
+    let (_, opened) = call(
+        &app,
+        "POST",
+        "/mcp",
+        Some(call_tool(5, "open_game", serde_json::json!({ "id": emu }))),
+        None,
+    )
+    .await;
+    assert_eq!(opened["result"]["isError"], false, "{opened}");
+    let (_, tables) = call(
+        &app,
+        "POST",
+        "/mcp",
+        Some(call_tool(6, "list_tables", serde_json::json!({}))),
+        None,
+    )
+    .await;
+    assert_eq!(tables["result"]["isError"], false, "{tables}");
+}

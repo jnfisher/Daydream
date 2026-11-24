@@ -371,22 +371,24 @@ pub(crate) async fn list(
     State(s): State<Arc<AppState>>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    blocking(move || {
-        let found = s.known(q.refresh);
-        let ws = s.games.workspace();
-        let cur = s.current();
-        let games: Vec<Value> = found
-            .iter()
-            .map(|f| game_json(f, &ws, cur.game.as_ref()))
-            .collect();
-        Ok(Json(json!({
-            "current": current_json(&cur),
-            "games": games,
-            "custom": s.custom_allowed(),
-            "workspace": ws.dir(),
-        })))
+    blocking(move || Ok(Json(list_games(&s, q.refresh)))).await
+}
+
+/// The games that may be opened, and the one open (`GET /api/games`, MCP `list_games`).
+pub(crate) fn list_games(s: &AppState, refresh: bool) -> Value {
+    let found = s.known(refresh);
+    let ws = s.games.workspace();
+    let cur = s.current();
+    let games: Vec<Value> = found
+        .iter()
+        .map(|f| game_json(f, &ws, cur.game.as_ref()))
+        .collect();
+    json!({
+        "current": current_json(&cur),
+        "games": games,
+        "custom": s.custom_allowed(),
+        "workspace": ws.dir(),
     })
-    .await
 }
 
 fn current_json(cur: &crate::Current) -> Value {
@@ -451,24 +453,29 @@ fn status_of(source: &Source) -> Value {
 }
 
 /// The body of an open.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct OpenJson {
     #[serde(default)]
-    id: Option<String>,
+    pub id: Option<String>,
     #[serde(default)]
-    kind: Option<String>,
+    pub kind: Option<String>,
     #[serde(default)]
-    location: Option<String>,
+    pub location: Option<String>,
     /// Read the game again into its working copy, replacing it.
     #[serde(default)]
-    refresh: bool,
+    pub refresh: bool,
 }
 
 pub(crate) async fn open(
     State(s): State<Arc<AppState>>,
     Json(body): Json<OpenJson>,
 ) -> Result<Json<Value>, ApiError> {
-    blocking(move || {
+    blocking(move || open_game(&s, body).map(Json)).await
+}
+
+/// Opens a game (`POST /api/games/open`, MCP `open_game`).
+pub(crate) fn open_game(s: &AppState, body: OpenJson) -> Result<Value, ApiError> {
+    {
         let (source, label, live) = match (&body.id, &body.location) {
             (Some(id), _) => {
                 let f = s
@@ -502,9 +509,8 @@ pub(crate) async fn open(
         if let Err(e) = saved {
             tracing::warn!("remembering the open game: {e}");
         }
-        Ok(Json(json!({ "current": current_json(&s.current()) })))
-    })
-    .await
+        Ok(json!({ "current": current_json(&s.current()) }))
+    }
 }
 
 /// The realm folder for `source`: its own folder, or its working copy (made, or made again

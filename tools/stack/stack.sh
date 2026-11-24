@@ -473,6 +473,23 @@ up_daydream() {
     wait_port "$DD_PORT" 60 || die "Daydream did not start; $(logs_cmd daydream)"
     note "Daydream: http://127.0.0.1:$DD_PORT/"
 }
+# Opens the stack's silvermere game in Daydream, so its editors and MCP server work on it.
+# The first time, this builds Daydream's working copy (stock files, then silvermere's world).
+open_game() {
+    local db out code
+    db=$(abspath "$SM/data/silvermere.db")
+    db=${db//\\/\\\\}
+    db=${db//\"/\\\"}
+    out=$(curl -sS --max-time 600 -w '\n%{http_code}' -X POST -H 'content-type: application/json' \
+        -d "{\"kind\":\"silvermere\",\"location\":\"$db\"}" \
+        "http://127.0.0.1:$DD_PORT/api/games/open" 2>&1) || true
+    code=${out##*$'\n'}
+    if [ "$code" = 200 ]; then
+        note "Daydream has the silvermere game open"
+    else
+        note "Daydream could not open the silvermere game (${out%$'\n'*}): choose it in the game picker"
+    fi
+}
 down_daydream() { svc_stop daydream; note "Daydream stopped"; }
 
 # --- SyncTERM ------------------------------------------------------------------------------
@@ -615,8 +632,10 @@ init() {
     say "Services"
     silvermere_service
     daydream_service
-    up_silvermere
+    # Daydream first: it reads the silvermere game into its working copy while silvermere is down
     up_daydream
+    open_game
+    up_silvermere
 
     say "SyncTERM"
     if install_syncterm; then
@@ -733,7 +752,9 @@ connect) connect ;;
 edit)
     say "Stopping silvermere so Daydream can write its database"
     down_silvermere
-    echo "Now open the silvermere game in Daydream (http://127.0.0.1:$DD_PORT/), make the edit and write it back."
+    up_daydream
+    open_game
+    echo "Now make the edit in Daydream (http://127.0.0.1:$DD_PORT/) and write it back."
     echo "Then: daydream-stack play"
     ;;
 play)
