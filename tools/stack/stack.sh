@@ -651,7 +651,7 @@ install_self() {
 }
 
 # Run from a checkout (bash tools/stack/stack.sh), the checkout's script replaces the installed one
-# replaces it, so `daydream-stack` is never behind a `git pull`.
+# when they differ, so `daydream-stack` is never behind a `git pull`.
 refresh_self() {
     [ -f "$SELF" ] && [ -f "$0" ] || return 0
     [ "$(abspath "$0")" != "$(abspath "$SELF")" ] || return 0
