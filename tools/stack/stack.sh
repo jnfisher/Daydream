@@ -270,7 +270,18 @@ svc_remove() {
     fi
 }
 logs_cmd() {
-    if [ "$OS" = Darwin ]; then echo "tail -f $MACLOGS/$1.log"; else echo "journalctl --user -u $(unit "$1") -f"; fi
+    if [ "$OS" = Darwin ]; then
+        # launchd writes nothing to the log when it never started the program: say what it knows
+        if [ ! -s "$MACLOGS/$1.log" ]; then
+            launchctl print "gui/$UID/$(label "$1")" 2>&1 |
+                grep -iE 'state =|last exit|spawn|error' | sed 's/^[[:space:]]*/    launchd: /' >&2 || true
+            launchctl print-disabled "gui/$UID" 2>/dev/null | grep -qE "\"$(label "$1")\" => (true|disabled)" &&
+                echo "    launchd: the job is disabled (System Settings > General > Login Items & Extensions)" >&2
+        fi
+        echo "tail -f $MACLOGS/$1.log"
+    else
+        echo "journalctl --user -u $(unit "$1") -f"
+    fi
 }
 
 # Waits up to $2 seconds for PORT to answer (or, with "closed", to stop answering).
