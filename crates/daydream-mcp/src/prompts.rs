@@ -10,7 +10,9 @@ use serde_json::{Value, json};
 pub const INSTRUCTIONS: &str = "\
 Daydream edits a MajorMUD realm in Nightmare Redux's terms (tables, columns and keys as NMR names them).
 
-Reading: list_tables, describe_table, list_rows, get_row, get_map and free_numbers. game_status says what is open, \
+Reading: list_tables, describe_table, list_rows, get_row, get_map, free_numbers and find_references. describe_table \
+gives each column's choice list, what it refers to, and notes on what the game does with it: read them before \
+writing a table. game_status says what is open, \
 whether edits go to the game's own files or a working copy, and whether the game is running.
 
 Changing: preview_edits, show the user what will change, then apply_edits with its token. Give every batch of one \
@@ -25,14 +27,15 @@ against one known example before building on it, and tell the user what is check
 - Build one of each kind first (one room, one monster, one item), apply it, and ask the user to try it in the game \
 before making many.
 - Message rows are three-line bundles shared between monsters; a line may name the original creature. Read a \
-bundle before reusing it.
+bundle, and find_references to see who else uses it, before reusing it.
 - Report progress to the user in milestones they can see, not tool by tool.";
 
 /// The steps every prompt ends with.
 const STEPS: &str = "\
 Work in this order:
-1. Call game_status, then look at the tables involved (describe_table) and at the existing rows most like what is \
-wanted (list_rows, get_row in full). Note junk values and placeholder numbers in them.
+1. Call game_status, then read the tables involved (describe_table, with its notes) and the existing rows most like \
+what is wanted (list_rows, get_row in full). Note junk values and placeholder numbers in them, and use \
+find_references on anything you mean to share, such as a message.
 2. Write a short plan for the user: the numbers to use (free_numbers), the rows to add or change, and anything \
 inferred rather than checked. Wait for the user's go ahead.
 3. Make one of each kind first under a changeset label, preview it, show the user, apply it, and ask the user to \

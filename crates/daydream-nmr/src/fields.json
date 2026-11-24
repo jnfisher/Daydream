@@ -1,0 +1,1603 @@
+{
+ "about": "What Daydream knows of NMR's columns: the choice lists and links its editors use, and what the game does with each value. Shared by the web editors and the MCP server's describe_table. Notes with a source were read from silvermere's engine (MajorMUD 1.11p). A column's options, ref (a record number of that table) and abilities are what the editors pick from; links names what else a value points at (Rooms: a room on the same map).",
+ "lists": {
+  "ALIGNMENT": {
+   "0": "Good",
+   "1": "Evil",
+   "2": "Chaotic Evil",
+   "3": "Neutral",
+   "4": "Lawful Good",
+   "5": "Neutral Evil",
+   "6": "Lawful Evil"
+  },
+  "ARMOUR": {
+   "0": "Natural",
+   "1": "Silk",
+   "2": "Ninja",
+   "3": "Leather",
+   "4": "Leather",
+   "5": "Leather",
+   "6": "Leather",
+   "7": "Chainmail",
+   "8": "Scalemail",
+   "9": "Platemail"
+  },
+  "ATTACK_TYPE": {
+   "0": "None",
+   "1": "Normal",
+   "2": "Spell",
+   "3": "Rob"
+  },
+  "CLASS_ARMOUR": {
+   "0": "Natural",
+   "1": "Robes",
+   "2": "Padded",
+   "3": "Soft Leather",
+   "4": "Soft Studded Leather",
+   "5": "Rigid Leather",
+   "6": "Studded Rigid Leather",
+   "7": "Chainmail",
+   "8": "Scalemail",
+   "9": "Platemail"
+  },
+  "CLASS_WEAPON": {
+   "0": "1H Blunt",
+   "1": "2H Blunt",
+   "2": "1H Sharp",
+   "3": "2H Sharp",
+   "4": "Any 1H",
+   "5": "Any 2H",
+   "6": "Any Sharp",
+   "7": "Any Blunt",
+   "8": "Any Weapon",
+   "9": "Staff"
+  },
+  "CLASS_WEAPONS": {
+   "0": "1H Blunt",
+   "1": "2H Blunt",
+   "2": "1H Sharp",
+   "3": "2H Sharp",
+   "4": "Any 1H",
+   "5": "Any 2H",
+   "6": "Any Sharp",
+   "7": "Any Blunt",
+   "8": "All Weapons",
+   "9": "Limited (staff)"
+  },
+  "COST_TYPE": {
+   "0": "Copper",
+   "1": "Silver",
+   "2": "Gold",
+   "3": "Platinum",
+   "4": "Runic"
+  },
+  "ELEMENT": {
+   "0": "Cold",
+   "1": "Hot",
+   "2": "Stone",
+   "3": "Lightning",
+   "4": "Normal",
+   "5": "Water",
+   "6": "Poison"
+  },
+  "EXIT_TYPE": {
+   "0": "Normal",
+   "1": "Spell",
+   "2": "Key",
+   "3": "Item",
+   "4": "Toll",
+   "5": "Action",
+   "6": "Hidden",
+   "7": "Door",
+   "8": "map Change",
+   "9": "Trap",
+   "10": "Text",
+   "11": "Gate",
+   "12": "Remote Action",
+   "13": "Class",
+   "14": "Race",
+   "15": "Level",
+   "16": "Timed",
+   "17": "Ticket",
+   "18": "User Count",
+   "19": "Block Guard",
+   "20": "Alignment",
+   "21": "Delay",
+   "22": "Cast",
+   "23": "Ability",
+   "24": "Spell Trap"
+  },
+  "GENDER": {
+   "0": "It",
+   "1": "He",
+   "2": "She"
+  },
+  "ITEM_TYPE": {
+   "0": "Armour",
+   "1": "Weapon",
+   "2": "Projectile",
+   "3": "Sign",
+   "4": "Food",
+   "5": "Drink",
+   "6": "Light",
+   "7": "Key",
+   "8": "Container",
+   "9": "Scroll",
+   "10": "Special"
+  },
+  "MAGERY": {
+   "0": "None",
+   "1": "Mage",
+   "2": "Priest",
+   "3": "Druid",
+   "4": "Bard",
+   "5": "Kai"
+  },
+  "MONSTER_GROUP": {
+   "0": "Lair",
+   "1": "Wanderer",
+   "2": "NPC",
+   "3": "Living",
+   "4": "Random",
+   "5": "Guard",
+   "6": "Group 1",
+   "7": "Group 2",
+   "8": "Group 3",
+   "9": "Group 4",
+   "10": "Group 5",
+   "11": "Group 6",
+   "12": "Group 7",
+   "13": "Group 8",
+   "14": "Group 9",
+   "15": "Group 10",
+   "16": "Group 11",
+   "17": "Group 12",
+   "18": "Group 13",
+   "19": "Group 14",
+   "20": "Group 15",
+   "21": "Group 16",
+   "22": "Group 17",
+   "23": "Group 18",
+   "24": "Group 19",
+   "25": "Group 20",
+   "26": "Group 21",
+   "27": "Group 22",
+   "28": "Group 23",
+   "29": "Group 24",
+   "30": "Group 25",
+   "31": "Group 26",
+   "32": "Group 27",
+   "33": "Group 28",
+   "34": "Group 29",
+   "35": "Group 30",
+   "36": "Arena",
+   "37": "Angel",
+   "38": "Quest",
+   "39": "Other"
+  },
+  "MONSTER_TYPE": {
+   "0": "Solo",
+   "1": "Leader",
+   "2": "Follower",
+   "3": "Stationary"
+  },
+  "RESISTS": {
+   "0": "Never",
+   "1": "Anti-Magic Only",
+   "2": "Everyone"
+  },
+  "RESIST_ABILITY": {
+   "0": "Magic Resistance",
+   "1": "Strength",
+   "2": "Agility",
+   "3": "Health",
+   "4": "Intellect",
+   "5": "Wisdom",
+   "6": "Charm"
+  },
+  "ROOM_TYPE": {
+   "0": "Normal",
+   "1": "Shop",
+   "2": "Arena",
+   "3": "Lair",
+   "4": "Hotel",
+   "5": "Colliseum",
+   "6": "Jail",
+   "7": "Library"
+  },
+  "SHOP_TYPE": {
+   "0": "General",
+   "1": "Weapons",
+   "2": "Armour",
+   "3": "Items",
+   "4": "Spells",
+   "5": "Hospital",
+   "6": "Tavern",
+   "7": "Bank",
+   "8": "Training",
+   "9": "Inn",
+   "10": "Specific",
+   "11": "Gang Shop",
+   "12": "Deed Shop"
+  },
+  "SPELL_TYPE": {
+   "0": "Auto-Combat",
+   "1": "Poison",
+   "2": "Change me",
+   "3": "General"
+  },
+  "TARGET": {
+   "0": "Single",
+   "1": "Self",
+   "2": "Self or Single",
+   "3": "Divided Area Not You",
+   "4": "Monster",
+   "5": "Divided Area Incl. You",
+   "6": "Any",
+   "7": "Item",
+   "8": "Monster or Single",
+   "9": "Divided Attack Area",
+   "10": "Divided Party Area",
+   "11": "Full Area",
+   "12": "Full Attack Area",
+   "13": "Full Party Area"
+  },
+  "WEAPON": {
+   "0": "1H Blunt",
+   "1": "2H Blunt",
+   "2": "1H Sharp",
+   "3": "2H Sharp"
+  },
+  "WORN": {
+   "0": "Nowhere",
+   "1": "Everywhere",
+   "2": "Head",
+   "3": "Hands",
+   "4": "Finger",
+   "5": "Feet",
+   "6": "Arms",
+   "7": "Back",
+   "8": "Neck",
+   "9": "Legs",
+   "10": "Waist",
+   "11": "Torso",
+   "12": "Off-Hand",
+   "13": "Finger",
+   "14": "Wrist",
+   "15": "Ears",
+   "16": "Worn",
+   "17": "Wrist",
+   "18": "Eyes",
+   "19": "Face"
+  },
+  "YES_NO": {
+   "0": "Yes",
+   "1": "No"
+  }
+ },
+ "exit_params": {
+  "source": "daydream-types/src/records/room.rs (ExitParams), from silvermere-types",
+  "types": {
+   "2": {
+    "Para1": {
+     "means": "the key item",
+     "links": "Items"
+    },
+    "Para2": {
+     "means": "the lock state"
+    },
+    "Para3": {
+     "means": "added to the pick-lock chance"
+    },
+    "Para4": {
+     "means": "steps it stays open or unlocked"
+    }
+   },
+   "3": {
+    "Para1": {
+     "means": "the item that must be carried",
+     "links": "Items"
+    },
+    "Para2": {
+     "means": "the message (row) without it",
+     "links": "Messages"
+    },
+    "Para3": {
+     "means": "the message with it",
+     "links": "Messages"
+    }
+   },
+   "4": {
+    "Para1": {
+     "means": "the price in gold crowns"
+    }
+   },
+   "5": {
+    "Para1": {
+     "means": "the message, 0 for a plain exit",
+     "links": "Messages"
+    }
+   },
+   "6": {
+    "Para1": {
+     "means": "the search and block flags"
+    },
+    "Para2": {
+     "means": "how many blocks it gets back (negative: any order)"
+    },
+    "Para3": {
+     "means": "the message when the last block goes",
+     "links": "Messages"
+    },
+    "Para4": {
+     "means": "the message that names it among the exits",
+     "links": "Messages"
+    }
+   },
+   "7": {
+    "Para1": {
+     "means": "the lock state"
+    },
+    "Para2": {
+     "means": "added to the bash and pick-lock chances (above 0 it never locks)"
+    },
+    "Para3": {
+     "means": "steps it stays open or unlocked"
+    },
+    "Para4": {
+     "means": "the key item",
+     "links": "Items"
+    }
+   },
+   "8": {
+    "Para1": {
+     "means": "the map it leads into"
+    }
+   },
+   "9": {
+    "Para1": {
+     "means": "the damage (from half of it to one more)"
+    },
+    "Para2": {
+     "means": "the trap state"
+    },
+    "Para3": {
+     "means": "the message when it springs",
+     "links": "Messages"
+    },
+    "Para4": {
+     "means": "the message when a disarm sets it off",
+     "links": "Messages"
+    }
+   },
+   "10": {
+    "Para1": {
+     "means": "the message whose three lines are the words that work",
+     "links": "Messages"
+    },
+    "Para3": {
+     "means": "the message on the way through",
+     "links": "Messages"
+    }
+   },
+   "11": {
+    "Para1": {
+     "means": "the lock state"
+    },
+    "Para2": {
+     "means": "added to the bash and pick-lock chances (above 0 it never locks)"
+    },
+    "Para3": {
+     "means": "steps it stays open or unlocked"
+    },
+    "Para4": {
+     "means": "the key item",
+     "links": "Items"
+    }
+   },
+   "12": {
+    "Para1": {
+     "means": "the message whose three lines are the words that work",
+     "links": "Messages"
+    },
+    "Para2": {
+     "means": "the action times ten plus the exit of the far room it works on"
+    },
+    "Para3": {
+     "means": "the message",
+     "links": "Messages"
+    },
+    "Para4": {
+     "means": "the item that must be carried and loses a charge, 0 none",
+     "links": "Items"
+    }
+   },
+   "13": {
+    "Para1": {
+     "means": "the only class allowed, 0 any",
+     "links": "Classes"
+    },
+    "Para2": {
+     "means": "the class barred, 0 none (used while Para1 is 0)",
+     "links": "Classes"
+    }
+   },
+   "14": {
+    "Para1": {
+     "means": "the only race allowed, 0 any",
+     "links": "Races"
+    },
+    "Para2": {
+     "means": "the race barred, 0 none (used while Para1 is 0)",
+     "links": "Races"
+    }
+   },
+   "15": {
+    "Para1": {
+     "means": "the lowest level, 0 none"
+    },
+    "Para2": {
+     "means": "the highest level, 0 none"
+    }
+   },
+   "16": {
+    "Para1": {
+     "means": "the message with the opening, closing and refusal lines",
+     "links": "Messages"
+    },
+    "Para2": {
+     "means": "steps between swaps"
+    },
+    "Para3": {
+     "means": "open, or closed"
+    }
+   },
+   "20": {
+    "Para1": {
+     "means": "the fewest evil points"
+    },
+    "Para2": {
+     "means": "the most evil points"
+    }
+   },
+   "22": {
+    "Para1": {
+     "means": "the spell cast on the player first, 0 none (then a plain exit)",
+     "links": "Spells"
+    },
+    "Para2": {
+     "means": "the spell cast after any attempt, 0 none",
+     "links": "Spells"
+    },
+    "Para3": {
+     "means": "the message on the way through",
+     "links": "Messages"
+    },
+    "Para4": {
+     "means": "the message LOOK shows instead of the room",
+     "links": "Messages"
+    }
+   },
+   "23": {
+    "Para1": {
+     "means": "the ability, 0 none"
+    },
+    "Para2": {
+     "means": "its lowest value"
+    },
+    "Para3": {
+     "means": "its highest value"
+    },
+    "Para4": {
+     "means": "the refusal message",
+     "links": "Messages"
+    }
+   },
+   "24": {
+    "Para1": {
+     "means": "the spell cast on the player",
+     "links": "Spells"
+    },
+    "Para2": {
+     "means": "the trap state"
+    },
+    "Para3": {
+     "means": "the message when it is disarmed",
+     "links": "Messages"
+    },
+    "Para4": {
+     "means": "the message when it springs or a disarm sets it off",
+     "links": "Messages"
+    }
+   }
+  }
+ },
+ "tables": {
+  "Items": {
+   "columns": {
+    "Type": {
+     "options": "ITEM_TYPE"
+    },
+    "Worn On": {
+     "options": "WORN"
+    },
+    "Armour": {
+     "options": "ARMOUR"
+    },
+    "Weapon": {
+     "options": "WEAPON"
+    },
+    "Cost Type": {
+     "options": "COST_TYPE"
+    },
+    "Hit Msg": {
+     "ref": "Messages"
+    },
+    "Miss Msg": {
+     "ref": "Messages"
+    },
+    "Distruct Msg": {
+     "ref": "Messages"
+    },
+    "Class #": {
+     "ref": "Classes"
+    },
+    "Race #": {
+     "ref": "Races"
+    },
+    "Negate #": {
+     "ref": "Spells"
+    },
+    "Ability #": {
+     "abilities": true
+    },
+    "Read Msg": {
+     "links": "Textblocks"
+    }
+   }
+  },
+  "Monsters": {
+   "columns": {
+    "Group": {
+     "options": "MONSTER_GROUP",
+     "note": "Matches a room's Mon Type: values 6 to 35 are Group 1 to Group 30.",
+     "source": "silvermere-rules/src/spawn.rs (pool)"
+    },
+    "Type": {
+     "options": "MONSTER_TYPE"
+    },
+    "Alignment": {
+     "options": "ALIGNMENT"
+    },
+    "Gender": {
+     "options": "GENDER"
+    },
+    "Item Number #": {
+     "ref": "Items"
+    },
+    "Attack Type #": {
+     "options": "ATTACK_TYPE"
+    },
+    "Attack Hit Msg #": {
+     "ref": "Messages"
+    },
+    "Attack Dodge Msg #": {
+     "ref": "Messages"
+    },
+    "Attack Miss Msg #": {
+     "ref": "Messages"
+    },
+    "Attack Hit Spell #": {
+     "ref": "Spells"
+    },
+    "Spell Number #": {
+     "ref": "Spells"
+    },
+    "Weapon Number": {
+     "ref": "Items"
+    },
+    "Death Spell": {
+     "ref": "Spells"
+    },
+    "Create Spell": {
+     "ref": "Spells"
+    },
+    "Move Msg": {
+     "ref": "Messages",
+     "note": "Line 1 is the arrival line, with two %s. With a random-name list (Desc Txt not 0) they are the name, then the direction; otherwise the direction (\"the west\"), then the name. So \"A %s lumbers in from %s.\" suits only a monster with Desc Txt set.",
+     "source": "silvermere-engine/src/monsters/generate.rs (arrival_text)"
+    },
+    "Death Msg": {
+     "ref": "Messages",
+     "note": "Line 3 goes to the room when the monster dies.",
+     "source": "silvermere-engine/src/combat/kill_monster.rs"
+    },
+    "Ability #": {
+     "abilities": true
+    },
+    "Index": {
+     "note": "Rooms whose Min Index to Max Index covers it can spawn it.",
+     "source": "silvermere-rules/src/spawn.rs (pool)"
+    },
+    "Energy": {
+     "note": "Energy per combat round. Each attack spends its Attack Energy #, so the blows in a round are about Energy divided by Attack Energy (at most 6).",
+     "source": "silvermere-engine/src/monsters/generate.rs, silvermere-rules/src/combat/energy.rs"
+    },
+    "Attack Energy #": {
+     "note": "What one blow of this attack costs out of the monster's Energy."
+    },
+    "Desc Txt": {
+     "note": "The text block of random names the monster is named from; 0 keeps its Name. It also changes the argument order of the Move Msg's arrival line.",
+     "source": "silvermere-engine/src/monsters/generate.rs",
+     "links": "Textblocks"
+    },
+    "Greet Txt": {
+     "links": "Textblocks"
+    },
+    "Talk Txt": {
+     "links": "Textblocks"
+    }
+   },
+   "note": "Rooms spawn a monster when its Group equals the room's Mon Type and its Index lies within the room's Min Index to Max Index. Its messages are rows of the Messages table, three lines each; one row often serves several purposes (lines 1-2 a hit, line 3 a death), and stock rows can name the creature they were written for, so read a row before reusing it, and give a new monster its own rows."
+  },
+  "Spells": {
+   "columns": {
+    "Magery A": {
+     "options": "MAGERY"
+    },
+    "Spell Type": {
+     "options": "SPELL_TYPE"
+    },
+    "Target": {
+     "options": "TARGET"
+    },
+    "Attack Type": {
+     "options": "ELEMENT"
+    },
+    "Type of Resists": {
+     "options": "RESISTS"
+    },
+    "Resist Ability": {
+     "options": "RESIST_ABILITY"
+    },
+    "MSG Style": {
+     "options": "YES_NO"
+    },
+    "Cast MSG A": {
+     "ref": "Messages"
+    },
+    "Cast MSG B": {
+     "ref": "Messages"
+    },
+    "Ability #": {
+     "abilities": true
+    }
+   }
+  },
+  "Classes": {
+   "columns": {
+    "Armour": {
+     "options": "CLASS_ARMOUR"
+    },
+    "Weapon": {
+     "options": "CLASS_WEAPONS"
+    },
+    "Magic Type": {
+     "options": "MAGERY"
+    },
+    "Ability #": {
+     "abilities": true
+    }
+   }
+  },
+  "Races": {
+   "columns": {
+    "Ability #": {
+     "abilities": true
+    }
+   }
+  },
+  "Shops": {
+   "columns": {
+    "Type": {
+     "options": "SHOP_TYPE"
+    },
+    "Class Limit": {
+     "ref": "Classes"
+    },
+    "Item #": {
+     "ref": "Items"
+    }
+   }
+  },
+  "Rooms": {
+   "columns": {
+    "Type": {
+     "options": "ROOM_TYPE",
+     "note": "Arena (2): Max Index is also the highest player level let in, so 0 keeps everyone out; use 32767 for no cap. Lair (3): fills up with monsters whenever no player is in it. Only Normal and Arena rooms spawn while players stand in them.",
+     "source": "silvermere-engine/src/movement/move_user.rs (user_allowed_in_room), silvermere-engine/src/monsters/spawn_pass.rs"
+    },
+    "Shop Number": {
+     "ref": "Shops"
+    },
+    "Type #": {
+     "options": "EXIT_TYPE",
+     "note": "The exit's type; what Para1 # to Para4 # mean depends on it (describe_table lists exit_params)."
+    },
+    "Perm NPC": {
+     "ref": "Monsters",
+     "note": "A monster made here whenever it is not alive and a player comes in.",
+     "source": "silvermere-engine/src/movement/move_user.rs"
+    },
+    "Mon Type": {
+     "options": "MONSTER_GROUP",
+     "note": "The monster Group this room spawns from.",
+     "source": "silvermere-rules/src/spawn.rs (pool)"
+    },
+    "Placed Item #": {
+     "ref": "Items"
+    },
+    "Room Item #": {
+     "ref": "Items"
+    },
+    "Hidden Item #": {
+     "ref": "Items",
+     "note": "An item found by searching the room."
+    },
+    "Spell": {
+     "ref": "Spells"
+    },
+    "Min Index": {
+     "note": "Lowest monster Index spawned here; 0 means no lower limit.",
+     "source": "silvermere-rules/src/spawn.rs (pool)"
+    },
+    "Max Index": {
+     "note": "Highest monster Index spawned here; 0 means no upper limit. In an arena it is also the highest player level let in.",
+     "source": "silvermere-rules/src/spawn.rs (pool), silvermere-engine/src/movement/move_user.rs"
+    },
+    "Max Regen": {
+     "note": "The most monsters the room holds before it stops spawning (its Perm NPC aside); 0 spawns none.",
+     "source": "silvermere-engine/src/monsters/generate.rs"
+    },
+    "Delay": {
+     "note": "Minutes after the last kill here before the room spawns again; 0 uses the game's default. Arenas ignore it.",
+     "source": "silvermere-engine/src/monsters/generate.rs, silvermere-rules/src/spawn.rs (regen_blocked)"
+    },
+    "Control Room": {
+     "note": "A room on this map whose Max Area caps how many monsters the rooms it controls spawn between them; 0 none.",
+     "source": "silvermere-engine/src/monsters/generate.rs",
+     "links": "Rooms"
+    },
+    "Max Area": {
+     "note": "For a control room: the most monsters spawned across the rooms it controls.",
+     "source": "silvermere-engine/src/monsters/generate.rs"
+    },
+    "Death Room": {
+     "links": "Rooms"
+    },
+    "Exit Room": {
+     "links": "Rooms"
+    },
+    "Exit #": {
+     "note": "The room this exit leads to, on the same map (a Map Change exit's Para1 names the map); 0 is no exit. By number: 0 N, 1 S, 2 E, 3 W, 4 NE, 5 NW, 6 SE, 7 SW, 8 U, 9 D.",
+     "links": "Rooms"
+    },
+    "Para1 #": {
+     "note": "Depends on the exit's Type #: see exit_params."
+    },
+    "Para2 #": {
+     "note": "Depends on the exit's Type #: see exit_params."
+    },
+    "Para3 #": {
+     "note": "Depends on the exit's Type #: see exit_params."
+    },
+    "Para4 #": {
+     "note": "Depends on the exit's Type #: see exit_params."
+    },
+    "Room Item # QTY": {
+     "note": "How many of the item lie here."
+    },
+    "Room Item # USES": {
+     "note": "Uses left on each."
+    }
+   },
+   "note": "A room is keyed by Map Number and Room Number. Exits, Death Room, Exit Room and Control Room name rooms on the same map. A room spawns monsters whose Group equals its Mon Type and whose Index lies from Min Index to Max Index, up to Max Regen at a time."
+  },
+  "Users": {
+   "columns": {
+    "Race": {
+     "ref": "Races"
+    },
+    "Class": {
+     "ref": "Classes"
+    },
+    "Weapon": {
+     "ref": "Items"
+    },
+    "Item #": {
+     "ref": "Items"
+    },
+    "Key #": {
+     "ref": "Items"
+    },
+    "Spellbook #": {
+     "ref": "Spells"
+    },
+    "Ability #": {
+     "abilities": true
+    },
+    "Worn #": {
+     "ref": "Items"
+    },
+    "Spell Cast #": {
+     "ref": "Spells"
+    }
+   }
+  },
+  "BankBooks": {
+   "columns": {
+    "Shop #": {
+     "ref": "Shops"
+    }
+   }
+  },
+  "Messages": {
+   "columns": {},
+   "note": "A message is three lines (Line 1 to Line 3). %s and %d are filled in order with what the use passes, a %s past the last argument prints nothing, and %% is a percent sign. One row is often shared: a monster's Hit Msg may use lines 1-2 while its Death Msg uses line 3 of the same row."
+  }
+ },
+ "abilities": {
+  "0": {
+   "name": "empty",
+   "note": "The \"nothing\" attribute. New objects automatically have their attributes filled with this."
+  },
+  "1": {
+   "name": "Damage",
+   "note": "Does damage in the amount specified by the parameter. MR is not taken into account."
+  },
+  "2": {
+   "name": "AC",
+   "note": "Modifies the AC value specified by the parameter, this AC is NOT affected by the targets weight. Used in barkskin and stoneskin."
+  },
+  "3": {
+   "name": "Rcol",
+   "note": "Modifies resistance to cold by the value specified by the parameter."
+  },
+  "4": {
+   "name": "Max Damage",
+   "note": "Modifies max damage to the value specified by the parameter."
+  },
+  "5": {
+   "name": "Rfir",
+   "note": "Modifies resistance to fire by the value specified by the parameter."
+  },
+  "6": {
+   "name": "Enslave",
+   "note": "Charms the target."
+  },
+  "7": {
+   "name": "DR",
+   "note": "Modifies the DR value specified by the parameter. Note that DR is expressed in multiples of 10."
+  },
+  "8": {
+   "name": "Drain",
+   "note": "Drains HP from the target to the caster. (usually seen in spells)"
+  },
+  "9": {
+   "name": "Shadow",
+   "note": "Displays \"A shadowy figure!\" when looked at by other players."
+  },
+  "10": {
+   "name": "AC(Blur)",
+   "note": "Modifies the AC value specified by the parameter, this AC IS affected by the targets encumberance. Used in blur, and the spell for the amethyst pendant."
+  },
+  "11": {
+   "name": "EnergyLevel",
+   "note": "Modifies the Energy level specified by the parameter."
+  },
+  "12": {
+   "name": "Summon",
+   "note": "Summons a monster specified by the parameter. The value in parameter is the monster number."
+  },
+  "13": {
+   "name": "Illu",
+   "note": "Increases or decreases the light value for the target ONLY by the value specified in the parameter."
+  },
+  "14": {
+   "name": "RoomIllu",
+   "note": "Increases or decreases the light value for the entire room by the value specified in the parameter."
+  },
+  "15": {
+   "name": "Alterhunger",
+   "note": "Unknown"
+  },
+  "16": {
+   "name": "Alter thirst",
+   "note": "Unknown"
+  },
+  "17": {
+   "name": "Damage(-MR)",
+   "note": "Does damage which takes into account the targets MR (or so the name implies)."
+  },
+  "18": {
+   "name": "Heal",
+   "note": "Heals damage specified by the value in the parameter."
+  },
+  "19": {
+   "name": "Poison",
+   "note": "Poisons the target doing damage specified by the value in the parameter."
+  },
+  "20": {
+   "name": "Cure Poison",
+   "note": "Cures poison (cure poison has a parameter of 8, as does antidote)."
+  },
+  "21": {
+   "name": "ImmuPoison",
+   "note": "Used in duration spells to make the target immune to poison."
+  },
+  "22": {
+   "name": "Accuracy",
+   "note": "Increases the targets accuracy by the value specified in the parameter. (bless increases this value by 3, divine favour increases it by 10)"
+  },
+  "23": {
+   "name": "AffectsUndead",
+   "note": "Used to make a spell ONLY work on undead monsters."
+  },
+  "24": {
+   "name": "ProtEvil",
+   "note": "Protection from evil."
+  },
+  "25": {
+   "name": "ProtGood",
+   "note": "Protection from good."
+  },
+  "26": {
+   "name": "DetectMagic",
+   "note": "Detects the magic in an item."
+  },
+  "27": {
+   "name": "Stealth",
+   "note": "Modifies stealth by the value in the parameter."
+  },
+  "28": {
+   "name": "Magical",
+   "note": "Defines the magical potency of an item. Witchunters cannot use items with this flag. To make a non-magical item hit highly magical creatures, use the HitMagic flag."
+  },
+  "29": {
+   "name": "Punch",
+   "note": "Used in the Mystic class definition to grant the Punch ability. A parameter of +1 is used in their definition."
+  },
+  "30": {
+   "name": "Kick",
+   "note": "Used in the Mystic class definition to grant the Kick ability. A parameter of +1 is used in their definition."
+  },
+  "31": {
+   "name": "Bash",
+   "note": "Used in almost all class definition to grant the ability to bash attack monsters."
+  },
+  "32": {
+   "name": "Smash",
+   "note": "Unknown"
+  },
+  "33": {
+   "name": "Killblow",
+   "note": "Unknown"
+  },
+  "34": {
+   "name": "Dodge",
+   "note": "Increases or decreases the targets ability to Dodge by the % value specified in the parameter."
+  },
+  "35": {
+   "name": "JumpKick",
+   "note": "Used in the Mystic class definition to grant the JumpKick ability. A parameter of +1 is used in their definition."
+  },
+  "36": {
+   "name": "M.R.",
+   "note": "Increases or decreases the targets MR by the value specified in the parameter."
+  },
+  "37": {
+   "name": "Picklocks",
+   "note": "In Race and Class definitions, this grants the ability to Picklock, in items, this can be used to enhance the ability."
+  },
+  "38": {
+   "name": "Tracking",
+   "note": "Used in Race and Class definitions to grant Tracking to a Race/Class."
+  },
+  "39": {
+   "name": "Thievery",
+   "note": "In Race and Class definitions, this grants the ability to Rob, in items, this can be used to enhance the ability."
+  },
+  "40": {
+   "name": "FindTraps",
+   "note": "In Race and Class definitions, this grants the ability to find traps, in items, this can be used to enhance the ability."
+  },
+  "41": {
+   "name": "DisarmTraps",
+   "note": "In Race and Class definitions, this grants the ability to disarm traps, in items, this can be used to enhance the ability."
+  },
+  "42": {
+   "name": "LearnSp",
+   "note": "Places the spell specified in the parameter into the players spells list. Also used for Kai powers and Bard songs. Use this in a\nscroll item. The parameter is the spell number."
+  },
+  "43": {
+   "name": "CastsSp",
+   "note": "Casts the spell when an item is 'used', or, with the %Spell attribute, this is the spell that is cast when the % chance is met."
+  },
+  "44": {
+   "name": "Intel",
+   "note": "Increases or decreases the Intel stat by the value specified in the parameter."
+  },
+  "45": {
+   "name": "Wisdom",
+   "note": "Increases or decreases the Wisdom/Willpower stat by the value specified in the parameter."
+  },
+  "46": {
+   "name": "Strength",
+   "note": "Increases or decreases the Strength stat by the value specified in the parameter."
+  },
+  "47": {
+   "name": "Health",
+   "note": "Increases or decreases the Health stat by the value specified in the parameter."
+  },
+  "48": {
+   "name": "Agility",
+   "note": "Increases or decreases the Agility stat by the value specified in the parameter."
+  },
+  "49": {
+   "name": "Charm",
+   "note": "Increases or decreases the Charm stat by the value specified in the parameter."
+  },
+  "50": {
+   "name": "MageBaneQuest",
+   "note": "This Determines if the player has completed the MageBane quest."
+  },
+  "51": {
+   "name": "AntiMagic",
+   "note": "Used in the Witchunter class definition, apperently the only effect being that MR effects beneficial as well as combat spells cast on the target."
+  },
+  "52": {
+   "name": "EvilInCombat",
+   "note": "Used in spells to generate evil warnings and give EP when used."
+  },
+  "53": {
+   "name": "BlindingLight",
+   "note": "Unknown"
+  },
+  "54": {
+   "name": "IlluTarget",
+   "note": "Increases or decreases the light level for the target specified by the value in the parameter."
+  },
+  "55": {
+   "name": "AlterGeneralLightDuration",
+   "note": "Unknown"
+  },
+  "56": {
+   "name": "RechargeItem",
+   "note": "Unknown"
+  },
+  "57": {
+   "name": "SeeHidden",
+   "note": "Grants the ability to see hidden players. For monsters, this allows them to see hidden players and attack them while they are sneaking or hiding. The monster will also follow even if the player escapes and re-sneaks."
+  },
+  "58": {
+   "name": "Crits",
+   "note": "Increases or decreases the targets critical hit chance by the value specified in the parameter."
+  },
+  "59": {
+   "name": "ClassOk",
+   "note": "Used in items to make the item equippable by classes they aren't intended to be used with."
+  },
+  "60": {
+   "name": "Fear",
+   "note": "Makes the target flee in fear. Used in duration spells."
+  },
+  "61": {
+   "name": "AffectExit",
+   "note": "Unknown"
+  },
+  "62": {
+   "name": "EvilChance",
+   "note": "Unknown"
+  },
+  "63": {
+   "name": "Experience",
+   "note": "Unknown (although one would assume this can be used to add/remove experience)"
+  },
+  "64": {
+   "name": "AddCP",
+   "note": "Unknown (although one would assume this can be used to add/remove CP)"
+  },
+  "65": {
+   "name": "ResistStone",
+   "note": "Modifies resistance to stone by the value specified by the parameter."
+  },
+  "66": {
+   "name": "Rlit",
+   "note": "Modifies resistance to lightning by the value specified by the parameter."
+  },
+  "67": {
+   "name": "Quickness",
+   "note": "does in fact make you walk faster (but only to a point so that it only matters if you're heavy.)"
+  },
+  "68": {
+   "name": "Slowness",
+   "note": "Modifies the room movement time while not affecting stealth as a modified encumbrance would. The Mage spell \"Slow\" uses a parameter of +200 for this attribute."
+  },
+  "69": {
+   "name": "MaxMana",
+   "note": "Increases or decreases the targets maximum mana by the value specified in the parameter."
+  },
+  "70": {
+   "name": "S.C.",
+   "note": "Incresaes or decreases the targets SC by the value specified in the parameter."
+  },
+  "71": {
+   "name": "Confusion",
+   "note": "Confuses the target, making them fumble in the % specified by the parameter. A parameter of +50 would make them fumble 50% of the time-- most \"stun\" spells use this with a value of +100, which makes the target fumble 100% of the time."
+  },
+  "72": {
+   "name": "DamageShield",
+   "note": "Used to setup a shockshield for the player. Shockshield uses this."
+  },
+  "73": {
+   "name": "DispellMagic",
+   "note": "cancels spells that affect the ability in the value (ie dispellmagic +107 cancels spells giving the \"blind\" ability), but probably only certain ones"
+  },
+  "74": {
+   "name": "HoldPerson",
+   "note": "Holds the target in the room. Used with duration spells. Entangle and Hold Person use this attribute."
+  },
+  "75": {
+   "name": "Paralyze",
+   "note": "Unknown"
+  },
+  "76": {
+   "name": "Mute",
+   "note": "Strikes the target mute, making them unable to talk in rooms, etc."
+  },
+  "77": {
+   "name": "Percep",
+   "note": "Increases or decreases the targets perception by the value specified in the parameter."
+  },
+  "78": {
+   "name": "Animal",
+   "note": "Used in monster attributes to flag a monster as an animal. See \"Affects Animals\"."
+  },
+  "79": {
+   "name": "MageBind",
+   "note": "did use to make spellcasting impossible but not sure it's still working."
+  },
+  "80": {
+   "name": "AffectsAnimals",
+   "note": "Used in spells to make it ONLY affect animals."
+  },
+  "81": {
+   "name": "Freedom",
+   "note": "Frees the target from holding spells and spells that alter the targets speed."
+  },
+  "82": {
+   "name": "Cursed",
+   "note": "Used on items, once worn, a Cursed item can't be removed."
+  },
+  "83": {
+   "name": "CURSED",
+   "note": "has the same affects as 82 (curse) so you can't remove an item but it also makes it not drop at death (unlike 82).. although the item is still unequipped at death so it kinda doesn't work right."
+  },
+  "84": {
+   "name": "Rcrs",
+   "note": "Remove curse. Seen in spells. The Priest spell \"Remove Curse\" uses this flag. Removes all cursed items."
+  },
+  "85": {
+   "name": "Shatter",
+   "note": "Shatters the targets weapon. The parameter (in theory) specifies which \"Quality\" of weapons the spell affects and can shatter. The Druid sell \"Shatter\" specifies a parameter of 1, and thus will not work on items with a Quality of or greater than 1."
+  },
+  "86": {
+   "name": "Quality",
+   "note": "Specifies an items \"Quality\". The only effect of this is to counter \"Shatter\". See \"Shatter\"."
+  },
+  "87": {
+   "name": "Speed",
+   "note": "Increases or decreases the targets swing speed with their weapon or attack by the value specified in the parameter. The Mage spell \"Speed\" uses +85 for a parameter, the Mage spell \"Slow\" uses +125."
+  },
+  "88": {
+   "name": "Alter HP",
+   "note": "increases or decreases the targets max HP"
+  },
+  "89": {
+   "name": "PunchACY",
+   "note": "believed to alter punch accuracy value"
+  },
+  "90": {
+   "name": "KickACY",
+   "note": "believed to alter kick accuracy value"
+  },
+  "91": {
+   "name": "JumpKACY",
+   "note": "believed to alter jump accuracy value"
+  },
+  "92": {
+   "name": "PunchDmg",
+   "note": "Increases punch damage for the Mystic punch attack."
+  },
+  "93": {
+   "name": "KickDmg",
+   "note": "Increases kick damage for the Mystic kick attack."
+  },
+  "94": {
+   "name": "JumpKDmg",
+   "note": "Increases jumpkick damage for the Mystic jumpkick attack."
+  },
+  "95": {
+   "name": "Slay",
+   "note": "Unknown. Used by the \"laen longsword\" item."
+  },
+  "96": {
+   "name": "Encum",
+   "note": "Increases or decreases the targets encumberance % by the value specified in the parameter."
+  },
+  "97": {
+   "name": "Good",
+   "note": "In spells and items, makes the spell/item useable only by Good aligned characters."
+  },
+  "98": {
+   "name": "Evil",
+   "note": "In spells and items, makes the spell/item useable only by Evil aligned characters."
+  },
+  "99": {
+   "name": "AlterDRpercent",
+   "note": "changes DR by the % in the value (is cast by some Mod 9 monsters with negative values.)"
+  },
+  "100": {
+   "name": "LoyalItem",
+   "note": "Makes the item stay with the player even into death. Seen in items."
+  },
+  "101": {
+   "name": "ConfuseMsg",
+   "note": "Sets the confusion message for a previous \"Confusion\" attribute. The parameter specifies the message number to use for when the player is confused and fumbles. For the Mage spell \"confusion\", the message is along the lines of \"You fumble in confusion!\"."
+  },
+  "102": {
+   "name": "RaceStealth",
+   "note": "Used in Race definitions to grant racial stealth."
+  },
+  "103": {
+   "name": "ClassStealth",
+   "note": "Used in Class definitions to grant class stealth."
+  },
+  "104": {
+   "name": "DefenseModifier",
+   "note": "Unknown"
+  },
+  "105": {
+   "name": "Accuracy(2)",
+   "note": "Increases or decreases accuracy by the value specified in the parameter."
+  },
+  "106": {
+   "name": "Accuracy (3)",
+   "note": "Increases or decreases accuracy by the value specified in the parameter."
+  },
+  "107": {
+   "name": "BlindUser",
+   "note": "Blinds the target."
+  },
+  "108": {
+   "name": "AffectsLiving",
+   "note": "Used in spells to limit their abilities to only living players or monsters. See \"NonLiving\""
+  },
+  "109": {
+   "name": "NonLiving",
+   "note": "Used in monster attributes to flag the monster as being Non Living which makes it impossible to cast spells flagged as AffectsLiving on them. See \"AffectsLiving\""
+  },
+  "110": {
+   "name": "NotGood",
+   "note": "Used in items/spells to flag the object as being useable by any alignment EXCEPT Good. (Neutral, Seedy, Outlaw, Criminal, Villain and FIEND can use it, but Good, Saint, Lawful cannot.)"
+  },
+  "111": {
+   "name": "NotEvil",
+   "note": "Used in items/spells to flag the object as being useable by any alignment EXCEPT Evil. (Lawful, Saint, Good, Neutral and Seedy can use it, but Outlaw, Criminal, Villain and FIEND cannot.)"
+  },
+  "112": {
+   "name": "Neutral",
+   "note": "In spells and items, makes the spell/item useable only by Neutral aligned characters."
+  },
+  "113": {
+   "name": "NotNeutral",
+   "note": "Used in items/spells to flag the object as being useable by any alignment EXCEPT Neutral. (Lawful, Saint, Good, Outlaw, Criminal, Villain and FIEND can use it, but Neutral and Seedy cannot.)"
+  },
+  "114": {
+   "name": "%Spell",
+   "note": "Used in items to make a \"spell effect\" occur on a percent chance on each hit or crit. The spell cast is specified by the NEXT \"CastsSp\" attribute. See \"CastsSp\"."
+  },
+  "115": {
+   "name": "DescMsg",
+   "note": "Used in spells. Specifies the message in WCCMSG.DAT to use when the spell wears off, when you are looked at, and when you type 'STAT' to see the effect listed."
+  },
+  "116": {
+   "name": "BSAccu",
+   "note": "Used in items (although I can see no reason why it couldn't be used in a spell) to specify the backstab accuracy for the weapon. A positive value increases the chance to hit, a negative value decreases the chance to hit."
+  },
+  "117": {
+   "name": "BsMinDmg",
+   "note": "Used in items (although I can see no reason why it couldn't be used in a spell) to specify a higher (or lower) minimum backstab damage for the weapon when armed."
+  },
+  "118": {
+   "name": "BsMaxDmg",
+   "note": "Used in items (although I can see no reason why it couldn't be used in a spell) to specify a higher (or lower) maximum backstab damage for the weapon when armed."
+  },
+  "119": {
+   "name": "Del@Maint",
+   "note": "Used in items to delete the item, hidden or not, at cleanup."
+  },
+  "120": {
+   "name": "StartMsg",
+   "note": "Used in spells to specify the 'start message' for the spell.Basically, this sets the opening line for the spell before the Cast Message is sent."
+  },
+  "121": {
+   "name": "Recharge",
+   "note": "Used in items to specify the amount of \"uses\" to recharge at cleanup."
+  },
+  "122": {
+   "name": "RemovesSpell",
+   "note": "Used in spells to remove other spells (cancel them out)."
+  },
+  "123": {
+   "name": "HPRegen",
+   "note": "Used in any object to modify the targets HP regen rate. The Druid spell \"Rapid Healing\" and the module-1 quest rings use this attribute."
+  },
+  "124": {
+   "name": "NegateAbility",
+   "note": "Removes the ability number?"
+  },
+  "125": {
+   "name": "IceSorcQuest",
+   "note": "This is the progress the player has made with the Ice Sorceress quest."
+  },
+  "126": {
+   "name": "GoodQuest",
+   "note": "This is the progress the player has made with the GOOD quest."
+  },
+  "127": {
+   "name": "NeutralQuest",
+   "note": "This is the progress the player has made with the NEUTRAL quest."
+  },
+  "128": {
+   "name": "EvilQuest",
+   "note": "This is the progress the player has made with the EVIL quest."
+  },
+  "129": {
+   "name": "DarkDruidQuest",
+   "note": "This is the progress the player has made with the Dark Druid quest."
+  },
+  "130": {
+   "name": "BloodChampQuest",
+   "note": "This is the progress the player has made with the Blood Champion quest."
+  },
+  "131": {
+   "name": "SheDragonQuest",
+   "note": "This is the progress the player has made with the SheDragon quest."
+  },
+  "132": {
+   "name": "WereratQuest",
+   "note": "This is the progress the player has made with the Wererat quest."
+  },
+  "133": {
+   "name": "PhoenixQuest",
+   "note": "This is the progress the player has made with the Phoenix feather quest."
+  },
+  "134": {
+   "name": "DaoLordQuest",
+   "note": "This is the progress the player has made with the DaoLord quest."
+  },
+  "135": {
+   "name": "MinLevel",
+   "note": "Typically seen in items (useless for spells since they have their own internal Minimum level field) to restrict them to players ONLY of the level specified or higher. The value in the parameter is the minimum level."
+  },
+  "136": {
+   "name": "MaxLevel",
+   "note": "Typically seen in items to restrict them to players ONLY of the level specified or LOWER. The value in the parameter is the maximum level."
+  },
+  "137": {
+   "name": "Shock",
+   "note": "Sets the Shockshield message for the spell/item. See \"DmgShield\"."
+  },
+  "138": {
+   "name": "RoomVisible",
+   "note": "Makes the item visible to the entire room."
+  },
+  "139": {
+   "name": "SpellImmu",
+   "note": "Used in objects to make the target immune to spells below or equal to the level specified in the parameter."
+  },
+  "140": {
+   "name": "TeleportRoom",
+   "note": "Teleports the target to the specified room in the parameter. Usually seen with a \"Teleport map\". See \"Teleport map\"."
+  },
+  "141": {
+   "name": "TeleportMap",
+   "note": "Teleports the target to the specified map in the parameter. Usually seen with a \"Teleport room\". See \"Teleport room\"."
+  },
+  "142": {
+   "name": "HitMagic",
+   "note": "Seen in weapons (and possibly could be used in spells) and used to make them hit magical creatures of the value specified in the parameter or LOWER. HitMagic +5 for example would let the target hit monsters with a magical attribute of 5 or lower."
+  },
+  "143": {
+   "name": "ClearItem",
+   "note": "Poofs or unequips item number?"
+  },
+  "144": {
+   "name": "NonMagicalSpell",
+   "note": "Flags the spell as non-magical, thus making it immune to MR."
+  },
+  "145": {
+   "name": "ManaRgn",
+   "note": "Used in objects to increase or decrease the targets mana regen by the percent specified in the parameter. A value of +25 would increase the targets mana regen by 25%. A value of +100 would increase the targets mana regen by 100% (double)."
+  },
+  "146": {
+   "name": "MonsGuards",
+   "note": "Used in monster definitions to define a monster that protects this one. The parameter points to an entry in the monster database that will protect this one. Multiple MonsGuards can be used to make the monster be protected by different monsters."
+  },
+  "147": {
+   "name": "ResistWater",
+   "note": "Increases or decreases the targets resistance to Water by the value specified in the parameter."
+  },
+  "148": {
+   "name": "TextBlock",
+   "note": "Executes the text block specified by the parameter."
+  },
+  "149": {
+   "name": "Remove@Maint",
+   "note": "Used in items-- removes the item at cleanup, poofing it."
+  },
+  "150": {
+   "name": "HealMana",
+   "note": "Regenerates mana back by the value specified in the parameter."
+  },
+  "151": {
+   "name": "EndCast",
+   "note": "Used in spell definitions to chain to another spell at the end of the current ones cast. EndCast is only called if the first spell doesn't fail."
+  },
+  "152": {
+   "name": "Rune",
+   "note": "Flags the object as a Rune. Seen in one item."
+  },
+  "153": {
+   "name": "KillSpell",
+   "note": "Kills a spell without calling it's EndCast effect (if one exists)."
+  },
+  "154": {
+   "name": "Visible@Maint",
+   "note": "Used in items to keep them visible at cleanup."
+  },
+  "155": {
+   "name": "DeathText",
+   "note": "Unknown (executes the specified text block when the player dies?)"
+  },
+  "156": {
+   "name": "QuestItem",
+   "note": "Makes the item a quest item"
+  },
+  "157": {
+   "name": "ScatterItems",
+   "note": "Scatters the items in the room to the specified room(s). You can use a range to specify multiple rooms, but, these rooms must all be a part of the current map."
+  },
+  "158": {
+   "name": "ReqToHit",
+   "note": "Monsters with this flag require that weapons (and spells?) with this IDENTICAL flag (including parameter) be used to attack it. NOTHING else will work on these monsters."
+  },
+  "159": {
+   "name": "KaiBind",
+   "note": "Prevents the target from using Kai powers. Seen in 1.1u's race change to Half-Ogre's."
+  },
+  "160": {
+   "name": "GiveTempSpell",
+   "note": "Unknown (gives the spell specified in Value/Parameter temporarily, as in, it appears in the spells/powers list? Maybe used in future items to give out spells only if a player has a specific item or has a specific item armed/equipped?)"
+  },
+  "161": {
+   "name": "OpenDoor",
+   "note": "Unknown (opens a door, I assume, but how it determines direction/etc is unknown)"
+  },
+  "162": {
+   "name": "Lore",
+   "note": "Unknown"
+  },
+  "163": {
+   "name": "SpellComponent",
+   "note": "Make the item a spell component."
+  },
+  "164": {
+   "name": "CastOnEnd%",
+   "note": "cast a spell specificed in the next EndCast ability when this spell ends only Value % chance of the time"
+  },
+  "165": {
+   "name": "AlterSpDmg",
+   "note": "Unknown (alter spells damage (eg: used in an item or another spell to temporarily increase all spells damage)?)"
+  },
+  "166": {
+   "name": "AlterSpLength",
+   "note": "Unknown (alter the length of duration spells (eg: used in an item or another spell to temporarily increase all future spells durations)?)"
+  },
+  "167": {
+   "name": "UnEquipItem",
+   "note": "Unknown (remove either the specific item, or, perhaps the value is an item location? (head, arms, etc)?)"
+  },
+  "168": {
+   "name": "EquipItem",
+   "note": "Unknown (equip either the specific item, or, perhaps the value is an item location? (head, arms, etc)? and the first elgible item found in the players inventory is used?)"
+  },
+  "169": {
+   "name": "CannotWearLocation",
+   "note": "Unknown (perhaps used to make an item that can be worn on multiple locations, but, this flag is used to define WHICH locations it cannot be used on?)"
+  },
+  "170": {
+   "name": "Sleep",
+   "note": "Unknown"
+  },
+  "171": {
+   "name": "Invisibility",
+   "note": "Unknown (some new form of stealth perhaps that doesn't rely on Stealth?)"
+  },
+  "172": {
+   "name": "SeeInvisible",
+   "note": "Unknown (most likely a way for monsters/players to see others with this new Invisible ability)"
+  },
+  "173": {
+   "name": "Scry",
+   "note": "Unknown (perhaps show the room specificed in the value? No idea really)"
+  },
+  "174": {
+   "name": "StealMana",
+   "note": "Unknown (most likely steals Mana from another Player or monster for the value specified (or min/max in a spell))"
+  },
+  "175": {
+   "name": "StealHPtoMP",
+   "note": "Unknown (convert stolen HP to Mana instead? Works like the other 'Steal' abilities?)"
+  },
+  "176": {
+   "name": "StealMPtoHP",
+   "note": "Unknown (convert stolen Mana to HP instead? Works like the other 'Steal' abilities?)"
+  },
+  "177": {
+   "name": "SpellColours",
+   "note": "Unknown (perhaps a way to specific the ANSI colour coding for spells, overriding the default colours for the spell?)"
+  },
+  "178": {
+   "name": "Shadowform",
+   "note": "This functions much like shadowform except the value states which text block to display when the player is looked at."
+  },
+  "179": {
+   "name": "FindTrapsValue",
+   "note": "alters user's Traps Value"
+  },
+  "180": {
+   "name": "PickLocksValue",
+   "note": "alters user's PickLocks Value"
+  },
+  "181": {
+   "name": "GHouseDeed",
+   "note": "Gang House Deed value"
+  },
+  "182": {
+   "name": "GHouseTax",
+   "note": "Gang House Tax value"
+  },
+  "183": {
+   "name": "GHouseItem",
+   "note": "Gang House Item"
+  },
+  "184": {
+   "name": "GShopItem",
+   "note": "Gang Shop Item (controller)"
+  },
+  "185": {
+   "name": "BadAttk",
+   "note": "Do not Attack if Item Nmbr"
+  },
+  "186": {
+   "name": "PerStealth",
+   "note": "Perfect Stealth"
+  },
+  "187": {
+   "name": "Meditate",
+   "note": "Meditate skill granted"
+  }
+ }
+}

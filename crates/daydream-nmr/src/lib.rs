@@ -19,6 +19,7 @@ pub mod columns;
 pub mod players;
 pub mod data;
 pub mod export;
+pub mod fields;
 pub mod import;
 pub mod jet;
 pub mod map;

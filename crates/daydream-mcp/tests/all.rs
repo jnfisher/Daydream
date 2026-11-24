@@ -4,5 +4,6 @@ mod support;
 
 mod authoring;
 mod batches;
+mod meanings;
 mod protocol;
 mod stock;

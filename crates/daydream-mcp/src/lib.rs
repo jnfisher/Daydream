@@ -10,7 +10,8 @@
 //! | Tool | Does |
 //! |---|---|
 //! | `list_tables` | every table: key columns, title column |
-//! | `describe_table` | a table's columns, with types and sizes |
+//! | `describe_table` | a table's columns: types, sizes, choice lists, what they refer to, and notes on what the game does with them |
+//! | `find_references` | every row that names a record: refers to it, an exit's parameter, or spawns it |
 //! | `list_rows` | a table's rows: key and title, more columns on request, filtered and paged |
 //! | `get_row` | one row, every column |
 //! | `free_numbers` | record numbers not in use (rooms: within a map) |
@@ -46,6 +47,7 @@ use daydream_nmr::schema::NmrTable;
 use daydream_store::Realm;
 
 mod batch;
+mod describe;
 mod filter;
 mod prompts;
 use prompts::INSTRUCTIONS;
@@ -290,8 +292,11 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "describe_table",
-            "description": "A table's columns, as NMR's forms label them, with each column's type (long, double, text with its size, memo).",
-            "inputSchema": { "type": "object", "properties": { "table": table }, "required": ["table"] },
+            "description": "A table's columns, as NMR's forms label them, with each column's type (long, double, text with its size, memo), the choice list its values are labelled from (lists), the table its values name (refers_to), and notes on what the game does with them (notes, by column or family: Room Item # is Room Item 0, 1, ...). Rooms adds exit_params: what Para1 # to Para4 # mean for each exit type. Read it before writing a table you have not written yet.",
+            "inputSchema": { "type": "object", "properties": {
+                "table": table,
+                "ability_notes": { "type": "boolean", "description": "Give each ability number's note, not just its name" }
+            }, "required": ["table"] },
             "annotations": { "readOnlyHint": true }
         },
         {
@@ -323,13 +328,21 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "free_numbers",
-            "description": "Record numbers not in use, from `from` up (default 1). For Rooms give `map`: room numbers free on that map.",
+            "description": "Record numbers not in use, from `from` up (default 1). For Rooms give `map`: room numbers free on that map. With `column`, the values of that column no row uses, from `from` to `to` (Monsters, column Group, 6 to 35: the monster groups free).",
             "inputSchema": { "type": "object", "properties": {
                 "table": table,
                 "count": { "type": "integer", "minimum": 1, "maximum": 1000 },
                 "from": { "type": "integer" },
-                "map": { "type": "integer" }
+                "to": { "type": "integer" },
+                "map": { "type": "integer" },
+                "column": { "type": "string" }
             }, "required": ["table"] },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "find_references",
+            "description": "Every row that names a record: columns that refer to its table (a monster's messages, a shop's items, a room's exits), exit parameters by exit type (a key exit's item), and for a monster the rooms that spawn it. Use it before changing or reusing a record that others may share, such as a message.",
+            "inputSchema": { "type": "object", "properties": { "table": table, "key": key }, "required": ["table", "key"] },
             "annotations": { "readOnlyHint": true }
         },
         {
@@ -551,6 +564,7 @@ impl Server {
         Some(match name {
             "list_tables" => Ok(self.list_tables()),
             "describe_table" => self.describe_table(args),
+            "find_references" => self.find_references(args),
             "list_rows" => self.list_rows(args),
             "get_row" => self.get_row(args),
             "free_numbers" => self.free_numbers(args),
@@ -586,20 +600,27 @@ impl Server {
 
     fn describe_table(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
         let t = self.table(string_arg(args, "table")?)?;
-        let columns: Vec<Value> = t
-            .columns
-            .iter()
-            .map(|c| {
-                let (ty, size) = rows::column_type(c.ty);
-                json!({ "name": c.name, "type": ty, "size": size })
-            })
+        let notes = args
+            .get("ability_notes")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Ok(describe::describe(t, notes))
+    }
+
+    fn find_references(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
+        let t = self.table(string_arg(args, "table")?)?;
+        let key = rows::parse_key(t, args.get("key").unwrap_or(&Value::Null))?;
+        let realm = self.realm()?;
+        let (_, all) = rows::load(&realm, t)?;
+        if rows::find_row(&all, &rows::index_columns(t), &key).is_none() {
+            return Err(
+                RowError::NotFound(format!("{} {}", t.name, rows::key_display(&key))).into(),
+            );
+        }
+        let tables: Vec<&'static NmrTable> = rows::record_tables()
+            .filter(|s| self.table(s.name).is_ok())
             .collect();
-        Ok(json!({
-            "table": t.name,
-            "key": rows::index_columns(t),
-            "title": rows::title_column(t),
-            "columns": columns,
-        }))
+        describe::find_references(&realm, &tables, t, &key)
     }
 
     fn list_rows(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -697,6 +718,9 @@ impl Server {
         if rooms && map.is_none() {
             return Err(bad("rooms are numbered within a map: give map"));
         }
+        if let Some(column) = args.get("column").and_then(Value::as_str) {
+            return self.free_values(t, column, from, number_arg(args, "to")?, count);
+        }
         let number_column = if rooms { "Room Number" } else { index[0] };
         let realm = self.realm()?;
         let (_, all) = rows::load(&realm, t)?;
@@ -717,6 +741,37 @@ impl Server {
             .collect();
         let free: Vec<i64> = (from..).filter(|n| !used.contains(n)).take(count).collect();
         Ok(json!({ "table": t.name, "map": map, "free": free }))
+    }
+
+    /// The values of `column` from `from` to `to` that no row of `t` holds.
+    fn free_values(
+        &self,
+        t: &'static NmrTable,
+        column: &str,
+        from: i64,
+        to: Option<i64>,
+        count: usize,
+    ) -> Result<Value, ToolError> {
+        let to = to.ok_or_else(|| bad("with column, give to: the highest value to look at"))?;
+        let realm = self.realm()?;
+        let (_, all) = rows::load(&realm, t)?;
+        let at = all
+            .position(column)
+            .ok_or_else(|| bad(format!("{} has no column {column}", t.name)))?;
+        let used: std::collections::HashSet<i64> = all
+            .rows
+            .iter()
+            .filter_map(|r| match &r[at] {
+                daydream_nmr::Value::Long(n) => Some(i64::from(*n)),
+                daydream_nmr::Value::Double(d) => Some(*d as i64),
+                _ => None,
+            })
+            .collect();
+        let free: Vec<i64> = (from..=to)
+            .filter(|n| !used.contains(n))
+            .take(count)
+            .collect();
+        Ok(json!({ "table": t.name, "column": all.columns[at], "free": free }))
     }
 
     fn get_map(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -792,11 +847,7 @@ impl Server {
     }
 
     /// The edits asked for, inline or from a file, with the file's changeset and name.
-    fn edits_arg(
-        &self,
-        realm: &Realm,
-        args: &Map<String, Value>,
-    ) -> Result<GivenEdits, ToolError> {
+    fn edits_arg(&self, realm: &Realm, args: &Map<String, Value>) -> Result<GivenEdits, ToolError> {
         let (raw, changeset, source) = match (args.get("edits"), args.get("edits_file")) {
             (Some(e), None) => (e.clone(), None, None),
             (None, Some(Value::String(f))) => {

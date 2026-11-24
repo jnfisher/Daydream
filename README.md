@@ -155,6 +155,12 @@ with changes. Previews leave out the columns an insert leaves blank, and a big p
 back as a summary. `list_rows` takes `where` conditions on any column (`"Room Item *"` is any
 of a room's items), and `get_map` takes a range of rooms and extra columns.
 
+`describe_table` explains each column: its choice list, the table it refers to, and notes on
+what the game does with it (an arena's Max Index is also its level cap), with the source in
+silvermere's engine; for Rooms it gives what each exit type's parameters mean.
+`find_references` lists every row that names a record. These come from
+`crates/daydream-nmr/src/fields.json`, which the web editors' choice lists use too.
+
 ```sh
 claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over stdio
 ```
