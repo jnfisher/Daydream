@@ -565,6 +565,7 @@ connect() {
             printf '%s' "$STACK_PASSWORD" | xclip -selection clipboard && note "(password copied to the clipboard)"
         fi
     fi
+    return 0
 }
 
 # --- commands -----------------------------------------------------------------------------
