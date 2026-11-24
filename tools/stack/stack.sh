@@ -204,6 +204,8 @@ svc_write() {
             # without RunAtLoad, a SuccessfulExit KeepAlive waits for an exit that never comes
             echo '    <key>RunAtLoad</key><true/>'
             echo '    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>'
+            # silvermere saves every character on SIGTERM; give it the time it takes
+            echo '    <key>ExitTimeOut</key><integer>90</integer>'
             echo "    <key>StandardOutPath</key><string>$(xesc "$MACLOGS/$c.log")</string>"
             echo "    <key>StandardErrorPath</key><string>$(xesc "$MACLOGS/$c.log")</string>"
             echo '</dict></plist>'
@@ -455,6 +457,13 @@ down_silvermere() {
     svc_active silvermere || { note "silvermere is not running"; return 0; }
     svc_stop silvermere
     wait_port "$TELNET_PORT" 90 closed || die "silvermere has not stopped; $(logs_cmd silvermere)"
+    # the port closes first; the process (and its writer lock) goes once every character is saved
+    local pid
+    pid=$(tr -cd '0-9' < "$SM/data/silvermere.db.lock" 2>/dev/null || true)
+    if [ -n "$pid" ]; then
+        for _ in $(seq 1 90); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+        ! kill -0 "$pid" 2>/dev/null || die "silvermere (pid $pid) has not exited; $(logs_cmd silvermere)"
+    fi
     note "silvermere stopped, every character saved"
 }
 
