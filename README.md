@@ -20,6 +20,12 @@ The design is in [docs/approach.md](docs/approach.md).
 
 ## Try it
 
+Release builds for Linux (x86_64 and aarch64), macOS (universal) and Windows are on the
+[releases page](https://github.com/jnfisher/daydream/releases), each checked by its
+`SHA256SUMS`; unpack one and run `daydream` in place of `cargo run -p daydream --` below. A
+tag `vX.Y.Z` that matches the version in `Cargo.toml` builds them
+(`.github/workflows/release.yml`).
+
 ```sh
 # the stock 1.11p world (downloaded once from MBBSEmu and checked), or a realm's own files
 cargo run -p daydream -- convert --stock --realm ./realm

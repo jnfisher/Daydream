@@ -1,0 +1,128 @@
+name: release
+
+# A tag `vX.Y.Z` builds daydream for Linux (x86_64 and aarch64, static musl), macOS (one
+# universal binary for Apple silicon and Intel) and Windows, and publishes them with a
+# SHA256SUMS file as a GitHub release. The same layout as silvermere's releases, so one
+# installer reads both (tools/stack). Run it by hand with dry_run to build without publishing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build everything but skip the publish step
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  binaries:
+    name: binary (${{ matrix.name }})
+    runs-on: ${{ matrix.name == 'universal-apple-darwin' && 'macos-latest' || matrix.name == 'x86_64-pc-windows-msvc' && 'windows-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl, universal-apple-darwin, x86_64-pc-windows-msvc]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Target
+        run: |
+          case "${{ matrix.name }}" in
+            *-linux-musl) echo "KIND=zig" ; echo "TARGETS=${{ matrix.name }}" ;;
+            *-apple-darwin) echo "KIND=darwin" ; echo "TARGETS=aarch64-apple-darwin x86_64-apple-darwin" ;;
+            *-windows-msvc) echo "KIND=msvc" ; echo "TARGETS=${{ matrix.name }}" ;;
+            *) echo "::error::unknown target ${{ matrix.name }}"; exit 1 ;;
+          esac >> "$GITHUB_ENV"
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          for t in $TARGETS; do rustup target add "$t"; done
+          rustc --version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+      - name: Install zig and cargo-zigbuild
+        if: env.KIND == 'zig'
+        run: .github/scripts/zigbuild-prep.sh $TARGETS
+      - name: Version
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME#v}"
+          else v="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)-dryrun"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: The tag matches Cargo.toml
+        if: github.ref_type == 'tag'
+        run: |
+          want="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
+          [ "${{ steps.v.outputs.version }}" = "$want" ] || { echo "::error::tag ${GITHUB_REF_NAME}, Cargo.toml $want"; exit 1; }
+      - name: Build
+        run: |
+          set -euo pipefail
+          case "$KIND" in
+            zig) cargo zigbuild --release --locked --target "$TARGETS" -p daydream --bin daydream
+                 bin="target/$TARGETS/release/daydream" ;;
+            msvc) cargo build --release --locked --target "$TARGETS" -p daydream --bin daydream
+                  bin="target/$TARGETS/release/daydream.exe" ;;
+            darwin)
+              for t in $TARGETS; do cargo build --release --locked --target "$t" -p daydream --bin daydream; done
+              mkdir -p target/universal
+              lipo -create -output target/universal/daydream \
+                target/aarch64-apple-darwin/release/daydream target/x86_64-apple-darwin/release/daydream
+              bin="target/universal/daydream" ;;
+          esac
+          "$bin" --version || true
+          echo "BIN=$bin" >> "$GITHUB_ENV"
+      - name: Package
+        run: |
+          set -euo pipefail
+          dir="daydream-${{ steps.v.outputs.version }}-${{ matrix.name }}"
+          rm -rf dist out && mkdir -p "dist/$dir" out
+          cp "$BIN" README.md LICENSE "dist/$dir/"
+          if [ "$KIND" = msvc ]; then
+            (cd dist && 7z a -tzip "../out/$dir.zip" "$dir" > /dev/null)
+          else
+            tar -C dist -czf "out/$dir.tar.gz" "$dir"
+          fi
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: archives
+          pattern: archive-*
+          merge-multiple: true
+      - name: SHA256SUMS
+        working-directory: archives
+        run: |
+          sha256sum daydream-* > SHA256SUMS
+          cat SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 4
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: archives/*
+      - uses: softprops/action-gh-release@v2
+        if: ${{ github.ref_type == 'tag' && !inputs.dry_run }}
+        with:
+          files: archives/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
