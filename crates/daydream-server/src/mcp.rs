@@ -17,7 +17,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{AppState, blocking};
 
@@ -56,14 +56,29 @@ pub(crate) async fn post(
             // as the editors' saves: not into a running game's own files
             let (_writing, _) = s.lock_write(false)?;
         }
+        if let Some(answer) = game_tool(&s, &msg) {
+            return Ok(Some(answer));
+        }
         let cur = s.current();
-        let mcp = cur.mcp.as_ref().ok_or_else(|| {
-            crate::ApiError(
-                StatusCode::CONFLICT,
-                "no game is open: choose one in Daydream's web UI".into(),
-            )
-        })?;
-        Ok(mcp.handle(&msg))
+        let mut answer = match cur.mcp.as_ref() {
+            Some(mcp) => mcp.handle(&msg),
+            None => daydream_mcp::handle_closed(
+                &msg,
+                s.silvermere.is_some(),
+                "No game is open: call list_games, then open_game with one of its ids \
+                 (or ask the user to choose one in Daydream's web UI).",
+            ),
+        };
+        // the game tools beside the realm's
+        if msg.get("method").and_then(Value::as_str) == Some("tools/list")
+            && let Some(tools) = answer
+                .as_mut()
+                .and_then(|a| a.pointer_mut("/result/tools"))
+                .and_then(Value::as_array_mut)
+        {
+            tools.extend(game_tools());
+        }
+        Ok(answer)
     })
     .await;
     match answer {
@@ -71,6 +86,66 @@ pub(crate) async fn post(
         Ok(None) => StatusCode::ACCEPTED.into_response(),
         Err(e) => e.into_response(),
     }
+}
+
+/// The tools that choose the game, which work with or without one open.
+fn game_tools() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "list_games",
+            "description": "The games Daydream can open (WCC .DAT folders, MBBSEmu .db folders, silvermere databases) with their ids, and the game open now.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "refresh": { "type": "boolean", "description": "Search again for games" }
+                }
+            }
+        }),
+        json!({
+            "name": "open_game",
+            "description": "Open a game by its id from list_games; the other tools then work on it. A legacy or silvermere game is edited as a working copy, made the first time it is opened.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The game's id, from list_games" },
+                    "refresh": { "type": "boolean", "description": "Read the game again into its working copy, replacing the copy (and any edits not yet written back)" }
+                },
+                "required": ["id"]
+            }
+        }),
+    ]
+}
+
+/// Answers a `tools/call` of [`game_tools`]; `None` for any other message.
+fn game_tool(s: &AppState, msg: &Value) -> Option<Value> {
+    if msg.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    let id = msg.get("id").cloned()?;
+    let name = msg.pointer("/params/name").and_then(Value::as_str)?;
+    let args = msg.pointer("/params/arguments");
+    let flag = |k: &str| {
+        args.and_then(|a| a.get(k))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    let result = match name {
+        "list_games" => Ok(crate::games::list_games(s, flag("refresh"))),
+        "open_game" => match args.and_then(|a| a.get("id")).and_then(Value::as_str) {
+            None => Err("give the game's id, from list_games".to_string()),
+            Some(game) => crate::games::open_game(
+                s,
+                crate::games::OpenJson {
+                    id: Some(game.to_string()),
+                    refresh: flag("refresh"),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| e.1),
+        },
+        _ => return None,
+    };
+    Some(json!({ "jsonrpc": "2.0", "id": id, "result": daydream_mcp::tool_result(result) }))
 }
 
 /// Whether an MCP message calls a tool that writes the realm.

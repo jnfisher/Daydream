@@ -32,8 +32,9 @@ silvermere holds a single-writer lock on its database, and Daydream takes the sa
 Daydream writes only while silvermere is stopped:
 
 1. Play in SyncTERM and find what to change.
-2. `daydream-stack edit`: stops silvermere, which saves every character first.
-3. In Daydream, open the silvermere game from the game picker, make the edit, write it back.
+2. `daydream-stack edit`: stops silvermere, which saves every character first, and opens the
+   silvermere game in Daydream.
+3. In Daydream (or through its MCP server), make the edit and write it back.
 4. `daydream-stack play`: starts silvermere and opens SyncTERM again, logged in.
 
 ## Commands

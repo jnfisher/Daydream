@@ -147,7 +147,8 @@ claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over 
 
 For Claude Desktop, add `{"command": "daydream", "args": ["mcp", "/path/to/realm"]}` under
 `mcpServers` in its config. `daydream serve` also answers MCP over HTTP at
-`http://127.0.0.1:7340/mcp`.
+`http://127.0.0.1:7340/mcp`. Over HTTP the agent also gets `list_games` and `open_game`, which
+choose the game as the web UI's picker does, so it can connect before a game is open.
 
 ### Reaching Daydream from elsewhere
 
