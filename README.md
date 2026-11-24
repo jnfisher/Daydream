@@ -147,6 +147,14 @@ and whether the game is running; writes to a running game's own files are refuse
 prompts `new_area`, `new_monster` and `new_item` walk an agent through building content one
 tested piece at a time. The player tables are left out unless given `--players`.
 
+Big pieces of work stay cheap. An agent can write its edits to a JSON file in the realm's
+`.daydream/batches` folder (or a folder given with `--batch-dir`) and hand `preview_edits`
+the file's name instead of retyping every edit; that only works for an agent on the same
+machine, so a hosted one still sends its edits inline. A `clone` edit copies an existing row
+with changes. Previews leave out the columns an insert leaves blank, and a big preview comes
+back as a summary. `list_rows` takes `where` conditions on any column (`"Room Item *"` is any
+of a room's items), and `get_map` takes a range of rooms and extra columns.
+
 ```sh
 claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over stdio
 ```

@@ -284,6 +284,10 @@ enum Command {
         /// write the realm into it and read it back, on this database only.
         #[arg(long, env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
         silvermere: Option<String>,
+        /// A folder the agent may hand edits files from (besides the realm's own
+        /// `.daydream/batches`). Repeatable.
+        #[arg(long = "batch-dir", value_name = "DIR")]
+        batch_dirs: Vec<PathBuf>,
     },
     /// Merge another user file's users into REALM's, as NMR's Merge Users does: users REALM
     /// lacks are copied byte for byte, users it has are skipped. Stop the realm first.
@@ -313,6 +317,10 @@ struct GameArgs {
     /// local data folder, `daydream` in it).
     #[arg(long, value_name = "DIR")]
     workspace: Option<PathBuf>,
+    /// A folder AI agents may hand the MCP server edits files from (besides each realm's
+    /// own `.daydream/batches`). Repeatable.
+    #[arg(long = "batch-dir", value_name = "DIR")]
+    batch_dirs: Vec<PathBuf>,
 }
 
 impl GameArgs {
@@ -322,6 +330,7 @@ impl GameArgs {
             search: self.search,
             default_search: !self.no_default_search,
             allow_any_source,
+            batch_dirs: self.batch_dirs,
         }
     }
 }
@@ -536,6 +545,7 @@ fn main() -> anyhow::Result<()> {
             realm,
             players,
             silvermere,
+            batch_dirs,
         } => {
             Realm::open(&realm)
                 .with_context(|| format!("opening the realm {}", realm.display()))?;
@@ -545,6 +555,7 @@ fn main() -> anyhow::Result<()> {
                     players,
                     silvermere,
                     status: Some(daydream_server::games::status_check(&realm, None)),
+                    batch_dirs,
                 },
             );
             server.run_stdio(std::io::stdin().lock(), std::io::stdout().lock())?;

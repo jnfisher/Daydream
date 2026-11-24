@@ -45,6 +45,8 @@ use daydream_nmr::rows::{self, Edit, Preview, RecordChange, RowError};
 use daydream_nmr::schema::NmrTable;
 use daydream_store::Realm;
 
+mod batch;
+mod filter;
 mod prompts;
 use prompts::INSTRUCTIONS;
 use serde::{Deserialize, Serialize};
@@ -67,6 +69,9 @@ pub struct Options {
     /// Says what game the realm is and whether it is running; without one the realm is
     /// taken to be a copy no game runs on.
     pub status: Option<StatusCheck>,
+    /// Folders `preview_edits` may read edits files from, besides the realm's own
+    /// `.daydream/batches`.
+    pub batch_dirs: Vec<PathBuf>,
 }
 
 /// What the server knows of the game its realm belongs to.
@@ -103,6 +108,7 @@ struct Pending {
     edits: Vec<Edit>,
     previews: Vec<Preview>,
     changeset: Option<String>,
+    source: Option<String>,
 }
 
 /// An applied token, as the undo journal keeps it.
@@ -118,6 +124,9 @@ pub struct Applied {
     /// The piece of work it belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changeset: Option<String>,
+    /// The edits file they were read from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 impl Applied {
@@ -133,19 +142,7 @@ impl Applied {
 
     /// Rows changed per table and operation (`{"Rooms": {"insert": 35}}`).
     fn summary(&self) -> Value {
-        let mut out = Map::new();
-        for e in &self.edits {
-            let op = match e {
-                Edit::Insert { .. } => "insert",
-                Edit::Update { .. } => "update",
-                Edit::Delete { .. } => "delete",
-            };
-            let t = out
-                .entry(e.table().to_string())
-                .or_insert_with(|| json!({}));
-            t[op] = json!(t[op].as_u64().unwrap_or(0) + 1);
-        }
-        Value::Object(out)
+        batch::count(&self.edits)
     }
 }
 
@@ -273,11 +270,12 @@ fn tool_list(silvermere: bool) -> Value {
     let key = json!({ "type": "array", "description": "The row's key: its key columns' values in order, as list_tables gives them (Rooms: [map, room])" });
     let edit = json!({
         "type": "object",
-        "description": "One edit. op insert: table and values (must include the key columns; other columns start blank). op update: table, key and the values to change (not the key). op delete: table and key.",
+        "description": "One edit. op insert: table and values (must include the key columns; other columns start blank). op update: table, key and the values to change (not the key). op delete: table and key. op clone: table, from (the key of a row to copy) and values (the new row's key columns, and any columns to change); get_row the row first, since stock rows can hold junk.",
         "properties": {
-            "op": { "type": "string", "enum": ["insert", "update", "delete"] },
+            "op": { "type": "string", "enum": ["insert", "update", "delete", "clone"] },
             "table": table,
             "key": key,
+            "from": { "type": "array", "description": "clone: the key of the row to copy" },
             "values": { "type": "object", "description": "{column: value}, column names as describe_table gives them" }
         },
         "required": ["op", "table"]
@@ -298,11 +296,20 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "list_rows",
-            "description": "A table's rows: each row's key and title, and the values of `columns` when asked. `contains` keeps rows whose title contains it (any case). Paged by `offset` and `limit` (at most 500).",
+            "description": "A table's rows: each row's key and title, and the values of `columns` when asked. `contains` keeps rows whose title contains it (any case); `where` keeps rows meeting conditions on any columns. Paged by `offset` and `limit` (at most 500).",
             "inputSchema": { "type": "object", "properties": {
                 "table": table,
                 "columns": { "type": "array", "items": { "type": "string" } },
                 "contains": { "type": "string" },
+                "where": {
+                    "type": "array",
+                    "description": "Conditions that must all hold. A column with * stands for every column it fits, one word per * (\"Room Item *\" is Room Item 0, 1, ...; \"Exit *\" is every exit), and the condition holds when any of them does (for != : when none equals). Text compares ignoring case.",
+                    "items": { "type": "object", "properties": {
+                        "column": { "type": "string" },
+                        "op": { "type": "string", "enum": filter::OPS, "description": "default =" },
+                        "value": { "description": "a number or text; between: [low, high]; in: a list" }
+                    }, "required": ["column", "value"] }
+                },
                 "offset": { "type": "integer", "minimum": 0 },
                 "limit": { "type": "integer", "minimum": 1, "maximum": MAX_ROWS }
             }, "required": ["table"] },
@@ -327,17 +334,24 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "get_map",
-            "description": "One map's rooms with their exits (direction, target room, exit type) and what NMR's map marks on them, plus every map number and its room count.",
-            "inputSchema": { "type": "object", "properties": { "map": { "type": "integer" } }, "required": ["map"] },
+            "description": "One map's rooms with their exits (direction, target room, exit type) and what NMR's map marks on them, plus every map number and its room count. `from` and `to` keep a range of room numbers; `columns` adds Rooms columns to each room (Type, Min Index, Max Index, Mon Type, ...).",
+            "inputSchema": { "type": "object", "properties": {
+                "map": { "type": "integer" },
+                "from": { "type": "integer" },
+                "to": { "type": "integer" },
+                "columns": { "type": "array", "items": { "type": "string" } }
+            }, "required": ["map"] },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "preview_edits",
-            "description": "Checks a list of edits against the realm without writing: every value each would change, after the import has accepted the row. Edits must touch different rows. Returns a token for apply_edits.",
+            "description": "Checks a list of edits against the realm without writing: every value each would change, after the import has accepted the row. Edits must touch different rows. Returns a token for apply_edits. For many edits, write them to a JSON file in the realm's batch folder (game_status gives it) and pass edits_file instead of retyping them. An insert's preview leaves out the columns it leaves blank; a large preview comes back as a summary unless detail asks for more.",
             "inputSchema": { "type": "object", "properties": {
                 "edits": { "type": "array", "items": edit, "minItems": 1 },
-                "changeset": changeset.clone()
-            }, "required": ["edits"] },
+                "edits_file": { "type": "string", "description": "A .json file of edits (a list, or {\"edits\": [...], \"changeset\": \"...\"}) in the realm's batch folder or another folder the server allows; a relative path is taken from the batch folder" },
+                "changeset": changeset.clone(),
+                "detail": { "type": "string", "enum": ["summary", "changes", "full"], "description": "summary: rows per table and the first few; changes: every changed value, but not an insert's blank columns; full: everything. Default: changes, or summary for a large batch" }
+            } },
             "annotations": { "readOnlyHint": true }
         },
         {
@@ -611,6 +625,7 @@ impl Server {
             .get("contains")
             .and_then(Value::as_str)
             .map(str::to_lowercase);
+        let conds = filter::parse(args.get("where"), &all, t.name)?;
         let offset = number_arg(args, "offset")?.unwrap_or(0).max(0) as usize;
         let limit = (number_arg(args, "limit")?.unwrap_or(100).max(1) as usize).min(MAX_ROWS);
         let matching: Vec<&Vec<daydream_nmr::Value>> = all
@@ -623,6 +638,7 @@ impl Server {
                 (Some(_), None) => false,
                 (None, _) => true,
             })
+            .filter(|r| filter::matches(&conds, r))
             .collect();
         let list: Vec<Value> = matching
             .iter()
@@ -710,22 +726,94 @@ impl Server {
         let view = daydream_nmr::map::map_view(&realm, layout, map)
             .map_err(|e| ToolError::Io(e.to_string()))?;
         let mut v = serde_json::to_value(view).map_err(|e| ToolError::Io(e.to_string()))?;
+        let from = number_arg(args, "from")?.unwrap_or(i64::MIN);
+        let to = number_arg(args, "to")?.unwrap_or(i64::MAX);
+        if let Some(rooms) = v.get_mut("rooms").and_then(Value::as_array_mut) {
+            rooms.retain(|r| r["room"].as_i64().is_some_and(|n| n >= from && n <= to));
+        }
+        self.room_columns(&realm, map, args.get("columns"), &mut v)?;
         v["map"] = json!(map);
         v["directions"] = json!(daydream_nmr::map::DIRECTIONS);
         Ok(v)
     }
 
-    fn edits_arg(&self, args: &Map<String, Value>) -> Result<Vec<Edit>, ToolError> {
-        let edits: Vec<Edit> =
-            serde_json::from_value(args.get("edits").cloned().unwrap_or(Value::Null))
-                .map_err(|e| bad(format!("edits: {e}")))?;
-        if edits.is_empty() {
-            return Err(bad("edits is empty"));
+    /// Adds `columns` of the Rooms table to each room of a map view.
+    fn room_columns(
+        &self,
+        realm: &Realm,
+        map: i64,
+        columns: Option<&Value>,
+        view: &mut Value,
+    ) -> Result<(), ToolError> {
+        let names: Vec<&str> = match columns {
+            None | Some(Value::Null) => return Ok(()),
+            Some(Value::Array(l)) => l
+                .iter()
+                .map(|c| c.as_str().ok_or_else(|| bad("columns are names")))
+                .collect::<Result<_, _>>()?,
+            Some(_) => return Err(bad("columns must be a list of names")),
+        };
+        let t = self.table("Rooms")?;
+        let (_, all) = rows::load(realm, t)?;
+        let at: Vec<(String, usize)> = names
+            .iter()
+            .map(|c| {
+                all.position(c)
+                    .map(|i| (all.columns[i].clone(), i))
+                    .ok_or_else(|| bad(format!("Rooms has no column {c}")))
+            })
+            .collect::<Result<_, _>>()?;
+        let (Some(map_at), Some(room_at)) =
+            (all.position("Map Number"), all.position("Room Number"))
+        else {
+            return Ok(());
+        };
+        let num = |v: &daydream_nmr::Value| match v {
+            daydream_nmr::Value::Long(n) => Some(i64::from(*n)),
+            daydream_nmr::Value::Double(d) => Some(*d as i64),
+            _ => None,
+        };
+        let by_room: HashMap<i64, &Vec<daydream_nmr::Value>> = all
+            .rows
+            .iter()
+            .filter(|r| num(&r[map_at]) == Some(map))
+            .filter_map(|r| num(&r[room_at]).map(|n| (n, r)))
+            .collect();
+        if let Some(rooms) = view.get_mut("rooms").and_then(Value::as_array_mut) {
+            for room in rooms {
+                if let Some(row) = room["room"].as_i64().and_then(|n| by_room.get(&n)) {
+                    for (name, i) in &at {
+                        room[name.as_str()] = rows::cell_json(&row[*i]);
+                    }
+                }
+            }
         }
+        Ok(())
+    }
+
+    /// The edits asked for, inline or from a file, with the file's changeset and name.
+    fn edits_arg(
+        &self,
+        realm: &Realm,
+        args: &Map<String, Value>,
+    ) -> Result<GivenEdits, ToolError> {
+        let (raw, changeset, source) = match (args.get("edits"), args.get("edits_file")) {
+            (Some(e), None) => (e.clone(), None, None),
+            (None, Some(Value::String(f))) => {
+                let allowed = batch::allowed_dirs(&self.realm_dir, &self.options.batch_dirs);
+                let (path, v) = batch::read_file(f, &allowed)?;
+                let (edits, changeset) = batch::file_edits(v)?;
+                (edits, changeset, Some(path.display().to_string()))
+            }
+            (None, Some(_)) => return Err(bad("edits_file is a path")),
+            (None, None) => return Err(bad("give edits, or edits_file")),
+            (Some(_), Some(_)) => return Err(bad("give edits or edits_file, not both")),
+        };
+        let edits = batch::expand(realm, &raw)?;
         for e in &edits {
             self.table(e.table())?;
         }
-        Ok(edits)
+        Ok((edits, changeset, source))
     }
 
     fn preview_all(&self, realm: &Realm, edits: &[Edit]) -> Result<Vec<Preview>, ToolError> {
@@ -748,13 +836,19 @@ impl Server {
     }
 
     fn preview_edits(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
-        let changeset = changeset_arg(args)?;
-        let edits = self.edits_arg(args)?;
+        let detail = batch::Detail::parse(args.get("detail"))?;
         let realm = self.realm()?;
+        let (edits, in_file, source) = self.edits_arg(&realm, args)?;
+        let mut changeset = changeset_arg(args)?;
+        if changeset.is_none()
+            && let Some(c) = in_file
+        {
+            changeset = changeset_arg(&Map::from_iter([("changeset".to_string(), c)]))?;
+        }
         let previews = self.preview_all(&realm, &edits)?;
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
         let token = format!("e{}-{n}", now());
-        let shown = previews_json(&previews);
+        let mut shown = batch::shown(&edits, &previews, detail);
         self.pending
             .lock()
             .map_err(|e| ToolError::Io(e.to_string()))?
@@ -764,9 +858,15 @@ impl Server {
                     edits,
                     previews,
                     changeset: changeset.clone(),
+                    source: source.clone(),
                 },
             );
-        Ok(json!({ "token": token, "changeset": changeset, "edits": shown }))
+        shown["token"] = json!(token);
+        shown["changeset"] = json!(changeset);
+        if let Some(s) = source {
+            shown["edits_file"] = json!(s);
+        }
+        Ok(shown)
     }
 
     fn apply_edits(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -823,6 +923,7 @@ impl Server {
             records,
             undone: false,
             changeset: pending.changeset,
+            source: pending.source,
         };
         self.save(&applied)?;
         self.pending
@@ -951,6 +1052,9 @@ impl Server {
                     "rows": a.summary(),
                     "undone": a.undone,
                 });
+                if let Some(s) = &a.source {
+                    v["edits_file"] = json!(s);
+                }
                 if with_edits {
                     v["edits"] = json!(a.edits);
                 }
@@ -992,6 +1096,7 @@ impl Server {
             "running": running,
             "running_by": s.running_by,
             "can_apply": !(s.live && running),
+            "batch_folder": batch::allowed_dirs(&self.realm_dir, &[])[0].display().to_string(),
         });
         let mut notes = Vec::new();
         if s.live && running {
@@ -1039,6 +1144,9 @@ impl Server {
     }
 }
 
+/// Edits as asked for: the edits, a file's changeset, and the file's path.
+type GivenEdits = (Vec<Edit>, Option<Value>, Option<String>);
+
 /// A changeset label, when given.
 fn changeset_arg(args: &Map<String, Value>) -> Result<Option<String>, ToolError> {
     match args.get("changeset") {
@@ -1061,25 +1169,4 @@ fn running_flag(v: &mut Value) {
     let by = v.get("running").cloned().unwrap_or(Value::Null);
     v["running"] = json!(!by.is_null());
     v["running_by"] = by;
-}
-
-fn previews_json(previews: &[Preview]) -> Vec<Value> {
-    previews
-        .iter()
-        .map(|p| {
-            let changes: Vec<Value> = p
-                .changes
-                .iter()
-                .map(|c| {
-                    json!({
-                        "column": c.column,
-                        "before": rows::cell_json(&c.before),
-                        "after": rows::cell_json(&c.after),
-                    })
-                })
-                .collect();
-            let key: Vec<Value> = p.key.iter().map(rows::cell_json).collect();
-            json!({ "table": p.table, "key": key, "changes": changes })
-        })
-        .collect()
 }

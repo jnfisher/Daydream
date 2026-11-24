@@ -196,6 +196,9 @@ pub struct Config {
     pub default_search: bool,
     /// Let a token holder type any folder or database URL (`serve --allow-any-source`).
     pub allow_any_source: bool,
+    /// Folders the MCP server reads agents' edits files from, besides each realm's own
+    /// `.daydream/batches`.
+    pub batch_dirs: Vec<PathBuf>,
 }
 
 impl Config {
