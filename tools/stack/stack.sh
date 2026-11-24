@@ -553,7 +553,19 @@ connect() {
     else
         nohup syncterm "$ENTRY" >/dev/null 2>&1 &
     fi
-    note "SyncTERM opened on '$ENTRY' (user $USER_NAME); if it stops at Username:, the login is in 'daydream-stack status'"
+    note "SyncTERM opened on '$ENTRY'"
+    note "login: $USER_NAME / ${STACK_PASSWORD:-?}"
+    # the password on the clipboard, for SyncTERM's Password: prompt
+    if [ -n "${STACK_PASSWORD:-}" ]; then
+        if command -v pbcopy >/dev/null; then
+            printf '%s' "$STACK_PASSWORD" | pbcopy && note "(password copied to the clipboard)"
+        elif command -v wl-copy >/dev/null; then
+            printf '%s' "$STACK_PASSWORD" | wl-copy && note "(password copied to the clipboard)"
+        elif command -v xclip >/dev/null && [ -n "${DISPLAY:-}" ]; then
+            printf '%s' "$STACK_PASSWORD" | xclip -selection clipboard && note "(password copied to the clipboard)"
+        fi
+    fi
+    return 0
 }
 
 # --- commands -----------------------------------------------------------------------------
