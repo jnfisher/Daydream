@@ -18,10 +18,14 @@
 //! | `preview_edits` | what a list of edits (insert, update, delete) would change; a token |
 //! | `apply_edits` | makes previewed edits, if the realm still gives the same preview |
 //! | `undo` | puts back the records an applied token changed, byte for byte |
-//! | `history` | the applied edits that can be undone |
+//! | `history` | the applied edits that can be undone, by changeset |
+//! | `game_status` | what is open, where edits go, and whether the game is running |
 //! | `silvermere_status` | what the silvermere database holds, and whether silvermere runs on it |
 //! | `silvermere_export` | writes the realm's world into the silvermere database (dry run by default) |
 //! | `silvermere_import` | rewrites the realm's world from the silvermere database (dry run by default) |
+//!
+//! The server also gives prompts (`new_area`, `new_monster`, `new_item`) that walk an agent
+//! through making content in small, tested steps ([`prompts`]).
 //!
 //! The `silvermere_*` tools are offered only when the server was given a silvermere database
 //! ([`Options::silvermere`]); the agent cannot name another.
@@ -40,6 +44,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use daydream_nmr::rows::{self, Edit, Preview, RecordChange, RowError};
 use daydream_nmr::schema::NmrTable;
 use daydream_store::Realm;
+
+mod prompts;
+use prompts::INSTRUCTIONS;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -57,6 +64,37 @@ pub struct Options {
     /// A silvermere database (a SQLite file's path or a URL): offers the `silvermere_*`
     /// tools, on this database only, so an agent never handles its credentials.
     pub silvermere: Option<String>,
+    /// Says what game the realm is and whether it is running; without one the realm is
+    /// taken to be a copy no game runs on.
+    pub status: Option<StatusCheck>,
+}
+
+/// What the server knows of the game its realm belongs to.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct GameStatus {
+    /// The game's name, when known.
+    pub game: Option<String>,
+    /// The realm is the game's own files (not a working copy): a running game would
+    /// overwrite edits, so they are refused while it runs.
+    pub live: bool,
+    /// What is running on the realm's files, when something is.
+    pub running_by: Option<String>,
+}
+
+/// A look at the game ([`GameStatus`]), made by whoever runs the server.
+#[derive(Clone)]
+pub struct StatusCheck(pub std::sync::Arc<dyn Fn() -> GameStatus + Send + Sync>);
+
+impl std::fmt::Debug for StatusCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StatusCheck")
+    }
+}
+
+impl StatusCheck {
+    pub fn new(f: impl Fn() -> GameStatus + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(f))
+    }
 }
 
 /// Previewed edits waiting to be applied.
@@ -64,6 +102,7 @@ pub struct Options {
 struct Pending {
     edits: Vec<Edit>,
     previews: Vec<Preview>,
+    changeset: Option<String>,
 }
 
 /// An applied token, as the undo journal keeps it.
@@ -76,6 +115,38 @@ pub struct Applied {
     pub records: Vec<RecordChange>,
     #[serde(default)]
     pub undone: bool,
+    /// The piece of work it belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changeset: Option<String>,
+}
+
+impl Applied {
+    /// The order tokens were applied in: the time, then the server's count.
+    fn order(&self) -> (u64, u64) {
+        let n = self
+            .token
+            .rsplit_once('-')
+            .and_then(|(_, n)| n.parse().ok())
+            .unwrap_or(0);
+        (self.at, n)
+    }
+
+    /// Rows changed per table and operation (`{"Rooms": {"insert": 35}}`).
+    fn summary(&self) -> Value {
+        let mut out = Map::new();
+        for e in &self.edits {
+            let op = match e {
+                Edit::Insert { .. } => "insert",
+                Edit::Update { .. } => "update",
+                Edit::Delete { .. } => "delete",
+            };
+            let t = out
+                .entry(e.table().to_string())
+                .or_insert_with(|| json!({}));
+            t[op] = json!(t[op].as_u64().unwrap_or(0) + 1);
+        }
+        Value::Object(out)
+    }
 }
 
 /// One realm's MCP server. Shared by every connection.
@@ -138,8 +209,6 @@ fn number_arg(args: &Map<String, Value>, name: &str) -> Result<Option<i64>, Tool
     }
 }
 
-const INSTRUCTIONS: &str = "Daydream edits a MajorMUD realm in Nightmare Redux's terms. Read with list_tables, describe_table, list_rows, get_row, get_map and free_numbers. To change anything, call preview_edits, show the user the changes, and only then apply_edits with its token; undo takes the token back. The game must be stopped while its realm is edited.";
-
 fn initialize(id: &Value, params: &Value, more: &str) -> Value {
     let asked = params.get("protocolVersion").and_then(Value::as_str);
     let version = asked
@@ -149,7 +218,7 @@ fn initialize(id: &Value, params: &Value, more: &str) -> Value {
         id,
         json!({
             "protocolVersion": version,
-            "capabilities": { "tools": {} },
+            "capabilities": { "tools": {}, "prompts": {} },
             "serverInfo": { "name": "daydream", "version": env!("CARGO_PKG_VERSION") },
             "instructions": format!("{INSTRUCTIONS}{more}"),
         }),
@@ -168,12 +237,22 @@ pub fn handle_closed(msg: &Value, silvermere: bool, why: &str) -> Option<Value> 
         "initialize" => initialize(&id, &params, &format!(" {why}")),
         "ping" => rpc_result(&id, json!({})),
         "tools/list" => rpc_result(&id, tool_list(silvermere)),
+        "prompts/list" => rpc_result(&id, prompts::list()),
+        "prompts/get" => prompt(&id, &params),
         "tools/call" => rpc_result(
             &id,
             json!({ "content": [{ "type": "text", "text": why }], "isError": true }),
         ),
         other => rpc_error(&id, -32601, format!("no method {other}")),
     })
+}
+
+/// A `prompts/get` answer.
+fn prompt(id: &Value, params: &Value) -> Value {
+    match prompts::get(params) {
+        Ok(v) => rpc_result(id, v),
+        Err(e) => rpc_error(id, -32602, e),
+    }
 }
 
 /// A tool's answer as `tools/call` gives it.
@@ -203,6 +282,7 @@ fn tool_list(silvermere: bool) -> Value {
         },
         "required": ["op", "table"]
     });
+    let changeset = json!({ "type": "string", "maxLength": 64, "description": "A label for one piece of work (\"cave area\"), the same on each of its batches, so it can be undone as a whole" });
     let mut list = json!({ "tools": [
         {
             "name": "list_tables",
@@ -255,7 +335,8 @@ fn tool_list(silvermere: bool) -> Value {
             "name": "preview_edits",
             "description": "Checks a list of edits against the realm without writing: every value each would change, after the import has accepted the row. Edits must touch different rows. Returns a token for apply_edits.",
             "inputSchema": { "type": "object", "properties": {
-                "edits": { "type": "array", "items": edit, "minItems": 1 }
+                "edits": { "type": "array", "items": edit, "minItems": 1 },
+                "changeset": changeset.clone()
             }, "required": ["edits"] },
             "annotations": { "readOnlyHint": true }
         },
@@ -267,13 +348,25 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "undo",
-            "description": "Puts back every record an applied token changed, exactly as it was, if none of them has changed since.",
-            "inputSchema": { "type": "object", "properties": { "token": { "type": "string" } }, "required": ["token"] },
+            "description": "Puts back every record an applied token changed, exactly as it was, if none of them has changed since. Give a token, or a changeset to undo all of its tokens, newest first.",
+            "inputSchema": { "type": "object", "properties": {
+                "token": { "type": "string" },
+                "changeset": changeset.clone()
+            } },
             "annotations": { "destructiveHint": true }
         },
         {
             "name": "history",
-            "description": "The edits applied through this server, newest first, and whether each has been undone.",
+            "description": "The edits applied through this server, newest first: each token's changeset, what it changed (rows per table and operation), and whether it has been undone. `edits` adds the edits themselves.",
+            "inputSchema": { "type": "object", "properties": {
+                "changeset": changeset,
+                "edits": { "type": "boolean" }
+            } },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "game_status",
+            "description": "The realm open: which game it is, whether edits go to the game's own files or to a working copy, whether the game is running (edits to its own files are refused while it runs), and the silvermere database's state when there is one.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true }
         }
@@ -334,7 +427,9 @@ impl Server {
         let flag = |n: &str, default: bool| args.get(n).and_then(Value::as_bool).unwrap_or(default);
         if name == "silvermere_status" {
             let info = sm::block_on(sm::info(&url))?;
-            return serde_json::to_value(info).map_err(|e| ToolError::Io(e.to_string()));
+            let mut v = serde_json::to_value(info).map_err(|e| ToolError::Io(e.to_string()))?;
+            running_flag(&mut v);
+            return Ok(v);
         }
         let dry_run = flag("dry_run", true);
         let _writing = self
@@ -405,6 +500,8 @@ impl Server {
             "initialize" => initialize(&id, &params, ""),
             "ping" => rpc_result(&id, json!({})),
             "tools/list" => rpc_result(&id, tool_list(self.options.silvermere.is_some())),
+            "prompts/list" => rpc_result(&id, prompts::list()),
+            "prompts/get" => prompt(&id, &params),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params
@@ -447,7 +544,8 @@ impl Server {
             "preview_edits" => self.preview_edits(args),
             "apply_edits" => self.apply_edits(args),
             "undo" => self.undo(args),
-            "history" => self.history(),
+            "history" => self.history(args),
+            "game_status" => self.game_status(),
             "silvermere_status" | "silvermere_export" | "silvermere_import" => {
                 let Some(db) = &self.options.silvermere else {
                     return None;
@@ -650,6 +748,7 @@ impl Server {
     }
 
     fn preview_edits(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
+        let changeset = changeset_arg(args)?;
         let edits = self.edits_arg(args)?;
         let realm = self.realm()?;
         let previews = self.preview_all(&realm, &edits)?;
@@ -659,8 +758,15 @@ impl Server {
         self.pending
             .lock()
             .map_err(|e| ToolError::Io(e.to_string()))?
-            .insert(token.clone(), Pending { edits, previews });
-        Ok(json!({ "token": token, "edits": shown }))
+            .insert(
+                token.clone(),
+                Pending {
+                    edits,
+                    previews,
+                    changeset: changeset.clone(),
+                },
+            );
+        Ok(json!({ "token": token, "changeset": changeset, "edits": shown }))
     }
 
     fn apply_edits(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -680,6 +786,7 @@ impl Server {
             .write
             .lock()
             .map_err(|e| ToolError::Io(e.to_string()))?;
+        self.refuse_if_running()?;
         let realm = self.realm()?;
         if self.preview_all(&realm, &pending.edits)? != pending.previews {
             return Err(RowError::Conflict(
@@ -715,13 +822,19 @@ impl Server {
             edits: pending.edits,
             records,
             undone: false,
+            changeset: pending.changeset,
         };
         self.save(&applied)?;
         self.pending
             .lock()
             .map_err(|e| ToolError::Io(e.to_string()))?
             .remove(&token);
-        Ok(json!({ "token": token, "reports": reports, "records_changed": applied.records.len() }))
+        Ok(json!({
+            "token": token,
+            "changeset": applied.changeset,
+            "reports": reports,
+            "records_changed": applied.records.len(),
+        }))
     }
 
     fn journal_path(&self, token: &str) -> Result<PathBuf, ToolError> {
@@ -749,23 +862,65 @@ impl Server {
     }
 
     fn undo(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
-        let token = string_arg(args, "token")?;
+        let token = args.get("token").and_then(Value::as_str);
+        let changeset = changeset_arg(args)?;
         let _writing = self
             .write
             .lock()
             .map_err(|e| ToolError::Io(e.to_string()))?;
-        let mut a = self.load_applied(token)?;
-        if a.undone {
-            return Err(bad(format!("{token} is already undone")));
-        }
+        self.refuse_if_running()?;
         let realm = self.realm()?;
-        rows::revert(&realm, &a.records)?;
-        a.undone = true;
-        self.save(&a)?;
-        Ok(json!({ "token": token, "records_restored": a.records.len() }))
+        match (token, changeset) {
+            (Some(token), None) => {
+                let mut a = self.load_applied(token)?;
+                if a.undone {
+                    return Err(bad(format!("{token} is already undone")));
+                }
+                rows::revert(&realm, &a.records)?;
+                a.undone = true;
+                self.save(&a)?;
+                Ok(json!({ "token": token, "records_restored": a.records.len() }))
+            }
+            (None, Some(changeset)) => {
+                let tokens: Vec<Applied> = self
+                    .applied()
+                    .into_iter()
+                    .filter(|a| !a.undone && a.changeset.as_deref() == Some(changeset.as_str()))
+                    .collect();
+                if tokens.is_empty() {
+                    return Err(bad(format!(
+                        "nothing applied under the changeset {changeset} is left to undo"
+                    )));
+                }
+                let mut undone = Vec::new();
+                let mut restored = 0;
+                for mut a in tokens {
+                    if let Err(e) = rows::revert(&realm, &a.records) {
+                        return Err(bad(format!(
+                            "{}: {e}. Undone before it, newest first: {}",
+                            a.token,
+                            if undone.is_empty() {
+                                "none".to_string()
+                            } else {
+                                undone.join(", ")
+                            }
+                        )));
+                    }
+                    a.undone = true;
+                    self.save(&a)?;
+                    restored += a.records.len();
+                    undone.push(a.token);
+                }
+                Ok(
+                    json!({ "changeset": changeset, "undone": undone, "records_restored": restored }),
+                )
+            }
+            _ => Err(bad("give a token or a changeset (not both)")),
+        }
     }
 
-    fn history(&self) -> Result<Value, ToolError> {
+    /// Every applied token in the journal, newest first.
+    fn applied(&self) -> Vec<Applied> {
         let mut all = Vec::new();
         if let Ok(dir) = std::fs::read_dir(self.journal_dir()) {
             for entry in dir.flatten() {
@@ -777,12 +932,91 @@ impl Server {
                 }
             }
         }
-        all.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| b.token.cmp(&a.token)));
-        let list: Vec<Value> = all
+        all.sort_by_key(|a| std::cmp::Reverse(a.order()));
+        all
+    }
+
+    fn history(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
+        let changeset = changeset_arg(args)?;
+        let with_edits = args.get("edits").and_then(Value::as_bool).unwrap_or(false);
+        let list: Vec<Value> = self
+            .applied()
             .iter()
-            .map(|a| json!({ "token": a.token, "at": a.at, "edits": a.edits, "undone": a.undone }))
+            .filter(|a| changeset.is_none() || a.changeset == changeset)
+            .map(|a| {
+                let mut v = json!({
+                    "token": a.token,
+                    "at": a.at,
+                    "changeset": a.changeset,
+                    "rows": a.summary(),
+                    "undone": a.undone,
+                });
+                if with_edits {
+                    v["edits"] = json!(a.edits);
+                }
+                v
+            })
             .collect();
         Ok(json!({ "applied": list }))
+    }
+
+    /// The game's state as the server was told how to look at it.
+    fn status(&self) -> GameStatus {
+        self.options
+            .status
+            .as_ref()
+            .map(|c| (c.0)())
+            .unwrap_or_default()
+    }
+
+    /// Refuses a write when the realm is a running game's own files.
+    fn refuse_if_running(&self) -> Result<(), ToolError> {
+        let s = self.status();
+        match (s.live, s.running_by) {
+            (true, Some(by)) => Err(bad(format!(
+                "{} is running on these files ({by}): ask the user to stop it first, or its next \
+                 write undoes this one",
+                s.game.as_deref().unwrap_or("the game")
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    fn game_status(&self) -> Result<Value, ToolError> {
+        let s = self.status();
+        let running = s.running_by.is_some();
+        let mut v = json!({
+            "realm": self.realm_dir.display().to_string(),
+            "game": s.game,
+            "edits_go_to": if s.live { "the game's own files" } else { "a working copy" },
+            "running": running,
+            "running_by": s.running_by,
+            "can_apply": !(s.live && running),
+        });
+        let mut notes = Vec::new();
+        if s.live && running {
+            notes.push("The game is running on these files: apply_edits and undo are refused until it stops.");
+        }
+        if let Some(db) = &self.options.silvermere {
+            use daydream_silvermere as sm;
+            let url = sm::database_url(db);
+            match sm::block_on(sm::info(&url)) {
+                Ok(info) => {
+                    let mut i =
+                        serde_json::to_value(info).map_err(|e| ToolError::Io(e.to_string()))?;
+                    running_flag(&mut i);
+                    v["silvermere"] =
+                        json!({ "running": i["running"], "running_by": i["running_by"] });
+                }
+                Err(e) => v["silvermere"] = json!({ "error": e.to_string() }),
+            }
+            notes.push(
+                "Edits here change the working copy only. silvermere_export writes them into silvermere's \
+                 database, which needs silvermere stopped; restart it afterwards to play them.",
+            );
+        }
+        v["notes"] = json!(notes);
+        Ok(v)
     }
 
     /// Serves JSON-RPC messages, one per line, until `input` ends (the stdio transport).
@@ -803,6 +1037,30 @@ impl Server {
         }
         Ok(())
     }
+}
+
+/// A changeset label, when given.
+fn changeset_arg(args: &Map<String, Value>) -> Result<Option<String>, ToolError> {
+    match args.get("changeset") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => {
+            let s = s.trim();
+            if s.is_empty() || s.chars().count() > 64 || s.chars().any(char::is_control) {
+                Err(bad("changeset is a label of 1 to 64 characters"))
+            } else {
+                Ok(Some(s.to_string()))
+            }
+        }
+        Some(_) => Err(bad("changeset is a label (a string)")),
+    }
+}
+
+/// silvermere's status with `running` a yes or no and its holder in `running_by` (the
+/// library gives the holder or null, which reads as "unknown").
+fn running_flag(v: &mut Value) {
+    let by = v.get("running").cloned().unwrap_or(Value::Null);
+    v["running"] = json!(!by.is_null());
+    v["running_by"] = by;
 }
 
 fn previews_json(previews: &[Preview]) -> Vec<Value> {

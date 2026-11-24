@@ -169,6 +169,22 @@ impl Game {
     }
 }
 
+/// How the MCP server looks at a realm's game: its name, whether the realm is its own files,
+/// and what runs on them. Without a known game, the realm folder is looked at as one.
+pub fn status_check(dir: &Path, game: Option<Game>) -> daydream_mcp::StatusCheck {
+    let dir = dir.to_path_buf();
+    let game = game.unwrap_or_else(|| Game::of_realm(&dir));
+    daydream_mcp::StatusCheck::new(move || daydream_mcp::GameStatus {
+        game: Some(game.label.clone()),
+        live: game.live,
+        running_by: if game.live {
+            running::check(&dir).by
+        } else {
+            None
+        },
+    })
+}
+
 /// How games are found and opened.
 #[derive(Debug, Clone, Default)]
 pub struct Config {

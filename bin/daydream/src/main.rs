@@ -544,6 +544,7 @@ fn main() -> anyhow::Result<()> {
                 daydream_mcp::Options {
                     players,
                     silvermere,
+                    status: Some(daydream_server::games::status_check(&realm, None)),
                 },
             );
             server.run_stdio(std::io::stdin().lock(), std::io::stdout().lock())?;

@@ -141,7 +141,11 @@ For AI agents, Daydream is an MCP (Model Context Protocol) server. An agent read
 in NMR's terms (tables, columns, rows, free record numbers, maps) and makes content with
 `preview_edits`, then `apply_edits`. Every write goes through the same strict import as the
 editors' saves, and `undo` puts back exactly the records an applied edit changed (the journal
-is kept in `REALM/.daydream/undo`). The player tables are left out unless given `--players`.
+is kept in `REALM/.daydream/undo`). Give each batch of one piece of work the same
+`changeset` label and `undo` takes the whole piece back. `game_status` says where edits go
+and whether the game is running; writes to a running game's own files are refused. The
+prompts `new_area`, `new_monster` and `new_item` walk an agent through building content one
+tested piece at a time. The player tables are left out unless given `--players`.
 
 ```sh
 claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over stdio

@@ -2,5 +2,6 @@
 
 mod support;
 
+mod authoring;
 mod protocol;
 mod stock;
