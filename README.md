@@ -141,7 +141,25 @@ For AI agents, Daydream is an MCP (Model Context Protocol) server. An agent read
 in NMR's terms (tables, columns, rows, free record numbers, maps) and makes content with
 `preview_edits`, then `apply_edits`. Every write goes through the same strict import as the
 editors' saves, and `undo` puts back exactly the records an applied edit changed (the journal
-is kept in `REALM/.daydream/undo`). The player tables are left out unless given `--players`.
+is kept in `REALM/.daydream/undo`). Give each batch of one piece of work the same
+`changeset` label and `undo` takes the whole piece back. `game_status` says where edits go
+and whether the game is running; writes to a running game's own files are refused. The
+prompts `new_area`, `new_monster` and `new_item` walk an agent through building content one
+tested piece at a time. The player tables are left out unless given `--players`.
+
+Big pieces of work stay cheap. An agent can write its edits to a JSON file in the realm's
+`.daydream/batches` folder (or a folder given with `--batch-dir`) and hand `preview_edits`
+the file's name instead of retyping every edit; that only works for an agent on the same
+machine, so a hosted one still sends its edits inline. A `clone` edit copies an existing row
+with changes. Previews leave out the columns an insert leaves blank, and a big preview comes
+back as a summary. `list_rows` takes `where` conditions on any column (`"Room Item *"` is any
+of a room's items), and `get_map` takes a range of rooms and extra columns.
+
+`describe_table` explains each column: its choice list, the table it refers to, and notes on
+what the game does with it (an arena's Max Index is also its level cap), with the source in
+silvermere's engine; for Rooms it gives what each exit type's parameters mean.
+`find_references` lists every row that names a record. These come from
+`crates/daydream-nmr/src/fields.json`, which the web editors' choice lists use too.
 
 ```sh
 claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over stdio

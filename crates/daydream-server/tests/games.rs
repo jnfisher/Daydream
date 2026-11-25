@@ -61,6 +61,7 @@ impl Machine {
                     search: vec![self.root.clone()],
                     default_search: false,
                     allow_any_source,
+                    ..Config::default()
                 },
                 ..Options::default()
             },
@@ -391,6 +392,7 @@ async fn a_silvermere_database_opens_into_a_working_copy() {
                 search: vec![tmp.path().join("games")],
                 default_search: false,
                 allow_any_source: false,
+                ..Config::default()
             },
             ..Options::default()
         },

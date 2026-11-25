@@ -98,6 +98,8 @@ impl AppState {
             &realm_dir,
             daydream_mcp::Options {
                 silvermere,
+                status: Some(games::status_check(&realm_dir, game.clone())),
+                batch_dirs: self.games.batch_dirs.clone(),
                 ..daydream_mcp::Options::default()
             },
         );
