@@ -266,6 +266,74 @@ async fn a_save_changes_only_what_it_names() {
     assert_eq!(body["name"], "Dwarf");
 }
 
+/// The realm with an update file holding an image of each race: `(seqnum, type, image)`.
+fn realm_with_update_file() -> tempfile::TempDir {
+    let dir = realm();
+    let races = WbtrvDb::open_read_only(&dir.path().join("WCCRACE.db"))
+        .unwrap()
+        .records()
+        .unwrap();
+    let mut seq_key = number_key();
+    seq_key[0].segments[0].length = 4;
+    seq_key[0].segments[0].data_type = ty::AUTO_INC;
+    let mut upd = WbtrvDb::create(&dir.path().join("WCCUPDAT.db"), meta(2015), seq_key).unwrap();
+    for (i, (_, race)) in races.iter().enumerate() {
+        let mut r = vec![0u8; 2015];
+        r[..4].copy_from_slice(&(i as i32 + 1).to_le_bytes());
+        r[4] = 1;
+        r[5..5 + race.len()].copy_from_slice(race);
+        upd.insert(&r).unwrap();
+    }
+    dir
+}
+
+fn update_images(dir: &std::path::Path) -> Vec<(i32, u8, Vec<u8>)> {
+    WbtrvDb::open_read_only(&dir.join("WCCUPDAT.db"))
+        .unwrap()
+        .records()
+        .unwrap()
+        .into_iter()
+        .map(|(_, r)| {
+            (
+                i32::from_le_bytes(r[..4].try_into().unwrap()),
+                r[4],
+                r[5..5 + 126].to_vec(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn saves_keep_the_update_file_in_step() {
+    let dir = realm_with_update_file();
+    let uri = format!("/api/tables/Races/row?key={}", key(serde_json::json!([1])));
+    let (status, report) = send(
+        dir.path(),
+        "PUT",
+        &uri,
+        serde_json::json!({"values": {"Name": "Elf"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let race = WbtrvDb::open_read_only(&dir.path().join("WCCRACE.db"))
+        .unwrap()
+        .get(1)
+        .unwrap()
+        .unwrap();
+    let images = update_images(dir.path());
+    // the game's next start applies the save instead of undoing it
+    assert_eq!(images[0], (1, 1, race));
+    assert_eq!(&images[1].2[2..7], b"Dwarf");
+
+    let gone = format!("/api/tables/Races/row?key={}", key(serde_json::json!([2])));
+    let (status, report) = send(dir.path(), "DELETE", &gone, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    // and a deleted race does not come back
+    let images = update_images(dir.path());
+    assert_eq!(images.len(), 1);
+    assert_eq!(&images[0].2[2..5], b"Elf");
+}
+
 #[tokio::test]
 async fn bad_saves_are_refused() {
     let dir = realm();

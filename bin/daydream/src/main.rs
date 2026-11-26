@@ -289,6 +289,25 @@ enum Command {
         #[arg(long = "batch-dir", value_name = "DIR")]
         batch_dirs: Vec<PathBuf>,
     },
+    /// Bring REALM's update file (`WCCUPDAT`, or `WCCUPDA2` on Worldgroup 3) in step with the
+    /// edits Daydream made since it last did, or write it anew.
+    ///
+    /// MajorMUD merges its update file into the world at every start, so a record edited in
+    /// the world files alone is changed back unless its image in the update file changes too.
+    /// Daydream does this after every save on its own; this command is for writing the whole
+    /// file again (`--full`, Nightmare Redux's "Compile Full Update File", for edits made
+    /// before Daydream kept it in step or by other tools) or a blank one (`--blank`).
+    UpdateFile {
+        /// The realm directory.
+        realm: PathBuf,
+        /// Write an image of every race, class, room, shop, item, spell, monster, message,
+        /// text block and action anew.
+        #[arg(long, conflicts_with = "blank")]
+        full: bool,
+        /// Write one record the game never applies: its next start changes nothing.
+        #[arg(long)]
+        blank: bool,
+    },
     /// Merge another user file's users into REALM's, as NMR's Merge Users does: users REALM
     /// lacks are copied byte for byte, users it has are skipped. Stop the realm first.
     MergeUsers {
@@ -504,6 +523,7 @@ fn main() -> anyhow::Result<()> {
             from,
             dry_run,
         } => merge_users(&realm, &from, dry_run),
+        Command::UpdateFile { realm, full, blank } => update_file(&realm, full, blank),
         Command::SilvermereExport {
             realm,
             database,
@@ -868,6 +888,8 @@ fn nmr_import(
     }
     if dry_run {
         println!("dry run: nothing was written");
+    } else {
+        sync_update_file(realm.dir())?;
     }
     if errors > 0 {
         bail!("{errors} rows could not be imported");
@@ -894,6 +916,7 @@ fn delete(realm: &Path, table: &str, range: Option<&str>, dry_run: bool) -> anyh
         );
     } else {
         println!("{}: {} records deleted", r.table, r.deleted);
+        sync_update_file(realm.dir())?;
     }
     Ok(())
 }
@@ -924,6 +947,9 @@ fn merge_users(realm: &Path, from: &Path, dry_run: bool) -> anyhow::Result<()> {
     let source = WbtrvDb::open_read_only(&from_path)?;
     let mut into = WbtrvDb::open(&into_path)?;
     let r = daydream_store::merge::merge(&source, &mut into, dry_run)?;
+    if !dry_run {
+        sync_update_file(into_realm.dir())?;
+    }
     println!(
         "{} users {}copied, {} skipped (already in the realm)",
         r.copied,
@@ -982,6 +1008,49 @@ fn silvermere_import(
     }
     if opts.dry_run {
         println!("(dry run: nothing written)");
+    } else {
+        sync_update_file(realm.dir())?;
+    }
+    Ok(())
+}
+
+/// Brings the realm's update file in step with what a command wrote ([`update_file`]).
+fn sync_update_file(realm: &Path) -> anyhow::Result<()> {
+    let r = daydream_store::update::sync(realm).context("bringing the update file in step")?;
+    print_update_report(&r);
+    Ok(())
+}
+
+fn print_update_report(r: &daydream_store::update::Report) {
+    let Some(file) = &r.file else {
+        return;
+    };
+    if r.changed() {
+        println!(
+            "{file}: {} images replaced, {} added, {} removed ({} records)",
+            r.replaced, r.added, r.removed, r.records
+        );
+    }
+    for t in &r.too_long {
+        println!("  {t}: too long for an image, so the update file leaves it alone");
+    }
+}
+
+fn update_file(realm: &Path, full: bool, blank: bool) -> anyhow::Result<()> {
+    use daydream_store::update::{Compile, compile, sync};
+    let r = if full {
+        compile(realm, Compile::Full)?
+    } else if blank {
+        compile(realm, Compile::Blank)?
+    } else {
+        sync(realm)?
+    };
+    match &r.file {
+        None => println!("the realm has no update file (WCCUPDAT or WCCUPDA2): nothing to do"),
+        Some(file) if !r.changed() && r.too_long.is_empty() => {
+            println!("{file}: already in step");
+        }
+        Some(_) => print_update_report(&r),
     }
     Ok(())
 }

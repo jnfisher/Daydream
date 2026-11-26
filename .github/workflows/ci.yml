@@ -146,4 +146,5 @@ jobs:
 
       - name: test
         if: ${{ !cancelled() }}
-        run: cargo test --workspace --locked
+        # every failure in one run, not the first crate's
+        run: cargo test --workspace --locked --no-fail-fast

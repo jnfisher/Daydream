@@ -54,7 +54,8 @@ fn an_area_built_by_an_agent_round_trips_through_the_wcc_files() {
     assert_eq!(row["values"]["Name"], "Mossy Grotto");
     assert_eq!(row["values"]["Exit 0"], rooms[1]);
 
-    // written back: the files that changed are rebuilt, and read back as the realm has them
+    // written back: the files that changed are rebuilt (the area's three and the update file
+    // that carries it into the game at its next start), and read back as the realm has them
     let out = tmp.path().join("wcc");
     let opts = WriteOptions {
         out: Some(out.clone()),
@@ -66,7 +67,11 @@ fn an_area_built_by_an_agent_round_trips_through_the_wcc_files() {
         .filter(|w| w.action != daydream_store::dat::Action::Unchanged)
         .map(|w| w.stem.as_str())
         .collect();
-    assert_eq!(rebuilt.len(), 3, "{written:?}");
+    assert_eq!(rebuilt.len(), 4, "{written:?}");
+    assert!(
+        rebuilt.iter().any(|s| s.starts_with("WCCUPDA")),
+        "{written:?}"
+    );
     for w in &written {
         let mut f = OpenOptions::new()
             .variable_length(true)

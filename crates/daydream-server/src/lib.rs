@@ -121,12 +121,10 @@ impl AppState {
     }
 
     /// Takes the write lock on the open realm. Unless `dry_run`, refuses when the realm is a
-    /// game's own files and the game is running.
-    pub(crate) fn lock_write(
-        &self,
-        dry_run: bool,
-    ) -> Result<(std::sync::MutexGuard<'_, ()>, PathBuf), ApiError> {
-        let guard = self
+    /// game's own files and the game is running, and when the lock is let go brings the
+    /// realm's update file in step with what was written ([`WriteGuard`]).
+    pub(crate) fn lock_write(&self, dry_run: bool) -> Result<(WriteGuard<'_>, PathBuf), ApiError> {
+        let lock = self
             .write
             .lock()
             .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -145,7 +143,40 @@ impl AppState {
                 ));
             }
         }
+        let guard = WriteGuard {
+            _lock: lock,
+            dir: (!dry_run).then(|| dir.clone()),
+        };
         Ok((guard, dir))
+    }
+}
+
+/// The write lock on the open realm ([`AppState::lock_write`]). Let go after a write, it first
+/// brings the realm's update file in step with the write ([`daydream_store::update::sync`]), so
+/// the game's next start applies the edits instead of undoing them. A sync that fails is
+/// logged and tried again after the next write (the journal keeps the edits until then), and
+/// writing the realm back into the game's files syncs first and reports the failure.
+pub(crate) struct WriteGuard<'a> {
+    _lock: std::sync::MutexGuard<'a, ()>,
+    /// The realm to sync; `None` for a dry run.
+    dir: Option<PathBuf>,
+}
+
+impl Drop for WriteGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.dir {
+            match daydream_store::update::sync(dir) {
+                Ok(r) if r.changed() => tracing::info!(
+                    "update file {}: {} images replaced, {} added, {} removed",
+                    r.file.as_deref().unwrap_or("?"),
+                    r.replaced,
+                    r.added,
+                    r.removed
+                ),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("bringing the update file in step: {e}"),
+            }
+        }
     }
 }
 

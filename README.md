@@ -116,6 +116,25 @@ cargo run -p daydream -- write-dat ./realm /path/to/WGSERV           # or --out 
 
 In the browser it is the Tools page's **Write to WCC files** card.
 
+**The update file.** MajorMUD merges its update file (`WCCUPDAT`, or `WCCUPDA2` on Worldgroup
+3) into the world at every start, and MBBSEmu at its nightly cleanup too. The stock file holds
+a copy of every stock record, so an edit written only into the world files is changed back
+at the next start, and a deleted record comes back. Daydream therefore keeps the realm's
+update file in step with every save (the editors, the Tools page, the MCP server and the
+commands that write): an edited record's copy becomes the record as saved, a new record gets
+one, and a deleted or renumbered record's old copy goes. `write-dat` writes the update file
+with the rest, so the next start applies the edits again rather than undoing them. Edits
+made before this version, or with other tools, are not in it: write the whole file again
+from the realm with `update-file --full` (Nightmare Redux's "Compile Full Update File"), or
+a blank one with `--blank`. A text block too long for a DOS update record (2010 bytes) loses
+its copy instead, so the game leaves it as written. What Daydream changed is kept beside the
+realm in `.daydream/journal.db`, never in the game's own files.
+
+```sh
+cargo run -p daydream -- update-file ./realm          # bring it in step (saves do this already)
+cargo run -p daydream -- update-file ./realm --full   # or --blank
+```
+
 To and from a [silvermere](https://github.com/jnfisher/silvermere) server's database (its
 SQLite file or PostgreSQL), straight into its tables while it is stopped:
 `silvermere-export` writes the realm's world (rooms, items, monsters, spells, classes, races,
@@ -218,13 +237,13 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `silvermere-export`, `silvermere-import`, `silvermere-info`, `mcp`, `new-token` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `update-file`, `silvermere-export`, `silvermere-import`, `silvermere-info`, `mcp`, `new-token` |
 | `crates/daydream-mcp` | The MCP server for AI agents: its tools, the undo journal, stdio |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file; one row at a time for the editors (`rows`) |
 | `crates/daydream-silvermere` | silvermere's database: its schema and repositories (copied), the writer lock, and moving a realm's world in and out |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
-| `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns |
+| `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns; the journal of what Daydream changed, and the update file kept in step with it |
 | `crates/daydream-wcc` | The Btrieve reader and the 1.11p record decoders and encoders |
 | `crates/daydream-types` | Record types, enums, ids and byte layouts |
 | `tools/nmr` | Generates the `.mdb` column table from NMR's source; `write-mdb.ps1` writes the file through Jet |

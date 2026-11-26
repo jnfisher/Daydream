@@ -6,4 +6,5 @@ mod dat_write;
 mod oracle;
 mod realm_fixture;
 mod roundtrip;
+mod update_stock;
 mod writes;
