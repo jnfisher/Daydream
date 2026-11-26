@@ -121,15 +121,11 @@ fn a_publish_through_the_update_file_alone_leaves_the_world_files_to_the_game() 
         .map(|e| (e.file_name(), std::fs::read(e.path()).unwrap()))
         .collect();
 
-    // the realm makes item 1 hit harder
+    // the realm makes the first item hit harder (stock items start at 9, not 1)
     let maxdmg = ITEM.field("maxdmg").unwrap();
     let mut db = WbtrvDb::open(&realm_dir.join("WCCITEMS.db")).unwrap();
-    let (id, mut item) = db
-        .records()
-        .unwrap()
-        .into_iter()
-        .find(|(_, r)| r[..4] == 1i32.to_le_bytes())
-        .unwrap();
+    let (id, mut item) = db.records().unwrap().remove(0);
+    let number = item[..4].to_vec();
     item[maxdmg.offset..maxdmg.offset + 2].copy_from_slice(&99i16.to_le_bytes());
     db.update(id, &item).unwrap();
     drop(db);
@@ -148,7 +144,7 @@ fn a_publish_through_the_update_file_alone_leaves_the_world_files_to_the_game() 
     // its update file carries the item as edited (a DOS update record: seqnum, type, image)
     let images: Vec<Vec<u8>> = records(&game.join("WCCUPDAT.DAT"))
         .into_iter()
-        .filter(|r| r[4] == Kind::Item.code() && r[5..9] == 1i32.to_le_bytes())
+        .filter(|r| r[4] == Kind::Item.code() && r[5..9] == number[..])
         .collect();
     assert_eq!(images.len(), 1);
     let at = 5 + maxdmg.offset;
