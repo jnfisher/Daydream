@@ -1,33 +1,48 @@
 //! Writing a realm back into its Btrieve `WCC*.DAT` files (M5).
 //!
-//! Each `.db` is compared with the Btrieve file it was converted from, found by its stem in
-//! the WCC folder (`WCCITEMS.db` and `WCCITEMS.DAT`, or `WCCITEMS.VIR` where there is no
-//! `.DAT`), and written the least intrusive way:
+//! Each `.db` goes back into the Btrieve file it was converted from, found by its stem in the
+//! WCC folder (`WCCITEMS.db` and `WCCITEMS.DAT`, or `WCCITEMS.VIR` where there is no `.DAT`).
+//!
+//! **Only the edits.** The game changes its own files as it runs (rooms' floors, shop stock,
+//! players), so a realm whose changes Daydream journaled ([`crate::journal::BASE`], complete
+//! since the realm was made from the files or last written into them) writes only what it
+//! changed, onto the files as they are now: each edited record's changed members merged onto
+//! the game's record of the same key ([`crate::three_way`]), added records added, deleted
+//! ones deleted, renumbered ones in place of the record they were. A record the game no longer has, or a key it took meanwhile, is skipped,
+//! reported, and kept among the realm's changes. Files with no edits are not written, however
+//! the game changed them.
+//!
+//! **Whole.** A realm edited before Daydream kept journals, and the update file (which the
+//! game never writes; Daydream keeps it in step, [`crate::update`]), are written as they are,
+//! and refused when the game's file changed since the conversion, unless `force`.
+//!
+//! Either way the file is written the least intrusive way:
 //!
 //! - **unchanged**: the same records in the same order. The file is not written.
 //! - **updated**: the same number of records and no key changed. The changed records are
 //!   overwritten in their slots ([`update_in_place`]), so the file's bytes change only
 //!   where its records did.
-//! - **rebuilt**: records added, deleted or re-keyed. The file is written anew from the
-//!   `.db`'s records, in their order, with the source's page size, keys and flags
+//! - **rebuilt**: records added, deleted or re-keyed. The file is written anew, in its
+//!   records' order (added ones last), with the source's page size, keys and flags
 //!   ([`build`]).
 //!
 //! A rebuilt record moves to a new position, which only a running game would notice: the
-//! realm must be stopped while its files are written. A source that changed since its
-//! `.db` was converted (the game ran on it) is refused, since writing the `.db` over it
-//! would lose the game's changes.
-//!
-//! The realm's update file is brought in step with its edits first ([`crate::update::sync`]),
-//! so the game's next start applies them again rather than undoing them.
+//! game must be stopped while its files are written. The realm's update file is brought in
+//! step with its edits first ([`crate::update::sync`]), so the game's next start applies them
+//! again rather than undoing them; and once written, the realm's changes count afresh.
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
+use daydream_types::records::layout::{Layout, LayoutSet};
 use daydream_wcc::btrieve::build::{BuildError, build};
 use daydream_wcc::btrieve::update::{UpdateError, update_in_place};
 use daydream_wcc::btrieve::{BtrieveFile, OpenOptions, RecordAddress};
+use daydream_wcc::tables::Table;
 
 use crate::db::{Fingerprint, StoreError, WbtrvDb};
-use crate::realm::Realm;
+use crate::journal;
+use crate::realm::{Realm, layout_of};
 
 /// What writing one file did, or would do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +64,12 @@ pub struct Written {
     /// The file written (or that would be). A `.VIR` source is written as a `.DAT`.
     pub dest: PathBuf,
     pub action: Action,
+    /// Only the realm's edits went in, merged onto the file as it is (else it was written
+    /// whole).
+    pub merged: bool,
+    /// Edits not written, and why (`item 12: the game no longer has it`). They stay among
+    /// the realm's changes, to be written once resolved.
+    pub skipped: Vec<String>,
 }
 
 /// Why a realm could not be written back.
@@ -92,7 +113,8 @@ pub struct WriteOptions {
     pub backup: Option<PathBuf>,
     /// Only report what would be done.
     pub dry_run: bool,
-    /// Write even over a Btrieve file that changed since its `.db` was converted.
+    /// Writing whole, write even over a Btrieve file that changed since its `.db` was
+    /// converted.
     pub force: bool,
 }
 
@@ -199,9 +221,179 @@ fn now() -> u32 {
         .map_or(0, |d| d.as_secs() as u32)
 }
 
+/// One record's change since the realm's base, as the journal and the `.db` give it.
+enum Change {
+    Edit { base: Vec<u8>, now: Vec<u8> },
+    Add(Vec<u8>),
+    Delete(Vec<u8>),
+}
+
+/// The changes of the `.db`'s records that `entries` hold, by record id. An entry whose
+/// record is as it was is no change.
+fn changes_of(db: &WbtrvDb, entries: &[journal::Entry]) -> Result<Vec<(i64, Change)>, StoreError> {
+    let mut out = Vec::new();
+    for e in entries {
+        let now = db.get(e.id)?;
+        let change = match (e.before.clone(), now) {
+            (Some(base), Some(now)) if base != now => Change::Edit { base, now },
+            (None, Some(now)) => Change::Add(now),
+            (Some(base), None) => Change::Delete(base),
+            _ => continue,
+        };
+        out.push((e.id, change));
+    }
+    Ok(out)
+}
+
+/// A record, for a person: `item 12`, `room 1/5`, else its first key's value.
+fn describe(file: &BtrieveFile, table: Option<Table>, set: LayoutSet, record: &[u8]) -> String {
+    if let Some(kind) = table.and_then(crate::update::Kind::of) {
+        return crate::update::describe(kind, set, record);
+    }
+    let key = file
+        .keys
+        .first()
+        .and_then(|k| k.extract(record))
+        .unwrap_or_default();
+    let text: String = key
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&b| b as char)
+        .collect();
+    if !text.is_empty() && text.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+        return format!("record {text}");
+    }
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    format!("record {hex}")
+}
+
+/// How a record is found in the game's file: by its value of the file's first unique key,
+/// else (a file with no unique key, a record whose key is null) by all its bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Ident {
+    Key(Vec<u8>),
+    Bytes(Vec<u8>),
+}
+
+/// The file's records once the changes are merged onto the game's (`live`, in its order;
+/// added records after), and the changes skipped (by record id, with why).
+fn merge_onto(
+    file: &BtrieveFile,
+    live: &[(RecordAddress, Vec<u8>)],
+    changes: &[(i64, Change)],
+    layout: Option<&Layout>,
+    what: impl Fn(&[u8]) -> String,
+) -> (Vec<Vec<u8>>, Vec<(i64, String)>) {
+    let unique = file.keys.iter().find(|k| !k.allows_duplicates());
+    let ident = |r: &[u8]| match unique.filter(|k| !k.is_null(r)).and_then(|k| k.identity(r)) {
+        Some(v) => Ident::Key(v),
+        None => Ident::Bytes(r.to_vec()),
+    };
+    let mut target: Vec<Option<Vec<u8>>> = live.iter().map(|(_, r)| Some(r.clone())).collect();
+    let mut by_ident: HashMap<Ident, Vec<usize>> = HashMap::new();
+    for (i, (_, r)) in live.iter().enumerate() {
+        by_ident.entry(ident(r)).or_default().push(i);
+    }
+    // the record found by `id` still in the file; of several, the one like `like`
+    let find = |by_ident: &HashMap<Ident, Vec<usize>>,
+                target: &[Option<Vec<u8>>],
+                id: &Ident,
+                like: Option<&[u8]>| {
+        let found: Vec<usize> = by_ident
+            .get(id)
+            .map(|v| v.iter().copied().filter(|&i| target[i].is_some()).collect())
+            .unwrap_or_default();
+        found
+            .iter()
+            .copied()
+            .find(|&i| like.is_some_and(|l| target[i].as_deref() == Some(l)))
+            .or_else(|| found.first().copied())
+    };
+    let mut skipped = Vec::new();
+    for (rid, c) in changes {
+        match c {
+            Change::Edit { base, now } => {
+                let (ib, inow) = (ident(base), ident(now));
+                let Some(i) = find(&by_ident, &target, &ib, Some(base)) else {
+                    let why = match ib {
+                        Ident::Key(_) => "the game no longer has it",
+                        Ident::Bytes(_) => "the game changed it meanwhile",
+                    };
+                    skipped.push((
+                        *rid,
+                        format!("{}: {why}, so the edit was not written", what(base)),
+                    ));
+                    continue;
+                };
+                if let (Ident::Key(_), Ident::Key(_)) = (&ib, &inow)
+                    && ib != inow
+                {
+                    // renumbered: to the game another record, which replaces the one it was
+                    // (nothing of the game's record carries over)
+                    if find(&by_ident, &target, &inow, None).is_some() {
+                        skipped.push((
+                            *rid,
+                            format!(
+                                "{}: renumbered to {}, which the game has meanwhile",
+                                what(base),
+                                what(now)
+                            ),
+                        ));
+                        continue;
+                    }
+                    target[i] = None;
+                    by_ident.entry(inow).or_default().push(target.len());
+                    target.push(Some(now.clone()));
+                    continue;
+                }
+                if ib != inow {
+                    if let Some(v) = by_ident.get_mut(&ib) {
+                        v.retain(|&j| j != i);
+                    }
+                    by_ident.entry(inow).or_default().push(i);
+                }
+                let theirs = target[i].clone().unwrap_or_default();
+                target[i] = Some(crate::three_way::merge(layout, base, now, &theirs));
+            }
+            Change::Add(now) => {
+                let inow = ident(now);
+                if matches!(inow, Ident::Key(_)) && find(&by_ident, &target, &inow, None).is_some()
+                {
+                    skipped.push((
+                        *rid,
+                        format!(
+                            "{}: the game has added one of its own meanwhile, so it was not added",
+                            what(now)
+                        ),
+                    ));
+                    continue;
+                }
+                by_ident.entry(inow).or_default().push(target.len());
+                target.push(Some(now.clone()));
+            }
+            Change::Delete(base) => {
+                let ib = ident(base);
+                match find(&by_ident, &target, &ib, Some(base)) {
+                    Some(i) => target[i] = None,
+                    // the game deleted it too
+                    None if matches!(ib, Ident::Key(_)) => {}
+                    None => skipped.push((
+                        *rid,
+                        format!(
+                            "{}: the game changed it meanwhile, so it was not deleted",
+                            what(base)
+                        ),
+                    )),
+                }
+            }
+        }
+    }
+    (target.into_iter().flatten().collect(), skipped)
+}
+
 /// Writes every `.db` of `realm` back into the Btrieve files of the WCC folder `wcc` (or
-/// into `options.out`). Every file is checked before any is written, so a refusal leaves
-/// everything as it was.
+/// into `options.out`): only its edits when it journaled them, else whole (see the module).
+/// Every file is checked before any is written, so a refusal leaves everything as it was.
 pub fn write_dat(
     realm: &Realm,
     wcc: &Path,
@@ -215,14 +407,32 @@ pub fn write_dat(
     }
     // the update file must carry the edits, or the game's next start undoes them
     crate::update::sync(realm.dir())?;
+    let set = realm.layout_set();
+    let edits: Option<BTreeMap<String, Vec<journal::Entry>>> =
+        match journal::established(realm.dir())? {
+            Some(_) => {
+                let mut by_stem: BTreeMap<String, Vec<journal::Entry>> = BTreeMap::new();
+                for e in journal::pending(realm.dir(), journal::BASE)?.entries {
+                    by_stem.entry(e.stem.clone()).or_default().push(e);
+                }
+                Some(by_stem)
+            }
+            None => None,
+        };
     let mut plans = Vec::new();
+    // the changes not written, which stay pending
+    let mut keep: Vec<(String, i64)> = Vec::new();
     for f in realm.files() {
         let source = source_of(wcc, &f.stem)?.ok_or_else(|| DatError::NoSource {
             stem: f.stem.clone(),
             dir: wcc.to_path_buf(),
         })?;
         let db = WbtrvDb::open_read_only(&f.path)?;
-        if !options.force
+        let mut file = OpenOptions::new().variable_length(true).open(&source)?;
+        let is_update_file = matches!(f.stem.as_str(), "WCCUPDAT" | "WCCUPDA2");
+        let merged = edits.is_some() && !is_update_file && !file.keys.is_empty();
+        if !merged
+            && !options.force
             && let Some(recorded) = db.source_fingerprint()?
         {
             let now = Fingerprint::of(&source).map_err(|e| DatError::Io {
@@ -236,9 +446,27 @@ pub fn write_dat(
                 });
             }
         }
-        let records: Vec<Vec<u8>> = db.records()?.into_iter().map(|(_, r)| r).collect();
-        let mut file = OpenOptions::new().variable_length(true).open(&source)?;
         let old = read_records(&mut file)?;
+        let mut skipped: Vec<(i64, String)> = Vec::new();
+        let records: Vec<Vec<u8>> = if merged {
+            let entries = edits
+                .as_ref()
+                .and_then(|e| e.get(&f.stem))
+                .map_or(&[][..], Vec::as_slice);
+            let changes = changes_of(&db, entries)?;
+            if changes.is_empty() {
+                old.iter().map(|(_, r)| r.clone()).collect()
+            } else {
+                let layout = f.table.map(|t| layout_of(t, set));
+                let (records, s) = merge_onto(&file, &old, &changes, layout, |r| {
+                    describe(&file, f.table, set, r)
+                });
+                skipped = s;
+                records
+            }
+        } else {
+            db.records()?.into_iter().map(|(_, r)| r).collect()
+        };
         let unchanged =
             old.len() == records.len() && old.iter().zip(&records).all(|(a, b)| a.1 == *b);
         let (action, bytes, updates) = if unchanged {
@@ -257,12 +485,15 @@ pub fn write_dat(
             Some(out) => out.join(name.file_name().unwrap()),
             None => name,
         };
+        keep.extend(skipped.iter().map(|(id, _)| (f.stem.clone(), *id)));
         plans.push(Plan {
             written: Written {
                 stem: f.stem.clone(),
                 source,
                 dest,
                 action,
+                merged,
+                skipped: skipped.into_iter().map(|(_, why)| why).collect(),
             },
             db: f.path.clone(),
             bytes,
@@ -307,15 +538,20 @@ pub fn write_dat(
                 update_in_place(&w.dest, &p.updates).map_err(DatError::Update)?;
             }
         }
-        // the .db now holds what its WCC file holds: record that, so the next write
-        // compares with the file just written
-        if options.out.is_none() {
+        // a file written whole: the .db now holds what its WCC file holds. Record that, so
+        // the next write compares with the file just written
+        if options.out.is_none() && !w.merged {
             let fp = Fingerprint::of(&w.dest).map_err(|source| DatError::Io {
                 path: w.dest.clone(),
                 source,
             })?;
             WbtrvDb::open(&p.db)?.set_source_fingerprint(fp)?;
         }
+    }
+    // the game's files now hold the realm's edits: its changes count from here, but for
+    // those that could not be written
+    if options.out.is_none() {
+        journal::establish(realm.dir(), &keep)?;
     }
     Ok(plans.into_iter().map(|p| p.written).collect())
 }

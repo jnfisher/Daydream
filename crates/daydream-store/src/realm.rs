@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use daydream_types::records::layout::{self as l, Layout, LayoutSet};
 use daydream_wcc::tables::{self, Table};
 
 use crate::db::{ConvertReport, StoreError, WbtrvDb};
@@ -100,6 +101,42 @@ impl Realm {
     pub fn files_of(&self, table: Table) -> impl Iterator<Item = &RealmFile> {
         self.files.iter().filter(move |f| f.table == Some(table))
     }
+
+    /// The build whose layouts its records have: Worldgroup 3's when it holds any of that
+    /// build's files (`WCCITEM2`, ...).
+    pub fn layout_set(&self) -> LayoutSet {
+        let wg = self
+            .files
+            .iter()
+            .any(|f| tables::WORLDGROUP_FILES.iter().any(|w| w.stem == f.stem));
+        if wg {
+            LayoutSet::Worldgroup
+        } else {
+            LayoutSet::Dos
+        }
+    }
+}
+
+/// The layout of `table`'s records in `set`.
+pub fn layout_of(table: Table, set: LayoutSet) -> &'static Layout {
+    let dos: &'static Layout = match table {
+        Table::Rooms => &l::ROOM,
+        Table::Items => &l::ITEM,
+        Table::Monsters => &l::MONSTER,
+        Table::ActiveMonsters => &l::ACTMON,
+        Table::Spells => &l::SPELL,
+        Table::Classes => &l::CLASS,
+        Table::Races => &l::RACE,
+        Table::Shops => &l::SHOP,
+        Table::Messages => &l::MUDMSG,
+        Table::TextBlocks => &l::TEXTBLK,
+        Table::Actions => &l::ACTION,
+        Table::Gangs => &l::GANG,
+        Table::BankBooks => &l::BANKBOOK,
+        Table::ItemOwnership => &l::ITEMOWN,
+        Table::Users => &l::PLAYER,
+    };
+    set.layout(dos)
 }
 
 /// One converted file.
@@ -157,14 +194,16 @@ pub fn convert_dir_matching(
     }
     let mut out = Vec::new();
     for (stem, (_, source)) in sources {
-        let dest = dest.join(format!("{stem}.db"));
-        let (_, report) = WbtrvDb::convert(&source, &dest)?;
+        let db = dest.join(format!("{stem}.db"));
+        let (_, report) = WbtrvDb::convert(&source, &db)?;
         out.push(Converted {
             source,
-            dest,
+            dest: db,
             report,
         });
     }
+    // the realm holds what the files hold: its changes count from here
+    crate::journal::reset(dest)?;
     Ok(out)
 }
 

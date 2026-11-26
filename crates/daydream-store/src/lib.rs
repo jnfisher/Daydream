@@ -11,18 +11,22 @@
 //! - [`dat`]: writing a realm back into its Btrieve `WCC*.DAT` files.
 //! - [`journal`]: what Daydream changed in a realm, record by record.
 //! - [`update`]: MajorMUD's update file, kept in step with the realm's edits.
+//! - [`three_way`]: an edit merged onto a record as the game has it now.
+//! - [`changes`]: the realm's changes since it was read from its game, listed and taken back.
 //!
 //! Writes assume nothing else has the file open: stop MBBSEmu (or the realm) before
 //! editing, until live writes are tested.
 
 #![forbid(unsafe_code)]
 
+pub mod changes;
 pub mod dat;
 pub mod db;
 pub mod journal;
 pub mod key;
 pub mod merge;
 pub mod realm;
+pub mod three_way;
 pub mod update;
 
 pub use db::{ConvertReport, Fingerprint, Metadata, StoreError, WbtrvDb};

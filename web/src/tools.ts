@@ -276,6 +276,10 @@ interface WrittenFile {
   dest: string;
   action: 'unchanged' | 'updated' | 'rebuilt';
   records: number | null;
+  /** Only the realm's edits went in, onto the file as the game has it. */
+  merged: boolean;
+  /** Edits left out (the game has made them impossible meanwhile), and why. */
+  skipped: string[];
 }
 
 /** Writes the realm back into its Btrieve WCC*.DAT files (`daydream write-dat`). */
@@ -285,7 +289,7 @@ function writeDat(): HTMLElement {
     h(
       'p',
       { class: 'hint' },
-      'Write this realm back into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Files nobody changed are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first: Daydream refuses while it sees the game running on the folder.',
+      "Write this realm's edits into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Only the edits go in, onto the files as the game has them now: each changed member onto the game's record, so nothing the game did meanwhile (floors, shop stock, players) is undone. Files with no edits are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first: Daydream refuses while it sees the game running on the folder.",
     ),
   );
   const wcc = input({ type: 'text', placeholder: 'C:\\WGSERV' });
@@ -320,7 +324,7 @@ function writeDat(): HTMLElement {
     h('label', { class: 'path' }, 'WCC folder (on the machine Daydream runs on) ', wcc),
     h('label', { class: 'path' }, 'Write to another folder instead ', out),
     h('label', { class: 'check' }, backup, ' Back up each file before changing it'),
-    h('label', { class: 'check' }, force, ' Write even over files the game changed since the realm was converted'),
+    h('label', { class: 'check' }, force, ' A realm edited before Daydream recorded edits is written whole: write it even over files the game changed since it was converted'),
     h('div', { class: 'toolbar' }, preview, go),
     result,
   );
@@ -343,11 +347,18 @@ function writeDat(): HTMLElement {
       const changed = files.filter((f) => f.action !== 'unchanged');
       const would = dryRun ? 'would be ' : '';
       const line = (f: WrittenFile) =>
-        `${f.dest}: ${f.action === 'updated' ? `${f.records} records ${would}updated in place` : `${would}rebuilt with ${f.records} records`}`;
+        `${f.dest}: ${f.action === 'updated' ? `${f.records} records ${would}updated in place` : `${would}rebuilt with ${f.records} records`}${f.merged ? '' : ' (written whole)'}`;
       result.replaceChildren(
-        h('p', {}, changed.length ? `${changed.length} of ${files.length} files ${dryRun ? 'would change' : 'written'}.` : `All ${files.length} files are as the realm has them: nothing to write.`),
+        h('p', {}, changed.length ? `${changed.length} of ${files.length} files ${dryRun ? 'would change' : 'written'}.` : `All ${files.length} files hold the realm's edits: nothing to write.`),
       );
       if (changed.length) result.append(h('pre', {}, changed.map(line).join('\n')));
+      const skipped = files.flatMap((f) => f.skipped ?? []);
+      if (skipped.length) {
+        result.append(
+          h('p', {}, `${skipped.length} edit${skipped.length === 1 ? '' : 's'} ${dryRun ? 'would be' : 'were'} left out, and kept for the next write:`),
+          h('pre', {}, skipped.join('\n')),
+        );
+      }
       if (res.backup) result.append(h('p', { class: 'hint' }, `The files as they were are in ${res.backup}.`));
     } catch (e) {
       result.replaceChildren(failure(e));

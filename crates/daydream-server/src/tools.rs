@@ -458,6 +458,8 @@ pub(crate) async fn write_dat(
                     "dest": w.dest.display().to_string(),
                     "action": action,
                     "records": records,
+                    "merged": w.merged,
+                    "skipped": w.skipped,
                 })
             })
             .collect();

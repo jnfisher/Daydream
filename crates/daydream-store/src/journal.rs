@@ -20,6 +20,11 @@
 //! `touched` counts up with every write of the record, so a journal is cleared only of the
 //! entries that were read ([`Pending::mark`]): a record written again meanwhile keeps its entry.
 //! The game's own files hold nothing of Daydream's: the journal is a file of its own.
+//!
+//! The [`BASE`] journal is complete only from the moment the realm was made from its game's
+//! files, or last written back into them ([`establish`]; `state_t` records when). A realm
+//! edited before Daydream kept journals has none, and is written back whole
+//! ([`crate::dat`]).
 
 use std::path::{Path, PathBuf};
 
@@ -66,7 +71,8 @@ fn connect(path: &Path) -> Result<Connection, StoreError> {
              journal TEXT NOT NULL, stem TEXT NOT NULL, id INTEGER NOT NULL, \
              before BLOB, touched INTEGER NOT NULL, \
              PRIMARY KEY(journal, stem, id));\
-         CREATE INDEX IF NOT EXISTS journal_touched ON journal_t(touched);",
+         CREATE INDEX IF NOT EXISTS journal_touched ON journal_t(touched);\
+         CREATE TABLE IF NOT EXISTS state_t(name TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )
     .map_err(&sql)?;
     Ok(conn)
@@ -232,12 +238,61 @@ pub fn forget(realm_dir: &Path, journal: &str, stem: &str, id: i64) -> Result<()
 }
 
 /// Clears every journal: the realm as it is now is where its changes start (it was just read
-/// from its game, or made).
+/// from its game, or made). The base is established ([`establish`]).
 pub fn reset(realm_dir: &Path) -> Result<(), StoreError> {
-    for journal in JOURNALS {
-        clear(realm_dir, journal, None)?;
+    clear(realm_dir, SYNC, None)?;
+    establish(realm_dir, &[])
+}
+
+/// Starts the [`BASE`] journal afresh: the realm now holds what its game's files hold (it was
+/// just made from them, or written back into them), so its changes count from here. The
+/// entries of `keep` (`(stem, id)`: changes that could not be written) stay as they are.
+pub fn establish(realm_dir: &Path, keep: &[(String, i64)]) -> Result<(), StoreError> {
+    let p = path(realm_dir);
+    let conn = connect(&p)?;
+    let sql = sql_err(&p);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let tx = conn.unchecked_transaction().map_err(&sql)?;
+    tx.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS keep_t(stem TEXT, id INTEGER); DELETE FROM keep_t;",
+    )
+    .map_err(&sql)?;
+    for (stem, id) in keep {
+        tx.execute(
+            "INSERT INTO keep_t(stem, id) VALUES(?1, ?2)",
+            params![stem, id],
+        )
+        .map_err(&sql)?;
     }
-    Ok(())
+    tx.execute(
+        "DELETE FROM journal_t WHERE journal = ?1 \
+         AND (stem, id) NOT IN (SELECT stem, id FROM keep_t)",
+        [BASE],
+    )
+    .map_err(&sql)?;
+    tx.execute(
+        "INSERT INTO state_t(name, value) VALUES('base', ?1) \
+         ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+        [now.to_string()],
+    )
+    .map_err(&sql)?;
+    tx.commit().map_err(&sql)
+}
+
+/// When the [`BASE`] journal was last established, in seconds since 1970: `None` when it never
+/// was, so it does not hold every change the realm has.
+pub fn established(realm_dir: &Path) -> Result<Option<u64>, StoreError> {
+    let Some((p, conn)) = existing(realm_dir)? else {
+        return Ok(None);
+    };
+    conn.query_row("SELECT value FROM state_t WHERE name = 'base'", [], |r| {
+        r.get::<_, String>(0)
+    })
+    .optional()
+    .map(|v| v.and_then(|v| v.parse().ok()))
+    .map_err(sql_err(&p))
 }
 
 #[cfg(test)]
@@ -284,8 +339,16 @@ mod tests {
                 .as_deref(),
             Some(&b"one"[..])
         );
+        assert_eq!(established(tmp.path()).unwrap(), None);
+        // established keeping one change: the other goes
+        establish(tmp.path(), &[("WCCITEMS".into(), 2)]).unwrap();
+        let kept = pending(tmp.path(), BASE).unwrap().entries;
+        assert_eq!(kept.len(), 1);
+        assert_eq!((kept[0].id, kept[0].before.as_deref()), (2, None));
+        assert!(established(tmp.path()).unwrap().is_some());
         reset(tmp.path()).unwrap();
         assert!(pending(tmp.path(), BASE).unwrap().entries.is_empty());
+        assert!(established(tmp.path()).unwrap().is_some());
     }
 
     #[test]

@@ -62,9 +62,9 @@ game runs; only writing back needs it stopped, and Daydream refuses while it see
 running: a Worldgroup or MBBSEmu process whose program or folder is the game's (on
 Windows, also a WCC file open in another program), or silvermere's writer lock. A game
 edited in its own `.db` files (MBBSEmu) refuses every save while it runs. The game changes
-some of its files as it runs (rooms' floors, shop stock, players), and `write-dat` refuses
-to write over a file that changed since its working copy was read: read the game again
-just before editing, or write with "even over files the game changed".
+some of its files as it runs (rooms' floors, shop stock, players), so writing back writes
+only what the working copy changed, onto the files as the game has them then: nothing the
+game did meanwhile is undone (see `write-dat` below).
 
 **With an access token** (Daydream reached from elsewhere, as below), the picker opens only
 the games Daydream found itself, the ones opened before and the one it was started with,
@@ -101,13 +101,33 @@ In the browser the same export is the Tools page's **Export to MMUD Explorer** c
 as NMR's form (its config `.ini` files load and save there too). On Windows it downloads the
 `.mdb`; elsewhere it downloads the plan and `write-mdb.ps1` to run on a Windows machine.
 
-Back to the WCC files themselves, with no `WBTRV32.DLL` or NMR: `write-dat` writes the realm
-into the `WCC*.DAT` files it was converted from. Files nobody changed are left alone, edits
-that keep every key are written in place, and files with records added, deleted or renumbered
-are rebuilt whole (checked in CI against Pervasive's own Btrieve 6.15 engine, which reads them
-back, deletes and inserts in them). Each changed file is copied to
-`WCC/daydream-backup-<time>` first, and a WCC file the game changed since the conversion is
-refused rather than overwritten. Stop the game first.
+Back to the WCC files themselves, with no `WBTRV32.DLL` or NMR: `write-dat` writes the realm's
+edits into the `WCC*.DAT` files it was converted from. Only the edits go in, onto the files
+as they are now: each member an edit changed (a name, one of a room's item slots) is written
+into the game's record of the same number, and every other member keeps the game's value, so
+a night's play is not rolled back; added records are added, deleted ones deleted, and a
+renumbered record takes the place of the one it was. An edit the game has made impossible
+meanwhile (its record is gone, or the number it takes is now the game's) is reported, left
+out, and kept for the next write. Files with no edits are left alone, edits that keep every
+key are written in place, and files with records added, deleted or renumbered are rebuilt
+whole (checked in CI against Pervasive's own Btrieve 6.15 engine, which reads them back,
+deletes and inserts in them). Each changed file is copied to `WCC/daydream-backup-<time>`
+first. Stop the game first.
+
+A working copy edited before this version has no record of its edits, so its files are
+written whole, as they are in the working copy; a WCC file the game changed since the
+conversion is then refused rather than overwritten, unless `--force`. After one write,
+only edits are written.
+
+The working copy's edits since it was read or last written back are what `write-dat` writes:
+`changes` lists them (each record added, changed or deleted, with the members it changed),
+and takes some or all of them back; the server answers the same at `GET /api/changes` and
+`POST /api/changes/revert`.
+
+```sh
+cargo run -p daydream -- changes ./realm
+cargo run -p daydream -- changes ./realm --revert WCCITEMS:12   # or --revert-all
+```
 
 ```sh
 cargo run -p daydream -- write-dat ./realm /path/to/WGSERV --dry-run
@@ -237,13 +257,13 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `update-file`, `silvermere-export`, `silvermere-import`, `silvermere-info`, `mcp`, `new-token` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `changes`, `update-file`, `silvermere-export`, `silvermere-import`, `silvermere-info`, `mcp`, `new-token` |
 | `crates/daydream-mcp` | The MCP server for AI agents: its tools, the undo journal, stdio |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file; one row at a time for the editors (`rows`) |
 | `crates/daydream-silvermere` | silvermere's database: its schema and repositories (copied), the writer lock, and moving a realm's world in and out |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
-| `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns; the journal of what Daydream changed, and the update file kept in step with it |
+| `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns; the journal of what Daydream changed, the update file kept in step with it, and writing only the edits back onto the game's files |
 | `crates/daydream-wcc` | The Btrieve reader and the 1.11p record decoders and encoders |
 | `crates/daydream-types` | Record types, enums, ids and byte layouts |
 | `tools/nmr` | Generates the `.mdb` column table from NMR's source; `write-mdb.ps1` writes the file through Jet |
