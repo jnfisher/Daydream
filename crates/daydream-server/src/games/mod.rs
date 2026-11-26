@@ -30,7 +30,7 @@
 //!
 //! | Route | Answer |
 //! |---|---|
-//! | `GET /api/games?refresh=` | `{current, games: [...], custom}`: the open game and those found (searched again with `refresh`) |
+//! | `GET /api/games?refresh=` | `{current, games: [...], looked: [...], custom, workspace}`: the open game, those found (searched again with `refresh`) and where Daydream looked |
 //! | `GET /api/games/status?id=` | `{running, by, elsewhere}` for one game (`id=current`: the open one) |
 //! | `POST /api/games/open` | `{id}` or `{kind, location}`, and `refresh`: opens it; `{current}` |
 
@@ -340,6 +340,56 @@ impl AppState {
         found
     }
 
+    /// Where Daydream looks for games, and the games each place gave (by label): the folders
+    /// searched (how deep, and whether given with `--search`), the settings that name a
+    /// silvermere database, and the working copies of the games opened before.
+    pub(crate) fn looked(&self, found: &[Found]) -> Vec<Value> {
+        let gave = |by: &str| -> Vec<&str> {
+            found
+                .iter()
+                .filter(|f| f.found_by == by)
+                .map(|f| f.label.as_str())
+                .collect()
+        };
+        let roots = discover::Roots::usual(&self.games.search, self.games.default_search);
+        let given = self.games.search.len();
+        let mut out = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (i, (dir, depth)) in roots.dirs.iter().enumerate() {
+            // a folder that is not there is not looked in
+            let Some(dir) = discover::canonical(dir) else {
+                continue;
+            };
+            if !seen.insert(dir.clone()) {
+                continue;
+            }
+            let shown = dir.display().to_string();
+            out.push(json!({
+                "where": shown,
+                "kind": "folder",
+                "depth": depth,
+                "given": i < given,
+                "found": gave(&shown),
+            }));
+        }
+        let mut setting = |by: &str| {
+            out.push(json!({ "where": by, "kind": "setting", "found": gave(by) }));
+        };
+        if std::env::var("SILVERMERE_DATABASE_URL").is_ok_and(|u| !u.trim().is_empty()) {
+            setting("SILVERMERE_DATABASE_URL");
+        }
+        if Path::new("/etc/silvermere/env").is_file() {
+            setting("/etc/silvermere/env");
+        }
+        if self.silvermere.is_some() {
+            setting("serve --silvermere");
+        }
+        let ws = self.games.workspace();
+        let copies: Vec<String> = ws.copies().into_iter().map(|(_, s)| s.label).collect();
+        out.push(json!({ "where": ws.dir(), "kind": "copies", "found": copies }));
+        out
+    }
+
     /// The silvermere database a request names, or the open game's, or the one given at
     /// start; a typed one only where [`custom_allowed`](Self::custom_allowed) or known.
     pub(crate) fn silvermere_url(&self, given: Option<String>) -> Result<String, ApiError> {
@@ -471,6 +521,7 @@ pub(crate) fn list_games(s: &AppState, refresh: bool) -> Value {
     json!({
         "current": current_json(&cur),
         "games": games,
+        "looked": s.looked(&found),
         "custom": s.custom_allowed(),
         "workspace": ws.dir(),
     })
