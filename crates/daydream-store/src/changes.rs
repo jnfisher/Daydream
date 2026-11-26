@@ -48,6 +48,8 @@ pub struct Change {
     pub members: Vec<&'static str>,
     /// What a changed record was, when that was another (`item 2`, renumbered to 3).
     pub was: Option<String>,
+    /// The record's bytes as it is now, or as it was for a deleted one.
+    pub record: Vec<u8>,
 }
 
 /// The realm's changes, by file and record id.
@@ -156,6 +158,7 @@ pub fn list(realm: &Realm) -> Result<Changes, StoreError> {
             name,
             members,
             was,
+            record: shown.clone(),
         });
     }
     Ok(Changes { since, changes })

@@ -46,6 +46,8 @@ async function post(url: string, body: BodyInit, json = false): Promise<any> {
     // an error page
   }
   if (!res.ok) throw new Error(parsed?.error ?? (text || res.statusText));
+  // the frame keeps its changes list and history current
+  window.dispatchEvent(new CustomEvent('dd:wrote'));
   return parsed;
 }
 
@@ -283,7 +285,7 @@ interface WrittenFile {
 }
 
 /** Writes the realm back into its Btrieve WCC*.DAT files (`daydream write-dat`). */
-function writeDat(): HTMLElement {
+export function writeDat(): HTMLElement {
   const card = h('section', { class: 'tool' }, h('h2', {}, 'Write to WCC files'));
   card.append(
     h(
@@ -380,7 +382,7 @@ interface SilvermereReport {
 const SILVERMERE_KEY = 'daydream.silvermere';
 
 /** The realm in a silvermere database (`daydream silvermere-export` and `silvermere-import`). */
-function silvermere(changed: () => void): HTMLElement {
+export function silvermere(changed: () => void): HTMLElement {
   const card = h('section', { class: 'tool' }, h('h2', {}, 'silvermere'));
   card.append(
     h(

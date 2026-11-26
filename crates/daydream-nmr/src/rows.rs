@@ -90,6 +90,33 @@ pub fn index_columns(t: &NmrTable) -> Vec<&'static str> {
         .unwrap_or_default()
 }
 
+/// The NMR table a WCC record type's rows are in, and a record's key there: what the
+/// editors open it by (`Items`, `[868]`). `None` for a record type no NMR table holds.
+pub fn record_key(
+    table: daydream_wcc::tables::Table,
+    set: LayoutSet,
+    record: &[u8],
+) -> Option<(&'static NmrTable, Vec<Value>)> {
+    let t = record_tables().find(|t| t.table == Some(table))?;
+    let layout = schema::layout_of(table, set);
+    let mut full = record.to_vec();
+    // a variable-length record (a text block) is short of its layout
+    if full.len() < layout.len {
+        full.resize(layout.len, 0);
+    }
+    let row = crate::export::row_of(t, layout, &full);
+    let key = index_columns(t)
+        .iter()
+        .map(|c| {
+            t.columns
+                .iter()
+                .position(|col| col.name == *c)
+                .map_or(Value::Null, |i| row[i].clone())
+        })
+        .collect();
+    Some((t, key))
+}
+
 /// The table's title column (`Name`, ...), if it has one.
 pub fn title_column(t: &NmrTable) -> Option<&'static str> {
     TITLE_COLUMNS
@@ -656,6 +683,37 @@ mod tests {
         let long = "x".repeat(70);
         assert_eq!(t(&long), json!(format!("{}...", "x".repeat(60))));
         assert_eq!(title_json(&Value::Long(7)), json!(7));
+    }
+
+    #[test]
+    fn a_record_is_keyed_as_its_editor_keys_it() {
+        use daydream_wcc::tables::Table;
+        // each record type is in one table at most
+        for t in record_tables() {
+            assert_eq!(
+                record_tables().filter(|o| o.table == t.table).count(),
+                1,
+                "{}",
+                t.name
+            );
+        }
+        let set = LayoutSet::Dos;
+        let item = schema::layout_of(Table::Items, set);
+        let mut r = vec![0u8; item.len];
+        let f = item.field("number").unwrap();
+        r[f.offset..f.offset + 2].copy_from_slice(&868u16.to_le_bytes());
+        let (t, key) = record_key(Table::Items, set, &r).unwrap();
+        assert_eq!((t.name, key), ("Items", vec![Value::Long(868)]));
+
+        let room = schema::layout_of(Table::Rooms, set);
+        let mut r = vec![0u8; room.len];
+        for (name, n) in [("mapnum", 1u32), ("roomnum", 224)] {
+            let f = room.field(name).unwrap();
+            r[f.offset..f.offset + 4].copy_from_slice(&n.to_le_bytes());
+        }
+        let (t, key) = record_key(Table::Rooms, set, &r).unwrap();
+        assert_eq!(t.name, "Rooms");
+        assert_eq!(key, vec![Value::Long(1), Value::Long(224)]);
     }
 
     #[test]

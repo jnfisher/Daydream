@@ -266,6 +266,8 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/mcp/{token}", post(mcp::post_keyed).get(mcp::get))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
+        .route("/fonts/{name}", get(font))
+        .route("/notices.txt", get(notices))
         .route("/api/health", get(health))
         .route("/mcp", post(mcp::post).get(mcp::get))
         .route("/api/tables", get(tables::tables))
@@ -369,6 +371,31 @@ async fn app_css() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
         include_str!("app.css"),
+    )
+}
+
+/// The UI's fonts (Nunito and Fredoka, under the SIL Open Font License; see `/notices.txt`).
+async fn font(UrlPath(name): UrlPath<String>) -> Response {
+    let bytes: &'static [u8] = match name.as_str() {
+        "nunito.woff2" => include_bytes!("fonts/nunito.woff2"),
+        "fredoka.woff2" => include_bytes!("fonts/fredoka.woff2"),
+        _ => return not_found(format!("font {name}")).into_response(),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, "font/woff2"),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+/// The licenses of the packages the UI is built from.
+async fn notices() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        include_str!("notices.txt"),
     )
 }
 
