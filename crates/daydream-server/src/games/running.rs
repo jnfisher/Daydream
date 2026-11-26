@@ -359,7 +359,8 @@ mod tests {
         let (here, there) = (tmp.path().join("here"), tmp.path().join("there"));
         std::fs::create_dir_all(&here).unwrap();
         std::fs::create_dir_all(&there).unwrap();
-        // a stand-in for MBBSEmu: sleep, under its name
+        // a stand-in for MBBSEmu: sleep, under its name (told it is sleep, since sleep can be
+        // one program of many that goes by the name it is called)
         let Some(sleep) = ["/usr/bin/sleep", "/bin/sleep"]
             .into_iter()
             .map(Path::new)
@@ -370,7 +371,9 @@ mod tests {
         let emu = there.join("MBBSEmu");
         std::fs::copy(sleep, &emu).unwrap();
         let spawn = || {
+            use std::os::unix::process::CommandExt;
             std::process::Command::new(&emu)
+                .arg0("sleep")
                 .arg("30")
                 .current_dir(&there)
                 .spawn()
