@@ -110,7 +110,7 @@ pub(crate) async fn import(
             return Err(bad("send the .mdb (or JSON export) as the request body"));
         }
         let data = read_export(&body)?;
-        let (_writing, dir) = s.lock_write(o.dry_run)?;
+        let (_writing, dir) = s.lock_write(o.dry_run, "Import")?;
         let realm = Realm::open(&dir)?;
         let opts = ImportOptions {
             skip_existing: o.skip_existing,
@@ -158,7 +158,8 @@ pub(crate) async fn delete(
         if body.range.is_none() && !body.all {
             return Err(bad("give a range, or all: true to delete every record"));
         }
-        let (_writing, dir) = s.lock_write(body.dry_run)?;
+        let (_writing, dir) =
+            s.lock_write(body.dry_run, &format!("Delete {} records", body.table))?;
         let realm = Realm::open(&dir)?;
         let range = body.range.map(|mut r| {
             r.table = body.table.clone();
@@ -209,7 +210,7 @@ pub(crate) async fn merge_users(
             WbtrvDb::convert(&dat, &p).map_err(|e| bad(format!("not a user file: {e}")))?;
             p
         };
-        let (_writing, dir) = s.lock_write(q.dry_run)?;
+        let (_writing, dir) = s.lock_write(q.dry_run, "Merge users")?;
         let realm = Realm::open(&dir)?;
         let into_path = realm
             .files_of(daydream_wcc::tables::Table::Users)
@@ -252,7 +253,7 @@ pub(crate) async fn modify(
     State(s): State<Arc<AppState>>,
     Json(body): Json<ModifyJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, move |realm, layout| {
+    run_plan(s, body.dry_run, "Modify", move |realm, layout| {
         daydream_nmr::modify::plan(realm, &body.modify, layout).map_err(|e| bad(e.to_string()))
     })
     .await
@@ -271,7 +272,7 @@ pub(crate) async fn preset(
     State(s): State<Arc<AppState>>,
     Json(body): Json<PresetJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, move |realm, layout| {
+    run_plan(s, body.dry_run, "Fix", move |realm, layout| {
         daydream_nmr::presets::plan(realm, &body.preset, layout).map_err(|e| bad(e.to_string()))
     })
     .await
@@ -290,7 +291,7 @@ pub(crate) async fn dig(
     State(s): State<Arc<AppState>>,
     Json(body): Json<DigJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, move |realm, layout| {
+    run_plan(s, body.dry_run, "Dig rooms", move |realm, layout| {
         daydream_nmr::map::dig(realm, layout, &body.dig).map_err(|e| bad(e.to_string()))
     })
     .await
@@ -326,7 +327,7 @@ pub(crate) async fn renumber(
     Json(body): Json<RenumberJson>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (_writing, dir) = s.lock_write(body.dry_run)?;
+        let (_writing, dir) = s.lock_write(body.dry_run, "Change record numbers")?;
         let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         let plans = daydream_nmr::renumber::plan(&realm, &body.run, layout)
@@ -354,6 +355,7 @@ pub(crate) async fn renumber(
 async fn run_plan(
     s: Arc<AppState>,
     dry_run: bool,
+    label: &'static str,
     plan: impl FnOnce(
         &Realm,
         daydream_types::records::LayoutSet,
@@ -362,7 +364,7 @@ async fn run_plan(
     + 'static,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (_writing, dir) = s.lock_write(dry_run)?;
+        let (_writing, dir) = s.lock_write(dry_run, label)?;
         let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         let plan = plan(&realm, layout)?;
@@ -436,7 +438,7 @@ pub(crate) async fn write_dat(
             force: body.force,
         };
         // the realm is only read here
-        let (_writing, dir) = s.lock_write(true)?;
+        let (_writing, dir) = s.lock_write(true, "Write to WCC files")?;
         let realm = Realm::open(&dir)?;
         let written =
             daydream_store::dat::write_dat(&realm, &wcc, &options).map_err(|e| match e {

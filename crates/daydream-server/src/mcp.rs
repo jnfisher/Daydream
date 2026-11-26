@@ -55,7 +55,11 @@ pub(crate) async fn post(
         // as the editors' saves: not into a running game's own files, and held until the
         // answer is made, so the write happens under it and the update file follows it
         let _writing = if writes(&msg) {
-            Some(s.lock_write(false)?.0)
+            let tool = msg
+                .pointer("/params/name")
+                .and_then(Value::as_str)
+                .unwrap_or("edit");
+            Some(s.lock_write(false, &format!("Agent: {tool}"))?.0)
         } else {
             None
         };

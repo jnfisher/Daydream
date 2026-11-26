@@ -324,6 +324,32 @@ enum Command {
         #[arg(long)]
         revert_all: bool,
     },
+    /// List REALM's history: each save (in the editors, by an agent, or by a command) a
+    /// step, newest first, that `undo` takes back as a whole.
+    History {
+        /// The realm directory.
+        realm: PathBuf,
+        /// Show this many steps.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Undo a step of REALM's history: the newest, or `--step N`. Refused when a record of
+    /// the step changed since.
+    Undo {
+        /// The realm directory.
+        realm: PathBuf,
+        /// The step to undo, as `history` lists it.
+        #[arg(long)]
+        step: Option<i64>,
+    },
+    /// Redo a step of REALM's history: the one undone last, or `--step N`.
+    Redo {
+        /// The realm directory.
+        realm: PathBuf,
+        /// The step to redo, as `history` lists it.
+        #[arg(long)]
+        step: Option<i64>,
+    },
     /// Merge another user file's users into REALM's, as NMR's Merge Users does: users REALM
     /// lacks are copied byte for byte, users it has are skipped. Stop the realm first.
     MergeUsers {
@@ -545,6 +571,9 @@ fn main() -> anyhow::Result<()> {
             revert,
             revert_all,
         } => changes(&realm, &revert, revert_all),
+        Command::History { realm, limit } => history(&realm, limit),
+        Command::Undo { realm, step } => undo_redo(&realm, step, false),
+        Command::Redo { realm, step } => undo_redo(&realm, step, true),
         Command::SilvermereExport {
             realm,
             database,
@@ -890,6 +919,9 @@ fn nmr_import(
     let realm = Realm::open(realm)?;
     opts.layout = daydream_nmr::layout_of_realm(&realm);
     let dry_run = opts.dry_run;
+    if !dry_run {
+        daydream_store::history::begin(realm.dir())?;
+    }
     let is_json = file
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("json"));
@@ -918,7 +950,7 @@ fn nmr_import(
     if dry_run {
         println!("dry run: nothing was written");
     } else {
-        sync_update_file(realm.dir())?;
+        finish_write(&realm, "Import")?;
     }
     if errors > 0 {
         bail!("{errors} rows could not be imported");
@@ -937,6 +969,9 @@ fn delete(realm: &Path, table: &str, range: Option<&str>, dry_run: bool) -> anyh
         None => None,
     };
     let layout = daydream_nmr::layout_of_realm(&realm);
+    if !dry_run {
+        daydream_store::history::begin(realm.dir())?;
+    }
     let r = daydream_nmr::delete_range(&realm, table, range.as_ref(), layout, dry_run)?;
     if dry_run {
         println!(
@@ -945,7 +980,7 @@ fn delete(realm: &Path, table: &str, range: Option<&str>, dry_run: bool) -> anyh
         );
     } else {
         println!("{}: {} records deleted", r.table, r.deleted);
-        sync_update_file(realm.dir())?;
+        finish_write(&realm, &format!("Delete {} records", r.table))?;
     }
     Ok(())
 }
@@ -974,10 +1009,14 @@ fn merge_users(realm: &Path, from: &Path, dry_run: bool) -> anyhow::Result<()> {
         dest
     };
     let source = WbtrvDb::open_read_only(&from_path)?;
+    if !dry_run {
+        daydream_store::history::begin(into_realm.dir())?;
+    }
     let mut into = WbtrvDb::open(&into_path)?;
     let r = daydream_store::merge::merge(&source, &mut into, dry_run)?;
+    drop(into);
     if !dry_run {
-        sync_update_file(into_realm.dir())?;
+        finish_write(&into_realm, "Merge users")?;
     }
     println!(
         "{} users {}copied, {} skipped (already in the realm)",
@@ -1028,6 +1067,9 @@ fn silvermere_import(
 ) -> anyhow::Result<()> {
     let realm = Realm::open(realm)?;
     let url = daydream_silvermere::database_url(database);
+    if !opts.dry_run {
+        daydream_store::history::begin(realm.dir())?;
+    }
     let reports = daydream_silvermere::block_on(daydream_silvermere::import(&realm, &url, opts))?;
     for r in &reports {
         println!(
@@ -1038,9 +1080,21 @@ fn silvermere_import(
     if opts.dry_run {
         println!("(dry run: nothing written)");
     } else {
-        sync_update_file(realm.dir())?;
+        finish_write(&realm, "Read from silvermere")?;
     }
     Ok(())
+}
+
+/// After a command's writes (begun with [`daydream_store::history::begin`]): keeps them as a
+/// step of the realm's history, for undo, and brings the update file in step.
+fn finish_write(realm: &Realm, label: &str) -> anyhow::Result<()> {
+    if let Some(step) = daydream_store::history::end(realm, label)? {
+        println!(
+            "step {} of the history ({} records): `daydream undo` takes it back",
+            step.step, step.records
+        );
+    }
+    sync_update_file(realm.dir())
 }
 
 /// Brings the realm's update file in step with what a command wrote ([`update_file`]).
@@ -1077,12 +1131,13 @@ fn changes(realm: &Path, revert: &[String], revert_all: bool) -> anyhow::Result<
                 .with_context(|| format!("{spec}: give STEM:ID, as `changes` lists them"))?;
             which.push((stem, id));
         }
+        daydream_store::history::begin(realm)?;
         let done = changes::revert(&r, (!revert_all).then_some(&which[..]))?;
         println!("{} records put back as they were", done.reverted);
         for f in &done.failed {
             println!("{}:{}: not put back: {}", f.stem, f.id, f.why);
         }
-        return sync_update_file(realm);
+        return finish_write(&r, "Take back changes");
     }
     let c = changes::list(&r)?;
     if c.since.is_none() {
@@ -1119,6 +1174,50 @@ fn changes(realm: &Path, revert: &[String], revert_all: bool) -> anyhow::Result<
         );
     }
     Ok(())
+}
+
+fn history(realm: &Path, limit: usize) -> anyhow::Result<()> {
+    use daydream_store::history::State;
+    let steps = daydream_store::history::list(realm, limit)?;
+    if steps.is_empty() {
+        println!("no saves in the history");
+    }
+    for s in &steps {
+        let at = jiff::Timestamp::from_second(s.at as i64)
+            .map(|t| {
+                t.to_zoned(jiff::tz::TimeZone::system())
+                    .strftime("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let state = match s.state {
+            State::Done => "",
+            State::Undone => " (undone)",
+            State::TooBig => " (too big to undo)",
+        };
+        println!(
+            "{:>5}  {at}  {}: {} records{state}",
+            s.step, s.label, s.records
+        );
+    }
+    Ok(())
+}
+
+fn undo_redo(realm: &Path, step: Option<i64>, redo: bool) -> anyhow::Result<()> {
+    let r = Realm::open(realm)?;
+    let done = if redo {
+        daydream_store::history::redo(&r, step)?
+    } else {
+        daydream_store::history::undo(&r, step)?
+    };
+    println!(
+        "{} step {}: {} ({} records)",
+        if redo { "redid" } else { "undid" },
+        done.step,
+        done.label,
+        done.records
+    );
+    sync_update_file(realm)
 }
 
 fn update_file(realm: &Path, full: bool, blank: bool) -> anyhow::Result<()> {

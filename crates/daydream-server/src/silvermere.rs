@@ -100,7 +100,7 @@ pub(crate) async fn export(
             ..ExportOptions::default()
         };
         // the realm is only read, but not while a save is half done
-        let (_writing, dir) = s.lock_write(true)?;
+        let (_writing, dir) = s.lock_write(true, "silvermere")?;
         let realm = Realm::open(&dir)?;
         let tables =
             daydream_silvermere::block_on(daydream_silvermere::export(&realm, &url, &opts))?;
@@ -130,7 +130,7 @@ pub(crate) async fn import(
             dry_run: body.dry_run,
             ..ImportOptions::default()
         };
-        let (_writing, dir) = s.lock_write(body.dry_run)?;
+        let (_writing, dir) = s.lock_write(body.dry_run, "Read from silvermere")?;
         let realm = Realm::open(&dir)?;
         let tables =
             daydream_silvermere::block_on(daydream_silvermere::import(&realm, &url, &opts))?;
