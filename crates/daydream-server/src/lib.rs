@@ -5,7 +5,8 @@
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
 //! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the realm
 //! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the
-//! realm's unpublished changes in [`changes`], the MCP server for AI agents at `/mcp`
+//! realm's unpublished changes in [`changes`], undo and redo in [`history`], the MCP server
+//! for AI agents at `/mcp`
 //! ([`mcp`]), and the
 //! routes below serve each file's records
 //! decoded (every member by name, `unk_*` spans included), read only. Who may use it is
@@ -40,6 +41,7 @@ use serde_json::{Value, json};
 pub mod auth;
 pub mod changes;
 pub mod games;
+pub mod history;
 pub mod mcp;
 pub mod mme;
 pub mod reports;
@@ -122,10 +124,28 @@ impl AppState {
         })
     }
 
-    /// Takes the write lock on the open realm. Unless `dry_run`, refuses when the realm is a
-    /// game's own files and the game is running, and when the lock is let go brings the
-    /// realm's update file in step with what was written ([`WriteGuard`]).
-    pub(crate) fn lock_write(&self, dry_run: bool) -> Result<(WriteGuard<'_>, PathBuf), ApiError> {
+    /// Takes the write lock on the open realm for a save, `label`led for the history. Unless
+    /// `dry_run`, refuses when the realm is a game's own files and the game is running, and
+    /// when the lock is let go keeps what was written as a step of the history, for undo,
+    /// and brings the realm's update file in step with it ([`WriteGuard`]).
+    pub(crate) fn lock_write(
+        &self,
+        dry_run: bool,
+        label: &str,
+    ) -> Result<(WriteGuard<'_>, PathBuf), ApiError> {
+        self.lock(dry_run, Some(label))
+    }
+
+    /// The write lock for an undo or redo: a write, but not a step of the history itself.
+    pub(crate) fn lock_write_unrecorded(&self) -> Result<(WriteGuard<'_>, PathBuf), ApiError> {
+        self.lock(false, None)
+    }
+
+    fn lock(
+        &self,
+        dry_run: bool,
+        label: Option<&str>,
+    ) -> Result<(WriteGuard<'_>, PathBuf), ApiError> {
         let lock = self
             .write
             .lock()
@@ -145,27 +165,47 @@ impl AppState {
                 ));
             }
         }
+        let step = match label {
+            Some(label) if !dry_run => {
+                daydream_store::history::begin(&dir)?;
+                Some(label.to_string())
+            }
+            _ => None,
+        };
         let guard = WriteGuard {
             _lock: lock,
             dir: (!dry_run).then(|| dir.clone()),
+            step,
         };
         Ok((guard, dir))
     }
 }
 
-/// The write lock on the open realm ([`AppState::lock_write`]). Let go after a write, it first
-/// brings the realm's update file in step with the write ([`daydream_store::update::sync`]), so
-/// the game's next start applies the edits instead of undoing them. A sync that fails is
-/// logged and tried again after the next write (the journal keeps the edits until then), and
+/// The write lock on the open realm ([`AppState::lock_write`]). Let go after a write, it keeps
+/// what was written as a step of the history ([`daydream_store::history`]), then brings the
+/// realm's update file in step with the write ([`daydream_store::update::sync`]), so the
+/// game's next start applies the edits instead of undoing them. A sync that fails is logged
+/// and tried again after the next write (the journal keeps the edits until then), and
 /// writing the realm back into the game's files syncs first and reports the failure.
 pub(crate) struct WriteGuard<'a> {
     _lock: std::sync::MutexGuard<'a, ()>,
     /// The realm to sync; `None` for a dry run.
     dir: Option<PathBuf>,
+    /// The label of the step under way; `None` when the write is not one.
+    step: Option<String>,
 }
 
 impl Drop for WriteGuard<'_> {
     fn drop(&mut self) {
+        if let (Some(dir), Some(label)) = (&self.dir, &self.step) {
+            match Realm::open(dir).and_then(|r| daydream_store::history::end(&r, label)) {
+                Ok(Some(s)) => {
+                    tracing::info!("step {}: {} ({} records)", s.step, s.label, s.records)
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!("keeping the step for undo: {e}"),
+            }
+        }
         if let Some(dir) = &self.dir {
             match daydream_store::update::sync(dir) {
                 Ok(r) if r.changed() => tracing::info!(
@@ -240,6 +280,10 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/realm", get(realm))
         .route("/api/changes", get(changes::list))
         .route("/api/changes/revert", post(changes::revert))
+        .route("/api/history", get(history::list))
+        .route("/api/history/{step}", get(history::step))
+        .route("/api/undo", post(history::undo))
+        .route("/api/redo", post(history::redo))
         .route("/api/files/{stem}/records", get(records))
         .route("/api/files/{stem}/records/{id}", get(record))
         .route(

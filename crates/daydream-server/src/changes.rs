@@ -76,7 +76,7 @@ pub(crate) async fn revert(
                 "name the changes to take back, or all".into(),
             ));
         }
-        let (_writing, dir) = s.lock_write(false)?;
+        let (_writing, dir) = s.lock_write(false, "Take back changes")?;
         let realm = Realm::open(&dir)?;
         let which: Vec<(String, i64)> = body.changes.into_iter().map(|r| (r.stem, r.id)).collect();
         let r = changes::revert(&realm, (!body.all).then_some(&which[..]))?;

@@ -175,9 +175,30 @@ fn key_json(raw: &str) -> Result<Value, ApiError> {
     serde_json::from_str(raw).map_err(|e| bad(format!("key is not JSON: {e}")))
 }
 
-/// Makes an edit under the write lock (the editors' save: no undo record).
+/// A key for a person: `12`, `1/5`.
+fn key_text(key: &Value) -> String {
+    let one = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    };
+    match key {
+        Value::Array(parts) => parts.iter().map(one).collect::<Vec<_>>().join("/"),
+        v => one(v),
+    }
+}
+
+/// What a save is, for the history: `Save Items 12`.
+fn label(edit: &Edit) -> String {
+    match edit {
+        Edit::Update { table, key, .. } => format!("Save {table} {}", key_text(key)),
+        Edit::Insert { table, .. } => format!("Add to {table}"),
+        Edit::Delete { table, key } => format!("Delete {table} {}", key_text(key)),
+    }
+}
+
+/// Makes an edit under the write lock: one step of the history.
 fn commit(s: &AppState, edit: &Edit) -> Result<Value, ApiError> {
-    let (_writing, dir) = s.lock_write(false)?;
+    let (_writing, dir) = s.lock_write(false, &label(edit))?;
     let realm = Realm::open(&dir)?;
     Ok(report_json(&rows::commit(&realm, edit)?))
 }

@@ -129,6 +129,20 @@ cargo run -p daydream -- changes ./realm
 cargo run -p daydream -- changes ./realm --revert WCCITEMS:12   # or --revert-all
 ```
 
+**Undo.** Every save is a step of the working copy's history, whoever made it: a save in an
+editor, a Tools page run, an agent's batch of edits, a command. `history` lists the steps,
+`undo` takes the newest back as a whole (or `--step N`), and `redo` writes the step undone
+last again; the server answers the same at `GET /api/history`, `POST /api/undo` and
+`POST /api/redo`. A step whose records changed since is not undone (undo the later step
+first), and undo and redo bring the update file along as a save does. The last 100 steps
+are kept, in `.daydream/journal.db`; a step of more than 10,000 records (a whole import) is
+listed but too big to keep for undo.
+
+```sh
+cargo run -p daydream -- history ./realm
+cargo run -p daydream -- undo ./realm             # or --step N; redo the same way
+```
+
 ```sh
 cargo run -p daydream -- write-dat ./realm /path/to/WGSERV --dry-run
 cargo run -p daydream -- write-dat ./realm /path/to/WGSERV           # or --out DIR for a copy
@@ -257,13 +271,13 @@ same files.
 
 | Path | What it is |
 |---|---|
-| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `changes`, `update-file`, `silvermere-export`, `silvermere-import`, `silvermere-info`, `mcp`, `new-token` |
+| `bin/daydream` | The command line: `convert`, `serve`, `dump`, `nmr-export`, `nmr-import` (with NMR's importer options), `mme-export`, `delete`, `merge-users`, `write-dat`, `changes`, `history`, `undo`, `redo`, `update-file`, `silvermere-export`, `silvermere-import`, `silvermere-info`, `mcp`, `new-token` |
 | `crates/daydream-mcp` | The MCP server for AI agents: its tools, the undo journal, stdio |
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file; one row at a time for the editors (`rows`) |
 | `crates/daydream-silvermere` | silvermere's database: its schema and repositories (copied), the writer lock, and moving a realm's world in and out |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
 | `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
-| `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns; the journal of what Daydream changed, the update file kept in step with it, and writing only the edits back onto the game's files |
+| `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns; the journal of what Daydream changed, the history of saves for undo, the update file kept in step with it, and writing only the edits back onto the game's files |
 | `crates/daydream-wcc` | The Btrieve reader and the 1.11p record decoders and encoders |
 | `crates/daydream-types` | Record types, enums, ids and byte layouts |
 | `tools/nmr` | Generates the `.mdb` column table from NMR's source; `write-mdb.ps1` writes the file through Jet |

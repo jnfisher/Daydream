@@ -13,6 +13,7 @@
 //! - [`update`]: MajorMUD's update file, kept in step with the realm's edits.
 //! - [`three_way`]: an edit merged onto a record as the game has it now.
 //! - [`changes`]: the realm's changes since it was read from its game, listed and taken back.
+//! - [`history`]: the realm's saves, step by step, for undo and redo.
 //!
 //! Writes assume nothing else has the file open: stop MBBSEmu (or the realm) before
 //! editing, until live writes are tested.
@@ -22,6 +23,9 @@
 pub mod changes;
 pub mod dat;
 pub mod db;
+#[cfg(test)]
+mod fixtures;
+pub mod history;
 pub mod journal;
 pub mod key;
 pub mod merge;

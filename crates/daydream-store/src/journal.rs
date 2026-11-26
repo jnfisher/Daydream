@@ -7,6 +7,7 @@
 //!
 //! - [`SYNC`]: since the realm's update file was last brought in step ([`crate::update`]).
 //! - [`BASE`]: since the realm was last read from its game or written to it.
+//! - [`STEP`]: since the save under way began ([`crate::history`]).
 //!
 //! Only a record's first write is kept, so an entry and the record as it is now give the net
 //! change, however many writes came between. The entry is stored before the record is written,
@@ -37,15 +38,17 @@ use crate::realm::stem_of_db;
 pub const SYNC: &str = "sync";
 /// Changes since the realm was last read from its game or written to it.
 pub const BASE: &str = "base";
+/// Changes since the save under way began.
+pub const STEP: &str = "step";
 
-const JOURNALS: [&str; 2] = [BASE, SYNC];
+const JOURNALS: [&str; 3] = [BASE, SYNC, STEP];
 
 /// The journal file of the realm in `realm_dir`.
 pub fn path(realm_dir: &Path) -> PathBuf {
     realm_dir.join(".daydream").join("journal.db")
 }
 
-fn sql_err(path: &Path) -> impl Fn(rusqlite::Error) -> StoreError + '_ {
+pub(crate) fn sql_err(path: &Path) -> impl Fn(rusqlite::Error) -> StoreError + '_ {
     move |source| StoreError::Sqlite {
         path: path.to_path_buf(),
         source,
@@ -53,7 +56,7 @@ fn sql_err(path: &Path) -> impl Fn(rusqlite::Error) -> StoreError + '_ {
 }
 
 /// Opens (creating) the journal at `path`.
-fn connect(path: &Path) -> Result<Connection, StoreError> {
+pub(crate) fn connect(path: &Path) -> Result<Connection, StoreError> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|source| StoreError::Io {
             path: dir.to_path_buf(),
@@ -72,14 +75,20 @@ fn connect(path: &Path) -> Result<Connection, StoreError> {
              before BLOB, touched INTEGER NOT NULL, \
              PRIMARY KEY(journal, stem, id));\
          CREATE INDEX IF NOT EXISTS journal_touched ON journal_t(touched);\
-         CREATE TABLE IF NOT EXISTS state_t(name TEXT PRIMARY KEY, value TEXT NOT NULL);",
+         CREATE TABLE IF NOT EXISTS state_t(name TEXT PRIMARY KEY, value TEXT NOT NULL);\
+         CREATE TABLE IF NOT EXISTS step_t(\
+             step INTEGER PRIMARY KEY, at INTEGER NOT NULL, label TEXT NOT NULL, \
+             records INTEGER NOT NULL, state TEXT NOT NULL, undone_seq INTEGER);\
+         CREATE TABLE IF NOT EXISTS step_rec_t(\
+             step INTEGER NOT NULL, stem TEXT NOT NULL, id INTEGER NOT NULL, \
+             before BLOB, after BLOB, PRIMARY KEY(step, stem, id));",
     )
     .map_err(&sql)?;
     Ok(conn)
 }
 
 /// Opens the journal of `realm_dir` if it has one.
-fn existing(realm_dir: &Path) -> Result<Option<(PathBuf, Connection)>, StoreError> {
+pub(crate) fn existing(realm_dir: &Path) -> Result<Option<(PathBuf, Connection)>, StoreError> {
     let p = path(realm_dir);
     if !p.is_file() {
         return Ok(None);
@@ -182,6 +191,19 @@ pub fn pending(realm_dir: &Path, journal: &str) -> Result<Pending, StoreError> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(&sql)?;
     Ok(Pending { entries, mark })
+}
+
+/// How many entries `journal` holds, and the mark that clears just them ([`clear`]).
+pub fn count(realm_dir: &Path, journal: &str) -> Result<(usize, i64), StoreError> {
+    let Some((p, conn)) = existing(realm_dir)? else {
+        return Ok((0, 0));
+    };
+    conn.query_row(
+        "SELECT COUNT(*), COALESCE(MAX(touched), 0) FROM journal_t WHERE journal = ?1",
+        [journal],
+        |r| Ok((r.get::<_, i64>(0)? as usize, r.get(1)?)),
+    )
+    .map_err(sql_err(&p))
 }
 
 /// The entry of record `id` of file `stem` in `journal`, if it has one.

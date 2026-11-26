@@ -559,10 +559,29 @@ impl Server {
         })
     }
 
-    /// Runs a tool; `None` when there is no such tool.
+    /// Runs a tool; `None` when there is no such tool. A tool that writes is one step of the
+    /// realm's history (undone from the editors as a whole), and the update file follows it.
     pub fn call(&self, name: &str, args: &Map<String, Value>) -> Option<Result<Value, ToolError>> {
+        let writes = matches!(name, "apply_edits" | "undo" | "silvermere_import");
+        let begun = writes && daydream_store::history::begin(&self.realm_dir).is_ok();
         let mut out = self.run(name, args)?;
-        if matches!(name, "apply_edits" | "undo" | "silvermere_import") {
+        if begun {
+            let label = match (name, &out) {
+                ("apply_edits", Ok(v)) => match v.get("changeset").and_then(Value::as_str) {
+                    Some(c) => format!("Agent: {c}"),
+                    None => "Agent: edits".to_string(),
+                },
+                ("undo", _) => "Agent: undo".to_string(),
+                ("silvermere_import", _) => "Read from silvermere".to_string(),
+                _ => format!("Agent: {name}"),
+            };
+            let ended =
+                Realm::open(&self.realm_dir).and_then(|r| daydream_store::history::end(&r, &label));
+            if let (Err(e), Ok(Value::Object(answer))) = (ended, &mut out) {
+                answer.insert("history_error".into(), json!(e.to_string()));
+            }
+        }
+        if writes {
             // the game's update file follows every write, or its next start undoes them
             let synced = daydream_store::update::sync(&self.realm_dir);
             if let Ok(Value::Object(answer)) = &mut out {

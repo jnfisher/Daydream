@@ -170,4 +170,15 @@ fn edits_and_undos_keep_the_update_file_in_step() {
     let undone = c.call("undo", json!({ "token": p["token"] }));
     assert_eq!(undone["update_file"]["images_removed"], 1);
     assert!(images().is_empty());
+    // each write is a step of the realm's history, which the editors undo and redo too
+    let labels: Vec<String> = daydream_store::history::list(tmp.path(), 10)
+        .unwrap()
+        .into_iter()
+        .map(|s| s.label)
+        .collect();
+    assert_eq!(labels, ["Agent: undo", "Agent: edits"]);
+    let realm = daydream_store::Realm::open(tmp.path()).unwrap();
+    daydream_store::history::undo(&realm, None).unwrap();
+    daydream_store::update::sync(tmp.path()).unwrap();
+    assert_eq!(images(), vec![(5, 9)]);
 }

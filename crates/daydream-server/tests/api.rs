@@ -828,6 +828,84 @@ async fn changes_are_listed_and_taken_back() {
 }
 
 #[tokio::test]
+async fn saves_are_undone_and_redone() {
+    let dir = realm_with_update_file();
+    let (_, body) = get(dir.path(), "/api/history").await;
+    assert_eq!(body["steps"], serde_json::json!([]));
+    assert_eq!(body["undo"], Value::Null);
+    let (status, _) = send(dir.path(), "POST", "/api/undo", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let uri = format!("/api/tables/Races/row?key={}", key(serde_json::json!([1])));
+    let save = |name: &'static str| {
+        let uri = uri.clone();
+        let dir = dir.path().to_path_buf();
+        async move {
+            send(
+                &dir,
+                "PUT",
+                &uri,
+                serde_json::json!({"values": {"Name": name}}),
+            )
+            .await
+        }
+    };
+    assert_eq!(save("Elf").await.0, StatusCode::OK);
+    assert_eq!(save("Gnome").await.0, StatusCode::OK);
+    // a save that changes nothing is no step
+    assert_eq!(save("Gnome").await.0, StatusCode::OK);
+    let (_, body) = get(dir.path(), "/api/history").await;
+    let steps = body["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 2, "{body}");
+    assert_eq!(steps[0]["label"], "Save Races 1");
+    assert_eq!(steps[0]["records"], 1);
+    assert_eq!(body["undo"]["step"], steps[0]["step"]);
+    let (status, detail) = get(dir.path(), &format!("/api/history/{}", steps[0]["step"])).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["changes"][0]["what"], "race 1");
+    assert_eq!(detail["changes"][0]["members"], serde_json::json!(["name"]));
+
+    let name = || async {
+        get(dir.path(), &uri).await.1["values"]["Name"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (status, body) = send(dir.path(), "POST", "/api/undo", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], "undone");
+    assert_eq!(name().await, "Elf");
+    // the update file follows an undo as it follows a save
+    assert_eq!(&update_images(dir.path())[0].2[2..5], b"Elf");
+    send(dir.path(), "POST", "/api/undo", serde_json::json!({})).await;
+    assert_eq!(name().await, "Human");
+    let (status, body) = send(dir.path(), "POST", "/api/redo", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(name().await, "Elf");
+    // undo and redo are no steps of their own
+    let (_, body) = get(dir.path(), "/api/history").await;
+    assert_eq!(body["steps"].as_array().unwrap().len(), 2);
+
+    // a step whose record changed since is not undone
+    assert_eq!(save("Halfling").await.0, StatusCode::OK);
+    let (_, body) = get(dir.path(), "/api/history").await;
+    let first = body["steps"].as_array().unwrap().last().unwrap()["step"].clone();
+    let (status, body) = send(
+        dir.path(),
+        "POST",
+        "/api/undo",
+        serde_json::json!({"step": first}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("changed since"),
+        "{body}"
+    );
+    assert_eq!(name().await, "Halfling");
+}
+
+#[tokio::test]
 async fn write_dat_previews_then_writes_the_wcc_files() {
     let tmp = tempfile::tempdir().unwrap();
     let wcc = tmp.path().join("wcc");
