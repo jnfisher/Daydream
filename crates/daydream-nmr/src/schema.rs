@@ -142,25 +142,7 @@ pub fn table(name: &str) -> Option<&'static NmrTable> {
 
 /// The record layout the WCC table's records are in, for `set`.
 pub fn layout_of(table: Table, set: LayoutSet) -> &'static Layout {
-    use daydream_types::records::layout as l;
-    let dos: &'static Layout = match table {
-        Table::Rooms => &l::ROOM,
-        Table::Items => &l::ITEM,
-        Table::Monsters => &l::MONSTER,
-        Table::ActiveMonsters => &l::ACTMON,
-        Table::Spells => &l::SPELL,
-        Table::Classes => &l::CLASS,
-        Table::Races => &l::RACE,
-        Table::Shops => &l::SHOP,
-        Table::Messages => &l::MUDMSG,
-        Table::TextBlocks => &l::TEXTBLK,
-        Table::Actions => &l::ACTION,
-        Table::Gangs => &l::GANG,
-        Table::BankBooks => &l::BANKBOOK,
-        Table::ItemOwnership => &l::ITEMOWN,
-        Table::Users => &l::PLAYER,
-    };
-    set.layout(dos)
+    daydream_store::realm::layout_of(table, set)
 }
 
 /// Where a piece's bytes are in a record of `layout`, or `None` for padding the layout

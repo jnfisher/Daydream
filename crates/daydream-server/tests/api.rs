@@ -770,6 +770,64 @@ async fn users_are_edited_and_revived() {
 }
 
 #[tokio::test]
+async fn changes_are_listed_and_taken_back() {
+    let dir = realm_with_update_file();
+    daydream_store::journal::reset(dir.path()).unwrap();
+    let (status, body) = get(dir.path(), "/api/changes").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["since"].is_u64(), "{body}");
+    assert_eq!(body["changes"], serde_json::json!([]));
+
+    let uri = format!("/api/tables/Races/row?key={}", key(serde_json::json!([1])));
+    let (status, report) = send(
+        dir.path(),
+        "PUT",
+        &uri,
+        serde_json::json!({"values": {"Name": "Elf"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let (_, body) = get(dir.path(), "/api/changes").await;
+    let c = &body["changes"][0];
+    assert_eq!(body["changes"].as_array().unwrap().len(), 1, "{body}");
+    assert_eq!(
+        (&c["stem"], &c["id"], &c["how"], &c["what"], &c["name"]),
+        (
+            &serde_json::json!("WCCRACE"),
+            &serde_json::json!(1),
+            &serde_json::json!("changed"),
+            &serde_json::json!("race 1"),
+            &serde_json::json!("Elf")
+        )
+    );
+    assert_eq!(c["members"], serde_json::json!(["name"]));
+
+    let (status, _) = send(
+        dir.path(),
+        "POST",
+        "/api/changes/revert",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = send(
+        dir.path(),
+        "POST",
+        "/api/changes/revert",
+        serde_json::json!({"changes": [{"stem": "WCCRACE", "id": 1}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["reverted"], 1);
+    let (_, body) = get(dir.path(), "/api/changes").await;
+    assert_eq!(body["changes"], serde_json::json!([]));
+    let (_, body) = get(dir.path(), &uri).await;
+    assert_eq!(body["values"]["Name"], "Human");
+    // the update file follows the revert as it follows a save
+    assert_eq!(&update_images(dir.path())[0].2[2..7], b"Human");
+}
+
+#[tokio::test]
 async fn write_dat_previews_then_writes_the_wcc_files() {
     let tmp = tempfile::tempdir().unwrap();
     let wcc = tmp.path().join("wcc");
@@ -796,6 +854,9 @@ async fn write_dat_previews_then_writes_the_wcc_files() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["files"][0]["action"], "rebuilt");
     assert_eq!(body["files"][0]["records"], 3);
+    // only the realm's edits go in, onto the file as it is
+    assert_eq!(body["files"][0]["merged"], true);
+    assert_eq!(body["files"][0]["skipped"], serde_json::json!([]));
     assert_eq!(std::fs::read(wcc.join("MBBSEMU.DAT")).unwrap(), before);
     let (status, body) = run(false).await;
     assert_eq!(status, StatusCode::OK, "{body}");

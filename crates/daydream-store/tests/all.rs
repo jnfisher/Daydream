@@ -4,6 +4,7 @@ mod support;
 
 mod dat_write;
 mod oracle;
+mod publish_stock;
 mod realm_fixture;
 mod roundtrip;
 mod update_stock;

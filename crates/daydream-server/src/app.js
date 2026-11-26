@@ -4347,7 +4347,7 @@ function writeDat() {
     h9(
       "p",
       { class: "hint" },
-      "Write this realm back into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Files nobody changed are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first: Daydream refuses while it sees the game running on the folder."
+      "Write this realm's edits into the WCC*.DAT files it was converted from, for Worldgroup and NMR. Only the edits go in, onto the files as the game has them now: each changed member onto the game's record, so nothing the game did meanwhile (floors, shop stock, players) is undone. Files with no edits are left alone, edits that keep every key are written in place, and files with records added, deleted or renumbered are rebuilt. Stop the game first: Daydream refuses while it sees the game running on the folder."
     )
   );
   const wcc = input({ type: "text", placeholder: "C:\\WGSERV" });
@@ -4378,7 +4378,7 @@ function writeDat() {
     h9("label", { class: "path" }, "WCC folder (on the machine Daydream runs on) ", wcc),
     h9("label", { class: "path" }, "Write to another folder instead ", out),
     h9("label", { class: "check" }, backup, " Back up each file before changing it"),
-    h9("label", { class: "check" }, force, " Write even over files the game changed since the realm was converted"),
+    h9("label", { class: "check" }, force, " A realm edited before Daydream recorded edits is written whole: write it even over files the game changed since it was converted"),
     h9("div", { class: "toolbar" }, preview, go),
     result
   );
@@ -4400,11 +4400,18 @@ function writeDat() {
       const files = res.files;
       const changed2 = files.filter((f2) => f2.action !== "unchanged");
       const would = dryRun ? "would be " : "";
-      const line = (f2) => `${f2.dest}: ${f2.action === "updated" ? `${f2.records} records ${would}updated in place` : `${would}rebuilt with ${f2.records} records`}`;
+      const line = (f2) => `${f2.dest}: ${f2.action === "updated" ? `${f2.records} records ${would}updated in place` : `${would}rebuilt with ${f2.records} records`}${f2.merged ? "" : " (written whole)"}`;
       result.replaceChildren(
-        h9("p", {}, changed2.length ? `${changed2.length} of ${files.length} files ${dryRun ? "would change" : "written"}.` : `All ${files.length} files are as the realm has them: nothing to write.`)
+        h9("p", {}, changed2.length ? `${changed2.length} of ${files.length} files ${dryRun ? "would change" : "written"}.` : `All ${files.length} files hold the realm's edits: nothing to write.`)
       );
       if (changed2.length) result.append(h9("pre", {}, changed2.map(line).join("\n")));
+      const skipped = files.flatMap((f2) => f2.skipped ?? []);
+      if (skipped.length) {
+        result.append(
+          h9("p", {}, `${skipped.length} edit${skipped.length === 1 ? "" : "s"} ${dryRun ? "would be" : "were"} left out, and kept for the next write:`),
+          h9("pre", {}, skipped.join("\n"))
+        );
+      }
       if (res.backup) result.append(h9("p", { class: "hint" }, `The files as they were are in ${res.backup}.`));
     } catch (e) {
       result.replaceChildren(failure(e));

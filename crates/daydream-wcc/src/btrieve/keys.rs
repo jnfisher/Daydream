@@ -216,6 +216,42 @@ impl Key {
         }
         Some(out)
     }
+
+    /// The key value of a record as Btrieve tells values apart: two records have the same
+    /// key exactly when these bytes are equal. A zstring segment ends at its NUL and an
+    /// lstring at its length, and text collates through the segment's ACS (so a
+    /// case-insensitive key has one value however it is cased). `None` if the record is too
+    /// short. (Daydream addition.)
+    pub fn identity(&self, record: &[u8]) -> Option<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.length());
+        for s in &self.segments {
+            let b = s.bytes(record)?;
+            let text = match s.data_type {
+                KeyDataType::Zstring => &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())],
+                KeyDataType::Lstring if !b.is_empty() => {
+                    &b[1..1 + usize::from(b[0]).min(b.len() - 1)]
+                }
+                KeyDataType::String | KeyDataType::OldAscii => b,
+                _ => {
+                    out.extend_from_slice(b);
+                    continue;
+                }
+            };
+            let start = out.len();
+            match &s.acs {
+                Some(table) => out.extend(text.iter().map(|&c| table[usize::from(c)])),
+                None => out.extend_from_slice(text),
+            }
+            out.resize(start + b.len(), 0);
+        }
+        Some(out)
+    }
+
+    /// True when a record's key is null, so the index leaves the record out (and it takes
+    /// no value of the key). (Daydream addition.)
+    pub fn is_null(&self, record: &[u8]) -> bool {
+        crate::btrieve::index::is_null(self, record)
+    }
 }
 
 /// A segment as stored, before the ACS is attached.
@@ -291,5 +327,52 @@ pub(crate) fn key_def(raw: RawKeyDef, number: u16, segment: u16, acs: Option<&Ac
         null_value: raw.null_value,
         acs_name: acs.map(|a| a.name.clone()),
         acs: acs.map(|a| a.table),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segment(offset: u16, length: u16, data_type: KeyDataType, acs: Option<[u8; 256]>) -> KeyDef {
+        KeyDef {
+            number: 0,
+            segment: 0,
+            attributes: KeyAttributes(0),
+            data_type,
+            offset,
+            length,
+            null_value: 0,
+            acs_name: None,
+            acs,
+        }
+    }
+
+    #[test]
+    fn identity_tells_values_apart_as_btrieve_does() {
+        let mut upper = [0u8; 256];
+        for (i, c) in upper.iter_mut().enumerate() {
+            *c = (i as u8).to_ascii_uppercase();
+        }
+        let key = Key {
+            number: 0,
+            segments: vec![
+                segment(0, 2, KeyDataType::Integer, None),
+                segment(2, 6, KeyDataType::Zstring, Some(upper)),
+            ],
+        };
+        let id = |r: &[u8]| key.identity(r).unwrap();
+        // past the NUL nothing counts, and the case folds
+        assert_eq!(id(b"\x01\x00abc\0xy"), id(b"\x01\x00ABC\0\0\0"));
+        assert_ne!(id(b"\x01\x00abc\0xy"), id(b"\x02\x00abc\0xy"));
+        assert_ne!(id(b"\x01\x00abc\0xy"), id(b"\x01\x00abd\0xy"));
+        assert_eq!(id(b"\x01\x00abc\0xy").len(), key.length());
+        assert_eq!(key.identity(b"\x01\x00abc"), None);
+        // without an ACS the case counts
+        let key = Key {
+            number: 0,
+            segments: vec![segment(0, 4, KeyDataType::Zstring, None)],
+        };
+        assert_ne!(key.identity(b"ab\0\0"), key.identity(b"AB\0\0"));
     }
 }

@@ -154,16 +154,7 @@ pub fn export_table(
 /// The record layouts of a realm's files: Worldgroup 3 when it holds any Worldgroup file
 /// (`WCCITEM2`, ...), else DOS.
 pub fn layout_of_realm(realm: &Realm) -> LayoutSet {
-    let wg = realm.files().iter().any(|f| {
-        daydream_wcc::tables::WORLDGROUP_FILES
-            .iter()
-            .any(|w| w.stem == f.stem)
-    });
-    if wg {
-        LayoutSet::Worldgroup
-    } else {
-        LayoutSet::Dos
-    }
+    realm.layout_set()
 }
 
 /// The rows of a table sorted by its index columns, as NMR walks the Btrieve file.

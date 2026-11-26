@@ -193,9 +193,11 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Write REALM back into the realm's Btrieve `WCC*.DAT` files. Unchanged files are
-    /// left alone, edits that keep every key go in place, and files with records added,
-    /// deleted or re-keyed are rebuilt. Stop the game first.
+    /// Write REALM back into the realm's Btrieve `WCC*.DAT` files. Only REALM's edits go
+    /// in, merged onto the files as the game has them now (a realm edited before Daydream
+    /// journaled its edits is written whole). Unchanged files are left alone, edits that
+    /// keep every key go in place, and files with records added, deleted or re-keyed are
+    /// rebuilt. Stop the game first.
     WriteDat {
         /// The realm directory.
         realm: PathBuf,
@@ -211,7 +213,8 @@ enum Command {
         /// Report what would be written without writing.
         #[arg(long)]
         dry_run: bool,
-        /// Write even over WCC files that changed since REALM was converted from them.
+        /// Writing whole, write even over WCC files that changed since REALM was converted
+        /// from them.
         #[arg(long)]
         force: bool,
     },
@@ -307,6 +310,19 @@ enum Command {
         /// Write one record the game never applies: its next start changes nothing.
         #[arg(long)]
         blank: bool,
+    },
+    /// List REALM's changes since it was read from its game or last written back into it:
+    /// what `write-dat` writes. Each record added, changed (and the members it changed) or
+    /// deleted.
+    Changes {
+        /// The realm directory.
+        realm: PathBuf,
+        /// Take changes back instead: STEM:ID for each record (`WCCITEMS:12`), as listed.
+        #[arg(long, value_name = "STEM:ID", num_args = 1.., conflicts_with = "revert_all")]
+        revert: Vec<String>,
+        /// Take every change back.
+        #[arg(long)]
+        revert_all: bool,
     },
     /// Merge another user file's users into REALM's, as NMR's Merge Users does: users REALM
     /// lacks are copied byte for byte, users it has are skipped. Stop the realm first.
@@ -524,6 +540,11 @@ fn main() -> anyhow::Result<()> {
             dry_run,
         } => merge_users(&realm, &from, dry_run),
         Command::UpdateFile { realm, full, blank } => update_file(&realm, full, blank),
+        Command::Changes {
+            realm,
+            revert,
+            revert_all,
+        } => changes(&realm, &revert, revert_all),
         Command::SilvermereExport {
             realm,
             database,
@@ -622,7 +643,15 @@ fn write_dat(
             Action::Rebuilt(n) => format!("rebuilt with {n} records"),
         };
         changed |= w.action != Action::Unchanged;
-        println!("{name}: {what}");
+        let how = if w.merged || w.action == Action::Unchanged {
+            ""
+        } else {
+            " (written whole)"
+        };
+        println!("{name}: {what}{how}");
+        for s in &w.skipped {
+            println!("  not written: {s}");
+        }
     }
     if dry_run {
         println!("(dry run: nothing written)");
@@ -1034,6 +1063,62 @@ fn print_update_report(r: &daydream_store::update::Report) {
     for t in &r.too_long {
         println!("  {t}: too long for an image, so the update file leaves it alone");
     }
+}
+
+fn changes(realm: &Path, revert: &[String], revert_all: bool) -> anyhow::Result<()> {
+    use daydream_store::changes;
+    let r = Realm::open(realm)?;
+    if revert_all || !revert.is_empty() {
+        let mut which = Vec::new();
+        for spec in revert {
+            let (stem, id) = spec
+                .split_once(':')
+                .and_then(|(s, i)| Some((s.to_string(), i.parse::<i64>().ok()?)))
+                .with_context(|| format!("{spec}: give STEM:ID, as `changes` lists them"))?;
+            which.push((stem, id));
+        }
+        let done = changes::revert(&r, (!revert_all).then_some(&which[..]))?;
+        println!("{} records put back as they were", done.reverted);
+        for f in &done.failed {
+            println!("{}:{}: not put back: {}", f.stem, f.id, f.why);
+        }
+        return sync_update_file(realm);
+    }
+    let c = changes::list(&r)?;
+    if c.since.is_none() {
+        println!(
+            "the realm was edited before Daydream recorded its edits: its changes are not \
+             known, and write-dat writes it whole once (then only edits)"
+        );
+    }
+    if c.changes.is_empty() {
+        println!("no changes");
+    }
+    for c in &c.changes {
+        let name = c
+            .name
+            .as_deref()
+            .map(|n| format!(" ({n})"))
+            .unwrap_or_default();
+        let was = c
+            .was
+            .as_deref()
+            .map(|w| format!(", was {w}"))
+            .unwrap_or_default();
+        let members = if c.members.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", c.members.join(", "))
+        };
+        println!(
+            "{}:{} {} {}{name}{was}{members}",
+            c.stem,
+            c.id,
+            c.how.name(),
+            c.what
+        );
+    }
+    Ok(())
 }
 
 fn update_file(realm: &Path, full: bool, blank: bool) -> anyhow::Result<()> {

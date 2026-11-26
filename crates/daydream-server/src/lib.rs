@@ -4,8 +4,9 @@
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
 //! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the realm
-//! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the MCP
-//! server for AI agents at `/mcp` ([`mcp`]), and the
+//! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the
+//! realm's unpublished changes in [`changes`], the MCP server for AI agents at `/mcp`
+//! ([`mcp`]), and the
 //! routes below serve each file's records
 //! decoded (every member by name, `unk_*` spans included), read only. Who may use it is
 //! settled in [`auth`]: this machine only, unless it was given an access token.
@@ -37,6 +38,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub mod auth;
+pub mod changes;
 pub mod games;
 pub mod mcp;
 pub mod mme;
@@ -236,6 +238,8 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
                 .delete(tables::remove),
         )
         .route("/api/realm", get(realm))
+        .route("/api/changes", get(changes::list))
+        .route("/api/changes/revert", post(changes::revert))
         .route("/api/files/{stem}/records", get(records))
         .route("/api/files/{stem}/records/{id}", get(record))
         .route(
