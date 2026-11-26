@@ -11,12 +11,17 @@
 //! physical position, which MajorMUD remembers (`absbtv`) and so must never change for an
 //! existing record. Every write recomputes the key columns exactly as wbtrv32 would
 //! ([`crate::key`]).
+//!
+//! A file opened with [`WbtrvDb::open`] records what each write changes in its realm's journal
+//! ([`crate::journal`]) before making it; one being made ([`WbtrvDb::create`],
+//! [`WbtrvDb::convert`]) does not, and [`WbtrvDb::track`] turns that off or on.
 
 use std::path::{Path, PathBuf};
 
 use daydream_wcc::btrieve::{BtrieveFile, OpenOptions};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter};
 
+use crate::journal::Recorder;
 use crate::key::{self, ACS_LENGTH, Key, KeyError, KeyValue, Segment, attr};
 
 /// The schema version Daydream reads and writes (wbtrv32's `CURRENT_VERSION`).
@@ -82,6 +87,10 @@ pub struct WbtrvDb {
     conn: Connection,
     meta: Metadata,
     keys: Vec<Key>,
+    /// Whether writes are recorded in the realm's journal ([`crate::journal`]).
+    tracked: bool,
+    /// The journal, opened at the first tracked write.
+    recorder: Option<Recorder>,
 }
 
 impl std::fmt::Debug for WbtrvDb {
@@ -90,6 +99,7 @@ impl std::fmt::Debug for WbtrvDb {
             .field("path", &self.path)
             .field("meta", &self.meta)
             .field("keys", &self.keys.len())
+            .field("tracked", &self.tracked)
             .finish_non_exhaustive()
     }
 }
@@ -101,7 +111,8 @@ const PRAGMAS: &str = "PRAGMA journal_mode = WAL;\
                        PRAGMA wal_autocheckpoint = 10000;";
 
 impl WbtrvDb {
-    /// Opens an existing `.db` for reading and writing.
+    /// Opens an existing `.db` for reading and writing. Its writes are recorded in the
+    /// journal of the folder it is in ([`crate::journal`]).
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         Self::open_with(path, false)
     }
@@ -161,6 +172,8 @@ impl WbtrvDb {
             conn,
             meta,
             keys,
+            tracked: !read_only,
+            recorder: None,
         })
     }
 
@@ -234,6 +247,8 @@ impl WbtrvDb {
                 conn,
                 meta,
                 keys,
+                tracked: false,
+                recorder: None,
             },
             report,
         ))
@@ -274,7 +289,38 @@ impl WbtrvDb {
             conn,
             meta,
             keys,
+            tracked: false,
+            recorder: None,
         })
+    }
+
+    /// Whether this handle's writes are recorded in the realm's journal ([`crate::journal`]):
+    /// on for [`WbtrvDb::open`], off for a file being made.
+    pub fn track(&mut self, on: bool) {
+        self.tracked = on;
+    }
+
+    /// Records record `id` as it is now in the journal, before a write to it.
+    fn note(&mut self, id: i64) -> Result<(), StoreError> {
+        if !self.tracked {
+            return Ok(());
+        }
+        let before = self.get(id)?;
+        self.note_as(id, before.as_deref())
+    }
+
+    /// Records record `id` in the journal as having been `before`.
+    fn note_as(&mut self, id: i64, before: Option<&[u8]>) -> Result<(), StoreError> {
+        if !self.tracked {
+            return Ok(());
+        }
+        if self.recorder.is_none() {
+            self.recorder = Recorder::open(&self.path)?;
+        }
+        match &self.recorder {
+            Some(r) => r.record(id, before),
+            None => Ok(()),
+        }
     }
 
     /// The fingerprint of the Btrieve file this `.db` was converted from (`source_t`), if
@@ -360,6 +406,7 @@ impl WbtrvDb {
     /// when a non-modifiable key would change or a unique key would clash.
     pub fn update(&mut self, id: i64, data: &[u8]) -> Result<(), StoreError> {
         self.check_length(data)?;
+        self.note(id)?;
         let values = key_values(&self.keys, data).map_err(|source| StoreError::Key {
             path: self.path.clone(),
             source,
@@ -395,6 +442,14 @@ impl WbtrvDb {
     /// is given the next value, written back into the record, as wbtrv32 does.
     pub fn insert(&mut self, data: &[u8]) -> Result<i64, StoreError> {
         self.check_length(data)?;
+        // SQLite gives a new row the largest id plus one: noted before the write, as any write
+        let next: i64 = self
+            .conn
+            .query_row("SELECT COALESCE(MAX(id), 0) + 1 FROM data_t", [], |r| {
+                r.get(0)
+            })
+            .map_err(sql_err(&self.path))?;
+        self.note_as(next, None)?;
         let mut data = data.to_vec();
         let sql = sql_err(&self.path);
         // a savepoint, so an insert also works inside a batch ([`WbtrvDb::begin`])
@@ -430,6 +485,9 @@ impl WbtrvDb {
         .map_err(sql)?;
         let id = tx.last_insert_rowid();
         tx.commit().map_err(sql)?;
+        if id != next {
+            self.note_as(id, None)?;
+        }
         Ok(id)
     }
 
@@ -438,6 +496,7 @@ impl WbtrvDb {
     /// key clashes.
     pub fn restore(&mut self, id: i64, data: &[u8]) -> Result<(), StoreError> {
         self.check_length(data)?;
+        self.note(id)?;
         let values = key_values(&self.keys, data).map_err(|source| StoreError::Key {
             path: self.path.clone(),
             source,
@@ -479,6 +538,7 @@ impl WbtrvDb {
 
     /// Removes record `id`.
     pub fn delete(&mut self, id: i64) -> Result<(), StoreError> {
+        self.note(id)?;
         let changed = self
             .conn
             .execute("DELETE FROM data_t WHERE id = ?1", [id])
@@ -490,6 +550,19 @@ impl WbtrvDb {
             });
         }
         Ok(())
+    }
+
+    /// Removes every record; how many there were.
+    pub fn clear(&mut self) -> Result<u64, StoreError> {
+        if self.tracked {
+            for (id, data) in self.records()? {
+                self.note_as(id, Some(&data))?;
+            }
+        }
+        self.conn
+            .execute("DELETE FROM data_t", [])
+            .map(|n| n as u64)
+            .map_err(sql_err(&self.path))
     }
 
     fn check_length(&self, data: &[u8]) -> Result<(), StoreError> {

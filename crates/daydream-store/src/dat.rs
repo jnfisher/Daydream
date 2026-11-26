@@ -16,6 +16,9 @@
 //! realm must be stopped while its files are written. A source that changed since its
 //! `.db` was converted (the game ran on it) is refused, since writing the `.db` over it
 //! would lose the game's changes.
+//!
+//! The realm's update file is brought in step with its edits first ([`crate::update::sync`]),
+//! so the game's next start applies them again rather than undoing them.
 
 use std::path::{Path, PathBuf};
 
@@ -210,6 +213,8 @@ pub fn write_dat(
         bytes: Option<Vec<u8>>,
         updates: Vec<(RecordAddress, Vec<u8>)>,
     }
+    // the update file must carry the edits, or the game's next start undoes them
+    crate::update::sync(realm.dir())?;
     let mut plans = Vec::new();
     for f in realm.files() {
         let source = source_of(wcc, &f.stem)?.ok_or_else(|| DatError::NoSource {

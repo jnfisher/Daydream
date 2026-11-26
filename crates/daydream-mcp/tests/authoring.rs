@@ -133,3 +133,41 @@ fn a_copy_with_no_game_can_always_be_written() {
     assert_eq!(s["can_apply"], true);
     assert_eq!(s["edits_go_to"], "a working copy");
 }
+
+#[test]
+fn edits_and_undos_keep_the_update_file_in_step() {
+    use daydream_store::{Metadata, WbtrvDb};
+    let tmp = tempfile::tempdir().unwrap();
+    empty_realm(tmp.path());
+    let meta = Metadata {
+        record_length: 2015,
+        physical_record_length: 2019,
+        page_length: 4096,
+        variable_length_records: false,
+        version: 4,
+    };
+    WbtrvDb::create(&tmp.path().join("WCCUPDAT.db"), meta, Vec::new()).unwrap();
+    let images = || {
+        WbtrvDb::open_read_only(&tmp.path().join("WCCUPDAT.db"))
+            .unwrap()
+            .records()
+            .unwrap()
+            .into_iter()
+            .map(|(_, r)| (r[4], i32::from_le_bytes(r[5..9].try_into().unwrap())))
+            .collect::<Vec<_>>()
+    };
+    let server = Server::new(tmp.path(), Options::default());
+    let mut c = Client::new(&server);
+    let p = c.call(
+        "preview_edits",
+        json!({ "edits": [{ "op": "insert", "table": "Items", "values": { "Number": 9 } }] }),
+    );
+    let applied = c.call("apply_edits", json!({ "token": p["token"] }));
+    assert_eq!(applied["update_file"]["file"], "WCCUPDAT");
+    assert_eq!(applied["update_file"]["images_added"], 1);
+    // the new item's image: type 5, number 9
+    assert_eq!(images(), vec![(5, 9)]);
+    let undone = c.call("undo", json!({ "token": p["token"] }));
+    assert_eq!(undone["update_file"]["images_removed"], 1);
+    assert!(images().is_empty());
+}

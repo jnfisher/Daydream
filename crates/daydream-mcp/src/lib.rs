@@ -561,6 +561,35 @@ impl Server {
 
     /// Runs a tool; `None` when there is no such tool.
     pub fn call(&self, name: &str, args: &Map<String, Value>) -> Option<Result<Value, ToolError>> {
+        let mut out = self.run(name, args)?;
+        if matches!(name, "apply_edits" | "undo" | "silvermere_import") {
+            // the game's update file follows every write, or its next start undoes them
+            let synced = daydream_store::update::sync(&self.realm_dir);
+            if let Ok(Value::Object(answer)) = &mut out {
+                match synced {
+                    Ok(r) if r.changed() => {
+                        answer.insert(
+                            "update_file".into(),
+                            json!({
+                                "file": r.file,
+                                "images_replaced": r.replaced,
+                                "images_added": r.added,
+                                "images_removed": r.removed,
+                                "too_long": r.too_long,
+                            }),
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        answer.insert("update_file_error".into(), json!(e.to_string()));
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+
+    fn run(&self, name: &str, args: &Map<String, Value>) -> Option<Result<Value, ToolError>> {
         Some(match name {
             "list_tables" => Ok(self.list_tables()),
             "describe_table" => self.describe_table(args),

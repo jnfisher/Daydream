@@ -565,6 +565,7 @@ dependencies = [
 name = "daydream-store"
 version = "0.1.0"
 dependencies = [
+ "daydream-types",
  "daydream-wcc",
  "rusqlite",
  "tempfile",

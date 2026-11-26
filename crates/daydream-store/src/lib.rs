@@ -9,6 +9,8 @@
 //! - [`key`]: wbtrv32's key columns, ported so Daydream's writes index exactly as wbtrv32's.
 //! - [`realm`]: a realm directory and its tables.
 //! - [`dat`]: writing a realm back into its Btrieve `WCC*.DAT` files.
+//! - [`journal`]: what Daydream changed in a realm, record by record.
+//! - [`update`]: MajorMUD's update file, kept in step with the realm's edits.
 //!
 //! Writes assume nothing else has the file open: stop MBBSEmu (or the realm) before
 //! editing, until live writes are tested.
@@ -17,9 +19,11 @@
 
 pub mod dat;
 pub mod db;
+pub mod journal;
 pub mod key;
 pub mod merge;
 pub mod realm;
+pub mod update;
 
 pub use db::{ConvertReport, Fingerprint, Metadata, StoreError, WbtrvDb};
 pub use realm::{Realm, RealmFile};

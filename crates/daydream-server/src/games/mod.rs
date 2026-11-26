@@ -585,6 +585,8 @@ pub fn prepare(
                 url,
                 &daydream_silvermere::ImportOptions::default(),
             ))?;
+            // the copy as read is where its changes start: the import is not an edit
+            daydream_store::journal::reset(scratch.path())?;
         }
         Source::Db { .. } => unreachable!(),
     }

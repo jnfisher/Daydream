@@ -52,10 +52,13 @@ pub(crate) async fn post(
             .into_response();
     }
     let answer = blocking(move || {
-        if writes(&msg) {
-            // as the editors' saves: not into a running game's own files
-            let (_writing, _) = s.lock_write(false)?;
-        }
+        // as the editors' saves: not into a running game's own files, and held until the
+        // answer is made, so the write happens under it and the update file follows it
+        let _writing = if writes(&msg) {
+            Some(s.lock_write(false)?.0)
+        } else {
+            None
+        };
         if let Some(answer) = game_tool(&s, &msg) {
             return Ok(Some(answer));
         }
