@@ -140,12 +140,21 @@ pub fn is_mbbsemu(name: &str, cmd: &[String]) -> bool {
 /// Whether a game runs on `dir`.
 pub fn check(dir: &Path) -> Running {
     let dir = super::discover::canonical(dir).unwrap_or_else(|| dir.to_path_buf());
+    let mut out = tie(&dir, &game_processes());
+    if out.by.is_none() {
+        out.by = file_in_use(&dir);
+    }
+    out
+}
+
+/// Which of `procs` runs on `dir` (a canonical path), and which could not be tied to it.
+fn tie(dir: &Path, procs: &[GameProcess]) -> Running {
     let mut out = Running::default();
-    for p in game_processes() {
+    for p in procs {
         let shown = format!("{}, process {}", p.name, p.pid);
         let here = p.paths.iter().any(|q| {
             let q = super::discover::canonical(q).unwrap_or_else(|| q.clone());
-            q.starts_with(&dir)
+            q.starts_with(dir)
         });
         if here && out.by.is_none() {
             out.by = Some(shown);
@@ -155,9 +164,6 @@ pub fn check(dir: &Path) -> Running {
             }
             out.elsewhere.push(shown);
         }
-    }
-    if out.by.is_none() {
-        out.by = file_in_use(&dir);
     }
     out
 }
@@ -352,54 +358,40 @@ mod tests {
 
     /// An MBBSEmu in another folder does not run here, but is named: one in a container may
     /// run this folder's game.
-    #[cfg(target_os = "linux")]
     #[test]
     fn an_mbbsemu_elsewhere_is_named() {
         let tmp = tempfile::tempdir().unwrap();
         let (here, there) = (tmp.path().join("here"), tmp.path().join("there"));
         std::fs::create_dir_all(&here).unwrap();
         std::fs::create_dir_all(&there).unwrap();
-        // a stand-in for MBBSEmu: sleep, under its name (told it is sleep, since sleep can be
-        // one program of many that goes by the name it is called)
-        let Some(sleep) = ["/usr/bin/sleep", "/bin/sleep"]
-            .into_iter()
-            .map(Path::new)
-            .find(|p| p.is_file())
-        else {
-            return;
-        };
-        let emu = there.join("MBBSEmu");
-        std::fs::copy(sleep, &emu).unwrap();
-        let spawn = || {
-            use std::os::unix::process::CommandExt;
-            std::process::Command::new(&emu)
-                .arg0("sleep")
-                .arg("30")
-                .current_dir(&there)
-                .spawn()
-        };
-        // a program just written can be busy a moment while another test starts a process
-        let mut child = spawn()
-            .or_else(|_| {
-                std::thread::sleep(Duration::from_millis(200));
-                spawn()
-            })
-            .unwrap();
-        let shown = format!("MBBSEmu, process {}", child.id());
-        // the processes are looked at afresh once FRESH has passed
-        let deadline = Instant::now() + FRESH * 3;
-        let mut seen = (check(&here), check(&there));
-        while seen.1.by.as_deref() != Some(shown.as_str()) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(200));
-            seen = (check(&here), check(&there));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        let (here, there) = seen;
-        assert_eq!(there.by.as_deref(), Some(shown.as_str()), "{there:?}");
-        assert!(!here.running(), "{here:?}");
-        assert!(here.elsewhere.contains(&shown), "{here:?}");
-        assert!(here.mbbsemu_elsewhere.contains(&shown), "{here:?}");
+        let canonical = |p: &Path| super::super::discover::canonical(p).unwrap();
+        let (here, there) = (canonical(&here), canonical(&there));
+        let procs = [
+            GameProcess {
+                pid: 7,
+                name: "MBBSEmu".into(),
+                paths: vec![there.join("MBBSEmu"), there.clone()],
+                mbbsemu: true,
+            },
+            // a Worldgroup whose paths the system does not show
+            GameProcess {
+                pid: 9,
+                name: "WGSERVER.EXE".into(),
+                paths: vec![],
+                mbbsemu: false,
+            },
+        ];
+        let seen = tie(&here, &procs);
+        assert_eq!(seen.by, None);
+        assert_eq!(
+            seen.elsewhere,
+            ["MBBSEmu, process 7", "WGSERVER.EXE, process 9"]
+        );
+        assert_eq!(seen.mbbsemu_elsewhere, ["MBBSEmu, process 7"]);
+        let seen = tie(&there, &procs);
+        assert_eq!(seen.by.as_deref(), Some("MBBSEmu, process 7"));
+        assert_eq!(seen.elsewhere, ["WGSERVER.EXE, process 9"]);
+        assert!(seen.mbbsemu_elsewhere.is_empty());
     }
 
     #[cfg(target_os = "linux")]
