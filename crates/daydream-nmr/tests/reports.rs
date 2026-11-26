@@ -339,6 +339,7 @@ fn the_map_editor_digs_new_rooms_and_joins_old_ones() {
         to_room,
         existing,
         replace_back,
+        count: 1,
     };
 
     // east from the hall: a new room 3, a copy of the hall without its gold and items
@@ -385,6 +386,7 @@ fn the_map_editor_digs_new_rooms_and_joins_old_ones() {
         to_room: 5,
         existing: true,
         replace_back: false,
+        count: 1,
     };
     let plan = dig(&realm, Dos, &moved).unwrap();
     assert_eq!(plan.notes.len(), 1, "{plan:?}");
@@ -395,4 +397,93 @@ fn the_map_editor_digs_new_rooms_and_joins_old_ones() {
     let plan = dig(&realm, Dos, &moved).unwrap();
     apply(&realm, &plan, Dos).unwrap();
     assert_eq!(get(2, 5, "Exit 5"), 2);
+
+    // a line of three new rooms southeast from room 3: 4, 5 and 6 (map 2's room 5 is no
+    // matter), each joined to the one before both ways
+    let line = Dig {
+        map: 1,
+        room: 3,
+        dir: 6,
+        to_map: 1,
+        to_room: 4,
+        existing: false,
+        replace_back: false,
+        count: 3,
+    };
+    assert_eq!(line.label(), "Dig 3 rooms southeast of 1/3");
+    let plan = dig(&realm, Dos, &line).unwrap();
+    apply(&realm, &plan, Dos).unwrap();
+    // southeast is exit 6, and its way back (northwest) exit 5
+    assert_eq!(
+        (
+            get(1, 3, "Exit 6"),
+            get(1, 4, "Exit 5"),
+            get(1, 4, "Exit 6")
+        ),
+        (4, 3, 5)
+    );
+    assert_eq!(
+        (
+            get(1, 5, "Exit 5"),
+            get(1, 5, "Exit 6"),
+            get(1, 6, "Exit 5")
+        ),
+        (4, 6, 5)
+    );
+    assert_eq!(get(1, 6, "Exit 6"), 0, "the line ends at its last room");
+    assert_eq!(get(1, 6, "Light"), 5, "a copy of the room it is dug from");
+    // the line's numbers after the first skip those the map uses
+    put(
+        &realm,
+        "Rooms",
+        &[&[
+            ("Map Number", l(1)),
+            ("Room Number", l(8)),
+            ("Name", t("Shed")),
+        ]],
+    );
+    let east = Dig {
+        room: 6,
+        dir: 2,
+        to_room: 7,
+        ..line.clone()
+    };
+    assert_eq!(east.label(), "Dig 3 rooms east of 1/6");
+    apply(&realm, &dig(&realm, Dos, &east).unwrap(), Dos).unwrap();
+    assert_eq!(
+        (
+            get(1, 6, "Exit 2"),
+            get(1, 7, "Exit 2"),
+            get(1, 9, "Exit 3")
+        ),
+        (7, 9, 7)
+    );
+    assert_eq!((get(1, 9, "Exit 2"), get(1, 10, "Exit 3")), (10, 9));
+    // too long a line, or a line of existing rooms, is refused
+    let long = Dig {
+        room: 10,
+        to_room: 11,
+        count: 101,
+        ..line.clone()
+    };
+    assert!(dig(&realm, Dos, &long).is_err());
+    assert!(
+        dig(
+            &realm,
+            Dos,
+            &Dig {
+                existing: true,
+                ..line
+            }
+        )
+        .is_err()
+    );
+    let one = Dig {
+        room: 10,
+        dir: 0,
+        to_room: 11,
+        count: 1,
+        ..east
+    };
+    assert_eq!(one.label(), "Dig room 1/11 north of 1/10");
 }

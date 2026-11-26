@@ -8,7 +8,7 @@
 //! | `POST /api/tools/merge-users?dry_run=` | body: a user file (`.DAT` or `.db`); what was copied |
 //! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify) and `dry_run`; every change, then the write's report |
 //! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
-//! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) and `dry_run`; as `modify` |
+//! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) (`count` digs a line of new rooms) and `dry_run`; as `modify` |
 //! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
 //! | `POST /api/tools/write-dat` | `{wcc?, out?, backup, dry_run, force}`; `{files: [{stem, dest, action, records}], backup?}` |
 //!
@@ -253,7 +253,7 @@ pub(crate) async fn modify(
     State(s): State<Arc<AppState>>,
     Json(body): Json<ModifyJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, "Modify", move |realm, layout| {
+    run_plan(s, body.dry_run, "Modify".into(), move |realm, layout| {
         daydream_nmr::modify::plan(realm, &body.modify, layout).map_err(|e| bad(e.to_string()))
     })
     .await
@@ -272,7 +272,7 @@ pub(crate) async fn preset(
     State(s): State<Arc<AppState>>,
     Json(body): Json<PresetJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, "Fix", move |realm, layout| {
+    run_plan(s, body.dry_run, "Fix".into(), move |realm, layout| {
         daydream_nmr::presets::plan(realm, &body.preset, layout).map_err(|e| bad(e.to_string()))
     })
     .await
@@ -291,7 +291,8 @@ pub(crate) async fn dig(
     State(s): State<Arc<AppState>>,
     Json(body): Json<DigJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, "Dig rooms", move |realm, layout| {
+    let label = body.dig.label();
+    run_plan(s, body.dry_run, label, move |realm, layout| {
         daydream_nmr::map::dig(realm, layout, &body.dig).map_err(|e| bad(e.to_string()))
     })
     .await
@@ -355,7 +356,7 @@ pub(crate) async fn renumber(
 async fn run_plan(
     s: Arc<AppState>,
     dry_run: bool,
-    label: &'static str,
+    label: String,
     plan: impl FnOnce(
         &Realm,
         daydream_types::records::LayoutSet,
@@ -364,7 +365,7 @@ async fn run_plan(
     + 'static,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (_writing, dir) = s.lock_write(dry_run, label)?;
+        let (_writing, dir) = s.lock_write(dry_run, &label)?;
         let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         let plan = plan(&realm, layout)?;

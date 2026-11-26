@@ -135,7 +135,51 @@ pub struct Dig {
     /// When joining an existing room whose exit back is in use: replace it (NMR asks).
     #[serde(default)]
     pub replace_back: bool,
+    /// New rooms to dig in a line, each from the one before it the same way (one when left
+    /// out, at most [`MAX_LINE`]): `to_room`, then the next numbers `to_map` does not use.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub count: u32,
 }
+
+/// The most rooms one dig makes in a line.
+pub const MAX_LINE: u32 = 100;
+
+fn one() -> u32 {
+    1
+}
+
+fn is_one(n: &u32) -> bool {
+    *n == 1
+}
+
+impl Dig {
+    /// What the dig does, for the history (`Dig room 1/12 east of 1/4`).
+    pub fn label(&self) -> String {
+        let way = DIRECTION_WORDS.get(self.dir).copied().unwrap_or("away");
+        let from = format!("{}/{}", self.map, self.room);
+        if self.existing {
+            format!("Join {from} {way} to {}/{}", self.to_map, self.to_room)
+        } else if self.count > 1 {
+            format!("Dig {} rooms {way} of {from}", self.count)
+        } else {
+            format!("Dig room {}/{} {way} of {from}", self.to_map, self.to_room)
+        }
+    }
+}
+
+/// [`DIRECTIONS`] in words.
+pub const DIRECTION_WORDS: [&str; 10] = [
+    "north",
+    "south",
+    "east",
+    "west",
+    "northeast",
+    "northwest",
+    "southeast",
+    "southwest",
+    "up",
+    "down",
+];
 
 /// Why a dig cannot be done.
 #[derive(Debug, thiserror::Error)]
@@ -160,6 +204,12 @@ pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::P
     }
     if (d.map, d.room) == (d.to_map, d.to_room) {
         return Err(bad("a room cannot lead to itself here".into()));
+    }
+    if d.count == 0 || d.count > MAX_LINE {
+        return Err(bad(format!("a line is 1 to {MAX_LINE} rooms")));
+    }
+    if d.existing && d.count > 1 {
+        return Err(bad("a line of rooms is dug as new rooms".into()));
     }
     let rows = Rows::load(realm, "Rooms", layout)?;
     let (mapn, roomn, name) = (
@@ -227,7 +277,9 @@ pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::P
     let mut notes = Vec::new();
     let mut new_current = current.clone();
     set_exit(&mut new_current, d.dir, d.map, d.to_map, d.to_room);
-    let target = match there {
+    // the rooms the dig makes or changes after the room it starts from, in order
+    let mut made: Vec<Vec<Value>> = Vec::new();
+    match there {
         Some(i) => {
             let mut row = rows.0.rows[i].clone();
             if n(&row[exits[back]]) != 0 && !d.replace_back {
@@ -241,12 +293,12 @@ pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::P
             } else {
                 set_exit(&mut row, back, d.to_map, d.map, d.room);
             }
-            row
+            made.push(row);
         }
         None => {
-            let mut row = current.clone();
-            row[mapn] = like(&row[mapn], d.to_map);
-            row[roomn] = like(&row[roomn], d.to_room);
+            // a new room is the room it is dug from without its exits, items, coins and
+            // permanent NPC; each room of a line is the same
+            let mut like_current = current.clone();
             let mut clear: Vec<usize> = Vec::new();
             for c in [
                 "Perm NPC",
@@ -275,12 +327,41 @@ pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::P
             clear.extend(&kinds);
             paras.iter().for_each(|p| clear.extend(p));
             for c in clear {
-                row[c] = like(&row[c], 0);
+                like_current[c] = like(&like_current[c], 0);
             }
-            set_exit(&mut row, back, d.to_map, d.map, d.room);
-            row
+            // the numbers the map already uses, for the line's rooms after the first
+            let used: std::collections::HashSet<i64> = rows
+                .0
+                .rows
+                .iter()
+                .filter(|row| n(&row[mapn]) == d.to_map)
+                .map(|row| n(&row[roomn]))
+                .collect();
+            let (mut from_map, mut from_room, mut number) = (d.map, d.room, d.to_room);
+            for k in 0..d.count {
+                if k > 0 {
+                    number += 1;
+                    while used.contains(&number) {
+                        number += 1;
+                    }
+                    if number > i64::from(i32::MAX) {
+                        return Err(bad(format!(
+                            "map {} has no free room numbers left",
+                            d.to_map
+                        )));
+                    }
+                    let last = made.last_mut().expect("the line's room before");
+                    set_exit(last, d.dir, d.to_map, d.to_map, number);
+                }
+                let mut row = like_current.clone();
+                row[mapn] = like(&row[mapn], d.to_map);
+                row[roomn] = like(&row[roomn], number);
+                set_exit(&mut row, back, d.to_map, from_map, from_room);
+                made.push(row);
+                (from_map, from_room) = (d.to_map, number);
+            }
         }
-    };
+    }
     let mut plan = Plan {
         table: "Rooms".into(),
         notes,
@@ -305,11 +386,15 @@ pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::P
         }
     };
     diff(Some(current), &new_current);
-    diff(there.map(|i| &rows.0.rows[i]), &target);
+    for row in &made {
+        diff(there.map(|i| &rows.0.rows[i]), row);
+    }
+    let mut out = vec![new_current];
+    out.extend(made);
     plan.rows = Some(crate::data::NmrRows {
         name: rows.0.name.clone(),
         columns: rows.0.columns.clone(),
-        rows: vec![new_current, target],
+        rows: out,
     });
     Ok(plan)
 }

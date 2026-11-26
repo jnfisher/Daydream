@@ -240,6 +240,8 @@ button.menu-item:hover:not(:disabled) { background: var(--select); border-color:
 
 /* ---- toasts ---- */
 .toasts { position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 300; pointer-events: none; width: max-content; max-width: calc(100vw - 32px); }
+/* the World map's key hint holds the bottom edge: toasts stand above it */
+body:has(.place:not([hidden]) .map-hint) .toasts { bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
 .toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; padding: 9px 10px 9px 14px; border-radius: 16px; background: var(--ink); color: var(--surface); font-weight: 700; box-shadow: var(--float); animation: toast-in .35s var(--pop); max-width: 100%; }
 .toast.error { background: var(--bad); color: #fff; }
 .toast button { border: 0; background: color-mix(in srgb, var(--surface) 18%, transparent); color: inherit; min-height: 28px; padding: 0 10px; border-radius: 10px; box-shadow: none; }

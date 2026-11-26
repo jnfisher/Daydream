@@ -38,6 +38,19 @@ export interface MapAnswer {
   rooms: MapRoom[];
 }
 
+/** A dig (`POST /api/map/dig`, crates/daydream-nmr/src/map.rs's `Dig`). */
+export interface Dig {
+  map: number;
+  room: number;
+  dir: number;
+  to_map: number;
+  to_room: number;
+  /** Join the room `to_room` (else new rooms are made). */
+  existing?: boolean;
+  /** A line of new rooms, each from the one before: `to_room` and the next numbers the map does not use. */
+  count?: number;
+}
+
 export const DIRS = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW', 'U', 'D'];
 export const DIR_WORDS = ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down'];
 

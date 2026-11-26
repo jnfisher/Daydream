@@ -21,6 +21,8 @@ const HALF = 0.34;
 const CHIP = 0.46;
 /** How far a chip moves to the side when a room is in the next cell, in cells. */
 const ASIDE = 0.2;
+/** The least zoom Build mode's free cells and join marks show at. */
+const GHOSTS = 0.4;
 /** What a fit leaves clear for the controls over the map, in pixels: the map's name and its colours along the top, the hint along the bottom. */
 const TOP = 100;
 const BOTTOM = 64;
@@ -63,6 +65,18 @@ export interface Stub {
 export interface Hit {
   room: MapRoom | null;
   stub: Stub | null;
+  /** Build mode: a way from the selected room to dig (`to` null), or to join to the room drawn there. */
+  ghost?: Ghost;
+}
+
+/** Build mode: a way from the selected room with no exit, into a free cell or a room drawn there. */
+export interface Ghost {
+  dir: number;
+  /** The cell. */
+  x: number;
+  y: number;
+  /** The room drawn there, or null: the cell is free. */
+  to: number | null;
 }
 
 export interface LegendEntry extends Tint {
@@ -78,6 +92,8 @@ export interface SceneEvents {
   hover(hit: Hit | null, x: number, y: number): void;
   /** The camera moved. */
   moved(cam: Camera): void;
+  /** Build mode: a free cell or a join mark clicked. */
+  build(ghost: Ghost): void;
 }
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -99,6 +115,10 @@ export class Scene {
   private layers: Layers = { labels: true, grid: true, symbols: true };
   /** How much of the canvas's right side the room card covers. */
   private cover = 0;
+  /** Build mode: the ways the selected room can be dug or joined are drawn. */
+  private building = false;
+  /** The room being named: its name pill is left to the field over it. */
+  private naming: number | null = null;
 
   private readonly ctx: CanvasRenderingContext2D;
   private readonly mctx: CanvasRenderingContext2D;
@@ -194,6 +214,51 @@ export class Scene {
   select(n: number | null): void {
     this.selected = n !== null && this.by.has(n) ? n : null;
     this.draw();
+  }
+
+  /** Build mode on or off. */
+  setBuild(on: boolean): void {
+    this.building = on;
+    if (!on && this.hovered?.ghost) this.hovered = null;
+    this.draw();
+  }
+
+  /** The room being named (or none), whose pill the field takes the place of. */
+  setNaming(n: number | null): void {
+    this.naming = n;
+    this.draw();
+  }
+
+  /** Where a room is on the canvas: its middle, and its half width. */
+  roomOnScreen(n: number): { x: number; y: number; half: number } | null {
+    const p = this.layout?.at.get(n);
+    if (!p) return null;
+    return { x: this.sx(p.x), y: this.sy(p.y), half: HALF * S * this.cam.z };
+  }
+
+  /** Build mode: the ways from the selected room with no exit, each into a free cell or a room drawn there. */
+  ghosts(): Ghost[] {
+    const l = this.layout;
+    if (!this.building || this.selected === null || !l) return [];
+    const r = this.by.get(this.selected);
+    const p = l.at.get(this.selected);
+    if (!r || !p) return [];
+    const out: Ghost[] = [];
+    for (let d = 0; d < 8; d++) {
+      if (r.exits.some((e) => e.dir === d)) continue;
+      const [dx, dy] = STEP[d]!;
+      const to = l.cell.get(cellKey(p.x + dx, p.y + dy));
+      out.push({ dir: d, x: p.x + dx, y: p.y + dy, to: to ?? null });
+    }
+    return out;
+  }
+
+  /** Where a join mark is drawn: between the selected room and the room it would join. */
+  private joinSpot(g: Ghost): { x: number; y: number; r: number } {
+    const [dx, dy] = STEP[g.dir]!;
+    const x = this.sx(g.x - dx / 2);
+    const y = this.sy(g.y - dy / 2);
+    return { x, y, r: Math.max(6, 0.17 * S * this.cam.z) };
   }
 
   /** The legend of the colouring: each colour on this map and how many rooms have it, most first. */
@@ -417,6 +482,19 @@ export class Scene {
     const l = this.layout;
     if (!l) return null;
     const z = this.cam.z;
+    // Build mode: the join marks, then the free cells around the selected room
+    if (this.building && z >= GHOSTS) {
+      const ghosts = this.ghosts();
+      for (const g of ghosts) {
+        if (g.to === null) continue;
+        const c = this.joinSpot(g);
+        if (Math.hypot(c.x - px, c.y - py) <= c.r + 4) return { room: this.by.get(g.to) ?? null, stub: null, ghost: g };
+      }
+      const [wx, wy] = this.toWorld(px, py);
+      const [gx, gy] = [Math.floor(wx / S), Math.floor(wy / S)];
+      const g = ghosts.find((h) => h.to === null && h.x === gx && h.y === gy);
+      if (g) return { room: null, stub: null, ghost: g };
+    }
     // chips and marks first: they sit on and beside rooms
     if (this.layers.symbols && z >= 0.9) {
       const [wx, wy] = this.toWorld(px, py);
@@ -531,7 +609,8 @@ export class Scene {
       if (!d || d.moved || cancelled) return;
       const [x, y] = pos(e);
       const hit = this.hitAt(x, y);
-      if (hit?.stub) this.on.follow(hit.stub);
+      if (hit?.ghost) this.on.build(hit.ghost);
+      else if (hit?.stub) this.on.follow(hit.stub);
       else this.on.pick(hit?.room ?? null);
     };
     add(cv, 'pointerup', (e) => end(e, false));
@@ -563,6 +642,7 @@ export class Scene {
     add(cv, 'dblclick', (e) => {
       const [x, y] = pos(e);
       const hit = this.hitAt(x, y);
+      if (hit?.ghost) return;
       if (hit?.room && !hit.stub) this.frameRoom(hit.room.room);
       else if (!hit) this.zoomBy(1.8, [x, y]);
     });
@@ -590,7 +670,7 @@ export class Scene {
   private setHover(hit: Hit | null, x: number, y: number) {
     const was = this.hovered;
     this.hovered = hit;
-    if (was?.room !== hit?.room || was?.stub !== hit?.stub) this.draw();
+    if (was?.room !== hit?.room || was?.stub !== hit?.stub || was?.ghost?.dir !== hit?.ghost?.dir) this.draw();
     this.canvas.style.cursor = hit ? 'pointer' : '';
     this.on.hover(hit, x, y);
   }
@@ -774,6 +854,43 @@ export class Scene {
     }
     ctx.globalAlpha = 1;
 
+    // Build mode: free cells to dig into around the selected room, and marks to join the rooms
+    // drawn next to it
+    if (this.building && z >= GHOSTS) {
+      for (const g of this.ghosts()) {
+        const hot = this.hovered?.ghost?.dir === g.dir;
+        if (g.to === null) {
+          const x = this.sx(g.x);
+          const y = this.sy(g.y);
+          ctx.fillStyle = P.sel;
+          ctx.globalAlpha = hot ? 0.3 : 0.1;
+          ctx.beginPath();
+          ctx.roundRect(x - half, y - half, half * 2, half * 2, rad);
+          ctx.fill();
+          ctx.globalAlpha = hot ? 1 : 0.7;
+          ctx.strokeStyle = P.sel;
+          ctx.lineWidth = hot ? 2.4 : 1.6;
+          ctx.setLineDash([4, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          if (half >= 5) this.icon('plus', x, y, half * 1.1, P.sel, 2.6);
+          ctx.globalAlpha = 1;
+        } else {
+          const c = this.joinSpot(g);
+          ctx.fillStyle = hot ? P.sel : P.badge;
+          ctx.strokeStyle = P.sel;
+          ctx.lineWidth = hot ? 2.4 : 1.6;
+          ctx.setLineDash(hot ? [] : [3, 2]);
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, c.r, 0, TAU);
+          ctx.fill();
+          ctx.stroke();
+          ctx.setLineDash([]);
+          if (c.r >= 6) this.icon('link-2', c.x, c.y, c.r * 1.25, hot ? P.badge : P.sel, 2.6);
+        }
+      }
+    }
+
     // marks on rooms, and the chips at the stubs' ends
     if (symbols && z >= 0.75) {
       const ic = half * 1.1;
@@ -917,6 +1034,11 @@ export class Scene {
       ctx.beginPath();
       square(sel, 4.5);
       ctx.stroke();
+    }
+    if (sel && inView(sel.room) && this.naming !== sel.room) {
+      const p = l.at.get(sel.room)!;
+      const x = this.sx(p.x);
+      const y = this.sy(p.y);
       const label = sel.name.trim() || `Room ${sel.room}`;
       ctx.font = '800 12.5px Nunito, sans-serif';
       const num = String(sel.room);

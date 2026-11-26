@@ -3,13 +3,18 @@
   to zoom; click a room to open its card beside the map, and the arrow keys (or the number pad)
   walk its exits. The rooms can be coloured by place, area, monsters, light or your own edits,
   and the legend picks one colour out. F shows the map on the whole screen.
+
+  Build mode (B) digs with the same keys: a way with an exit is walked, a room drawn next door
+  is joined, and free cells get new rooms; digits first make a line ("3" then an arrow), "."
+  does the last move again, and Enter names the room. The map shows each edit at once and the
+  server writes them in turn; each one's toast can undo it.
 -->
 <!-- loaded when the World is first opened, so its styles travel with its code -->
 <svelte:options css="injected" />
 
 <script lang="ts">
   import { Popover } from 'bits-ui';
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -19,17 +24,19 @@
   import Maximize2 from '@lucide/svelte/icons/maximize-2';
   import Minimize2 from '@lucide/svelte/icons/minimize-2';
   import Minus from '@lucide/svelte/icons/minus';
+  import Pickaxe from '@lucide/svelte/icons/pickaxe';
   import Plus from '@lucide/svelte/icons/plus';
   import Scan from '@lucide/svelte/icons/scan';
   import X from '@lucide/svelte/icons/x';
   import { api } from '../api';
   import { read, sfx, write } from '../shell/prefs.svelte';
-  import { app, closeInspector, inspect } from '../shell/state.svelte';
-  import { messageOf, toast, toasts } from '../shell/toasts.svelte';
+  import { app, closeInspector, inspect, undo } from '../shell/state.svelte';
+  import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
+  import { dug, joined, moveFrom, renamed } from './build';
   import { ICONS } from './icons';
   import { COLOUR_BY, EXIT_LEGEND, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName } from './look';
   import { DIR_WORDS, kindName, type MapRoom } from './model';
-  import { Scene, type Camera, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
+  import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
 
   let canvas: HTMLCanvasElement;
   let mini: HTMLCanvasElement;
@@ -57,6 +64,32 @@
   let mapsOpen = $state(false);
   let mapFilter = $state('');
   let pal = $state(palette());
+  // Build mode
+  let building = $state(false);
+  /** Digits typed before a direction key: how many times to go. */
+  let countText = $state('');
+  /** The last move, for "." to make again. */
+  let lastMove: { dir: number; count: number } | null = null;
+  /** The room being named, and where its field is. */
+  let naming = $state<{ room: number; value: string } | null>(null);
+  let namingAt = $state<{ x: number; y: number } | null>(null);
+  let nameField = $state<HTMLInputElement | undefined>();
+  /** Edits sent and not yet answered. */
+  let pending = $state(0);
+  let chain: Promise<void> = Promise.resolve();
+  /** An edit failed: those queued after it are not sent, and the map is read again. */
+  let broken = false;
+  /** Counts the edits shown before the server had them: a read begun before one is out of date. */
+  let edits = 0;
+  /**
+   * The card catches up with the room selected once the edits under way are in: `follow` when
+   * it showed a room of this map as Build mode moved on, `open` when a room was clicked meanwhile
+   * (it may not be written yet).
+   */
+  let cardFollows: false | 'follow' | 'open' = false;
+  let buildToast = 0;
+  /** The rooms Build mode went to, latest last: where it goes back to when an undo takes its room away. */
+  let visited: number[] = [];
   /** The rooms changed since the realm was read: written meanwhile, so read again when shown. */
   let stale = false;
   /** Where the camera was on each map, so coming back to one finds it as it was left. */
@@ -108,8 +141,11 @@
     if (map && map !== m) cams.set(map, { ...scene.cam });
     loading = true;
     let fitted = false;
+    const gen = edits;
     try {
       const a = await api.map(m);
+      // an edit was shown meanwhile: this read may not have it, and the one after it will
+      if (a.map === map && gen !== edits) return false;
       const moved = a.map !== map;
       if (moved) {
         scene.select(null);
@@ -132,7 +168,9 @@
         }
       }
       // the room may have been renamed or removed
+      const had = selected?.room;
       selected = selected ? (scene.by.get(selected.room) ?? null) : null;
+      if (had !== undefined && !selected && !moved) gone(had);
       legend = scene.legend();
     } catch (e) {
       failed = messageOf(e);
@@ -147,19 +185,42 @@
    * in the middle, `close` in the middle close enough to see it, and `keep` only moves the map
    * when the room is near its edge, as walking does.
    */
-  function choose(n: number | null, how: 'centre' | 'close' | 'keep' | 'none' = 'none') {
+  function choose(n: number | null, how: 'centre' | 'close' | 'keep' | 'none' = 'none', withCard = true) {
     if (!scene) return;
     const r = n === null ? null : (scene.by.get(n) ?? null);
     scene.select(r?.room ?? null);
     selected = r;
     history.replaceState(null, '', r ? `#/world/${map}/${r.room}` : `#/world/${map}`);
     if (!r) return;
-    card = scene.setCover(true);
-    inspect({ table: 'Rooms', key: [map, r.room], name: r.name }, true);
+    if (building && visited.at(-1) !== r.room) visited = [...visited, r.room].slice(-50);
+    if (withCard && pending) cardFollows = 'open';
+    else if (withCard) {
+      card = scene.setCover(true);
+      inspect({ table: 'Rooms', key: [map, r.room], name: r.name }, true);
+    } else if (cardOnMap()) cardFollows = 'follow';
     if (how === 'centre') scene.centreOn(r.room);
     else if (how === 'close') scene.centreOn(r.room, { zoom: Math.max(scene.cam.z, 1.1), animate: false });
     else if (how === 'keep') scene.keepInView(r.room);
     live = `${r.name || 'Room'}, room ${map}/${r.room}. ${exitsSaid(r)}`;
+  }
+
+  /** The selected room went (an undo took it away): its card closes, and Build mode goes back to the last room it was in that is still here. */
+  function gone(n: number) {
+    const top = app.inspecting.at(-1);
+    if (top?.table === 'Rooms' && Number(top.key[0]) === map && Number(top.key[1]) === n) closeInspector();
+    for (let i = visited.length - 1; i >= 0; i--) {
+      const v = visited[i]!;
+      if (v !== n && scene?.by.has(v)) {
+        choose(v, 'keep', false);
+        return;
+      }
+    }
+  }
+
+  /** Whether the card shows a room of this map. */
+  function cardOnMap(): boolean {
+    const top = app.inspecting.at(-1);
+    return top?.table === 'Rooms' && Number(top.key[0]) === map;
   }
 
   function exitsSaid(r: MapRoom): string {
@@ -234,6 +295,12 @@
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
   function tipFor(h: Hit): { title: string; sub: string } {
+    if (h.ghost) {
+      const from = named(selected?.room ?? 0);
+      const way = DIR_WORDS[h.ghost.dir] ?? '';
+      if (h.ghost.to === null) return { title: `Dig a room ${way}`, sub: `A copy of ${from}, with an exit each way.` };
+      return { title: `Join ${way} to ${named(h.ghost.to)}`, sub: `An exit each way between ${from} and room ${map}/${h.ghost.to}.` };
+    }
     if (h.stub) {
       const e = h.stub.exit;
       const way = cap(DIR_WORDS[e.dir] ?? 'An exit');
@@ -246,6 +313,184 @@
     const r = h.room!;
     return { title: r.name || `Room ${r.room}`, sub: `Room ${map}/${r.room}` };
   }
+
+  // ---- Build mode ----------------------------------------------------------------------
+
+  /** The most rooms a move makes or walks. */
+  const MOST = 99;
+
+  const named = (n: number) => scene?.by.get(n)?.name.trim() || `room ${map}/${n}`;
+  /** A room's name and number: rooms often share a name (a street, a forest). */
+  const called = (n: number) => {
+    const name = scene?.by.get(n)?.name.trim();
+    return name ? `${name} ${map}/${n}` : `room ${map}/${n}`;
+  };
+
+  function setBuilding(on: boolean) {
+    if (on === building) return;
+    building = on;
+    countText = '';
+    if (!on && naming) finishNaming(true);
+    scene?.setBuild(on);
+    if (on && !selected && scene?.layout) choose(scene.start, 'centre', false);
+    live = on ? 'Build mode: the arrow keys dig, join and walk.' : 'Build mode off.';
+    sfx('toggle');
+  }
+
+  /** The digits typed before a direction key, as a count (one when none were). */
+  function takeCount(): number {
+    const c = Math.min(MOST, Number(countText) || 1);
+    countText = '';
+    return c;
+  }
+
+  /** A direction key in Build mode, `count` times: walks an exit, joins the room drawn next door, or digs. */
+  function build(dir: number, count = 1) {
+    if (!scene?.layout) return;
+    if (!selected) {
+      choose(scene.start, 'centre', false);
+      return;
+    }
+    lastMove = { dir, count };
+    let at = selected.room;
+    let left = Math.max(1, Math.min(MOST, count));
+    let made = false;
+    while (left > 0 && scene.layout) {
+      const m = moveFrom(scene.by, scene.layout, at, dir, left);
+      if (m.kind === 'stop') {
+        sfx('nope');
+        say(m.why);
+        break;
+      }
+      if (m.kind === 'leave') {
+        if (at !== selected?.room) choose(at, 'keep', false);
+        go(m.exit.para1, m.exit.to);
+        return;
+      }
+      if (m.kind === 'walk') {
+        at = m.to;
+        left--;
+      } else if (m.kind === 'join') {
+        joinRooms(at, dir, m.to);
+        at = m.to;
+        left--;
+        made = true;
+      } else {
+        digRooms(at, dir, m.rooms);
+        at = m.rooms.at(-1)!;
+        left -= m.rooms.length;
+        made = true;
+      }
+    }
+    if (made) sfx('pop');
+    if (at !== selected?.room) choose(at, 'keep', false);
+  }
+
+  function digRooms(from: number, dir: number, rooms: number[]) {
+    if (!scene) return;
+    const way = DIR_WORDS[dir];
+    const what =
+      rooms.length > 1
+        ? `Dug ${rooms.length} rooms ${way} of ${named(from)}, ${map}/${rooms[0]} to ${map}/${rooms.at(-1)}`
+        : `Dug room ${map}/${rooms[0]} ${way} of ${named(from)}`;
+    patch(dug(scene.rooms, from, dir, rooms));
+    const m = map;
+    send(() => api.dig({ map: m, room: from, dir, to_map: m, to_room: rooms[0]!, count: rooms.length }), what);
+  }
+
+  function joinRooms(from: number, dir: number, to: number) {
+    if (!scene) return;
+    const what = `Joined ${called(from)} ${DIR_WORDS[dir]} to ${called(to)}`;
+    patch(joined(scene.rooms, from, dir, to).rooms);
+    const m = map;
+    send(() => api.dig({ map: m, room: from, dir, to_map: m, to_room: to, existing: true }), what);
+  }
+
+  /** Shows the map's rooms as an edit leaves them, before the server has them. */
+  function patch(rooms: MapRoom[]) {
+    if (!scene) return;
+    edits++;
+    scene.setRooms(rooms);
+    count = rooms.length;
+    maps = maps.map(([m, c]) => [m, m === map ? rooms.length : c]);
+    selected = selected ? (scene.by.get(selected.room) ?? null) : null;
+    legend = scene.legend();
+  }
+
+  /** Sends an edit once those before it are in; `done` says what it did, in a toast that can undo it. */
+  function send(work: () => Promise<{ notes?: string[] } | unknown>, done: string) {
+    pending++;
+    chain = chain.then(async () => {
+      if (broken) return;
+      try {
+        const out = (await work()) as { notes?: string[] } | undefined;
+        const notes = out?.notes?.length ? ` ${out.notes.join(' ')}` : '';
+        dismiss(buildToast);
+        buildToast = toast(`${done}.${notes}`, { action: 'Undo', onAction: () => void undo() });
+      } catch (e) {
+        // what came after it rested on it: the map is read again as the server has it
+        broken = true;
+        sfx('nope');
+        dismiss(buildToast);
+        toast(messageOf(e), { kind: 'error' });
+      } finally {
+        pending--;
+        if (!pending) {
+          broken = false;
+          void settle();
+        }
+      }
+    });
+  }
+
+  /** Every edit is in: the map is read again as the server has it, and the card catches up. */
+  async function settle() {
+    if (!map || !here()) {
+      stale = true;
+      return;
+    }
+    await load(map, true);
+    if (pending) return;
+    if (selected && (cardFollows === 'open' || (cardFollows === 'follow' && cardOnMap()))) {
+      card = scene?.setCover(true) ?? 0;
+      inspect({ table: 'Rooms', key: [map, selected.room], name: selected.name }, true);
+    }
+    cardFollows = false;
+  }
+
+  async function startNaming() {
+    if (!selected || !scene) return;
+    naming = { room: selected.room, value: selected.name.trim() };
+    placeNaming();
+    scene.setNaming(selected.room);
+    await tick();
+    nameField?.focus();
+    nameField?.select();
+  }
+
+  function placeNaming() {
+    const s = naming ? scene?.roomOnScreen(naming.room) : null;
+    namingAt = s ? { x: s.x, y: s.y - s.half - 22 } : null;
+  }
+
+  function finishNaming(save: boolean) {
+    const n = naming;
+    if (!n) return;
+    naming = null;
+    namingAt = null;
+    scene?.setNaming(null);
+    canvas.focus({ preventScroll: true });
+    if (!save || !scene) return;
+    const name = n.value.trim();
+    const r = scene.by.get(n.room);
+    if (!r || name === r.name.trim()) return;
+    patch(renamed(scene.rooms, n.room, name));
+    const m = map;
+    send(() => api.save('Rooms', [m, n.room], { Name: name }), name ? `Named room ${m}/${n.room} “${name}”` : `Cleared room ${m}/${n.room}'s name`);
+  }
+
+  /** The longest name a room takes. */
+  const nameMax = $derived(app.tables.find((t) => t.name === 'Rooms')?.columns.find((c) => c.name === 'Name')?.size ?? 53);
 
   // ---- what the map shows --------------------------------------------------------------
 
@@ -314,9 +559,13 @@
     });
   });
 
-  // full screen ends when the World is left
+  // full screen and naming end when the World is left
   $effect(() => {
-    if (app.route.place !== 'world' && untrack(() => focus)) untrack(() => setFocus(false));
+    if (app.route.place === 'world') return;
+    untrack(() => {
+      if (focus) setFocus(false);
+      if (naming) finishNaming(true);
+    });
   });
 
   const filteredMaps = $derived(mapFilter.trim() ? maps.filter(([m]) => String(m).startsWith(mapFilter.trim())) : maps);
@@ -350,13 +599,22 @@
       if (t.closest('#dd-inspector, #dd-top, #dd-rail, .pop')) return;
     }
     if (e.key === 'Escape') {
-      if (focus) setFocus(false);
+      if (countText) countText = '';
+      else if (building) setBuilding(false);
+      else if (focus) setFocus(false);
+      return;
+    }
+    // Build mode: digits first make a line (the number pad's are directions)
+    if (building && !e.shiftKey && e.code.startsWith('Digit') && (countText || e.key !== '0')) {
+      e.preventDefault();
+      countText = (countText + e.key).slice(-2);
       return;
     }
     const d = e.shiftKey ? undefined : (KEY_DIR[e.code] ?? KEY_DIR[e.key]);
     if (d !== undefined) {
       e.preventDefault();
-      walk(d);
+      if (building) build(d, takeCount());
+      else walk(d);
       return;
     }
     const k = e.key.toLowerCase();
@@ -365,9 +623,14 @@
     else if (e.shiftKey && e.code === 'Digit2') {
       if (selected) scene?.frameRoom(selected.room);
     } else if (e.shiftKey) done = false;
-    else if (k === 'u') walk(8);
-    else if (k === 'd') walk(9);
-    else if (k === 'h' && scene) choose(scene.start, 'centre');
+    else if (k === 'u') building ? build(8, takeCount()) : walk(8);
+    else if (k === 'd') building ? build(9, takeCount()) : walk(9);
+    else if (k === 'b') setBuilding(!building);
+    else if (k === '.' && building) {
+      if (lastMove) build(lastMove.dir, lastMove.count);
+    } else if ((e.key === 'Enter' || e.key === 'F2') && building) {
+      if (selected) void startNaming();
+    } else if (k === 'h' && scene) choose(scene.start, 'centre', !building);
     else if (k === '+' || k === '=') scene?.zoomBy(1.4);
     else if (k === '-' || k === '_') scene?.zoomBy(1 / 1.4);
     else if (k === 'f') setFocus(!focus);
@@ -379,6 +642,10 @@
 
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
   function written() {
+    // a newer save, or an undo: Build mode's toast would undo something else now
+    if (!pending) dismiss(buildToast);
+    // edits under way: the map is read again once they are in
+    if (pending) return;
     if (!here() || !map) {
       stale = true;
       return;
@@ -402,7 +669,11 @@
       },
       follow,
       hover: (h, x, y) => (tip = h ? { x, y, ...tipFor(h) } : null),
-      moved: (c) => (zoom = c.z),
+      moved: (c) => {
+        zoom = c.z;
+        if (naming) placeNaming();
+      },
+      build: (g: Ghost) => build(g.dir),
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
@@ -508,7 +779,17 @@
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
-    {#if loading}<span class="pill lilac">Reading map…</span>{/if}
+    <button
+      type="button"
+      class="btn glass build-btn"
+      class:on={building}
+      aria-pressed={building}
+      onclick={() => setBuilding(!building)}
+      title={building ? 'Done building (B or Esc)' : 'Build: dig, join and name rooms with the keys (B)'}
+    >
+      <Pickaxe size={15} /><span>Build</span>{#if countText}<b class="count tnum">{countText}×</b>{/if}
+    </button>
+    {#if pending}<span class="pill lilac">Saving…</span>{:else if loading}<span class="pill lilac">Reading map…</span>{/if}
   </div>
 
   <div class="float tr">
@@ -604,15 +885,42 @@
   </div>
 
   {#if roomy}
-    <div class="float hint glass" aria-hidden="true">
+    <div class="float hint map-hint glass" aria-hidden="true">
       {#if note}
         {note}
+      {:else if building}
+        <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
         <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down <span class="kbd">Shift 2</span> close up
       {:else}
         Click a room for its card <span class="kbd">H</span> start room <span class="kbd">F</span> full screen
       {/if}
     </div>
+  {/if}
+
+  {#if naming && namingAt}
+    <input
+      bind:this={nameField}
+      class="name-field"
+      style:left="{namingAt.x}px"
+      style:top="{namingAt.y}px"
+      maxlength={nameMax}
+      spellcheck="false"
+      autocomplete="off"
+      aria-label="Room {map}/{naming.room}'s name"
+      bind:value={naming.value}
+      onkeydown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          finishNaming(true);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          finishNaming(false);
+        }
+      }}
+      onblur={() => finishNaming(true)}
+    />
   {/if}
 
   {#if failed}
@@ -647,6 +955,18 @@
   :global(.map-chip) { gap: 8px !important; padding: 0 12px 0 6px !important; border-radius: 999px !important; }
   :global(.map-chip) .ic { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--mint-2); color: var(--mint-ink); }
   :global(.map-chip) small { font-weight: 700; color: var(--ink-3); font-size: 12px; }
+
+  .build-btn { gap: 7px; }
+  .build-btn.on { background: var(--lilac-2); color: var(--lilac-ink); border-color: var(--outline); box-shadow: 0 2px 0 var(--outline); }
+  .build-btn .count { font-size: 12px; padding: 0 6px; border-radius: 6px; background: var(--surface); color: var(--ink); }
+  .hint .mode { color: var(--lilac-ink); margin-right: 2px; }
+  .name-field {
+    position: absolute; z-index: 7; transform: translate(-50%, -50%);
+    width: min(320px, 70%); height: 30px; padding: 0 12px; border-radius: 999px;
+    border: 2px solid var(--outline); background: var(--surface); color: var(--ink);
+    font: 800 13px var(--font-body, Nunito, sans-serif); text-align: center; box-shadow: 0 3px 0 var(--shadow);
+  }
+  .name-field:focus { outline: 3px solid var(--focus); outline-offset: 1px; }
 
   .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; }
   .seg button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; font-size: 12.5px; color: var(--ink-2); box-shadow: none; }

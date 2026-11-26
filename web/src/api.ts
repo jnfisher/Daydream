@@ -1,6 +1,6 @@
 // The server's editor API (crates/daydream-server/src/tables.rs).
 
-import type { MapAnswer } from './world/model';
+import type { Dig, MapAnswer } from './world/model';
 
 export type Cell = number | string | null;
 
@@ -246,6 +246,8 @@ export const api = {
   changes: () => call<ChangeList>('GET', '/api/changes'),
   /** One map's rooms, and the realm's maps. */
   map: (map: number) => call<MapAnswer>('GET', `/api/map?map=${map}`),
+  /** NMR's map editor's dig: a new room (or a line of them), or a room joined, an exit each way. */
+  dig: (dig: Dig) => call<{ notes: string[] }>('POST', '/api/map/dig', dig),
   publishPlan: () => call<PublishPlan>('GET', '/api/publish'),
   publish: (way: PublishWayId, warn?: PublishWarn) => call<PublishJob>('POST', '/api/publish', { way, warn }),
   publishJob: () => call<PublishJob | null>('GET', '/api/publish/job'),
