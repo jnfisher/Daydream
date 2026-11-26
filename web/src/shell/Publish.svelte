@@ -42,6 +42,7 @@
   const other = $derived(plan?.ways.find((w) => w.id !== way?.id && w.ready) ?? null);
   const busy = $derived(pub.job?.state === 'running');
   const wcc = $derived(plan?.engine === 'worldgroup' || plan?.engine === 'majorbbs');
+  const db = $derived(plan?.engine === 'mbbsemu' || plan?.engine === 'db');
   const blocks = $derived(plan?.checks.filter((c) => c.level === 'block') ?? []);
   const last = $derived(plan?.job && plan.job.state !== 'running' ? plan.job : null);
 
@@ -74,6 +75,7 @@
         ? `${plan.name} has no remote control, so the gentle way hands MajorMUD an update file it merges by itself, and nobody has to stop the BBS.`
         : `Daydream writes your changes into the game's files while ${plan.name} is stopped. It waits while you stop it, and carries on by itself.`;
     }
+    if (db) return `${plan.name} writes its .db files as it runs, so you edit a copy while it plays. To publish, Daydream waits while you stop it, then writes each change onto the game's record as play left it.`;
     if (warns) return 'silvermere warns its players and closes, Daydream writes its world from your working copy, and what play changed stays as it is.';
     return 'Daydream waits while silvermere stops, then writes its world from your working copy, keeping what play changed.';
   });

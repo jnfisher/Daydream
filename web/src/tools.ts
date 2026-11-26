@@ -303,6 +303,8 @@ export function writeDat(): HTMLElement {
       if (l.current?.kind === 'wcc') {
         gameDir = l.current.location ?? null;
         wcc.placeholder = `${gameDir} (the open game's)`;
+      } else if (l.current?.kind === 'db' && l.current.copy) {
+        card.append(h('p', { class: 'hint' }, "The open game keeps its world in .db files, not WCC files: publish it from the Publish page, which writes them with the game stopped."));
       } else if (l.current?.kind === 'db' && l.current.live) {
         card.append(h('p', { class: 'hint' }, "The open game's own .db files are being edited: every save is already in the game, so there is nothing to write back."));
       } else {

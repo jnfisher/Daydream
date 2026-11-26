@@ -7,9 +7,10 @@
 //! |---|---|---|
 //! | Worldgroup, The Major BBS (`WCC*.DAT`) | `update`: at the next start | check, back up, write the update file, live at the next start or cleanup |
 //! | | `now`: with the game stopped | check, stop the game (Daydream waits), back up, write, start it again |
+//! | MBBSEmu (`WCC*.db`) | `now`: with the game stopped | check, stop it (Daydream waits), back up, write its `.db` files, start it again |
 //! | silvermere | `now` | check, warn the players (with an admin token), stop silvermere (Daydream waits for its writer lock), back up, write, start it again |
 //!
-//! A world edited where it is (MBBSEmu's `.db` files) has nothing to publish.
+//! A realm folder with no game, edited where it is, has nothing to publish.
 //!
 //! The update way needs no stop. MajorMUD merges its update file into its world at every start
 //! and nightly cleanup, keeping what play changed (floors, shop stock, kill timers), so this
@@ -18,9 +19,13 @@
 //! renumbering, players or what play changes ([`daydream_store::dat::not_carried`]); a world
 //! with such changes publishes now.
 //!
-//! Daydream cannot stop or start Worldgroup or The Major BBS, so publishing now waits while the
-//! sysop stops the game, carries on by itself once it has, and leaves starting it again to
-//! the sysop. silvermere has a remote control ([`crate::control`]): with an admin token
+//! MBBSEmu keeps its world in wbtrv32's `.db` files and writes them as it runs, so its world is
+//! edited in a copy taken while it runs, and published into them with it stopped: each edit
+//! onto the record as play left it, where it is ([`daydream_store::game_db`]).
+//!
+//! Daydream cannot stop or start Worldgroup, The Major BBS or MBBSEmu, so publishing now waits
+//! while the sysop stops the game, carries on by itself once it has, and leaves starting it
+//! again to the sysop. silvermere has a remote control ([`crate::control`]): with an admin token
 //! Daydream has it warn the players, count down (`warn.in_secs`, at once when nobody is in
 //! the game; Cancel calls it off and silvermere tells the players) and stop, and it starts
 //! silvermere again the way it was started, then waits until it answers. Without a token
@@ -80,6 +85,13 @@ pub const DEFAULT_MESSAGE: &str = "a world update, back in a minute or two";
 enum Engine {
     /// A folder of `WCC*.DAT` files: Worldgroup's (`WCCUPDA2`) or The Major BBS's (`WCCUPDAT`).
     Wcc { dir: PathBuf, worldgroup: bool },
+    /// A game's own `.db` files (MBBSEmu's, or wbtrv32's beside a Worldgroup), worked on in a
+    /// copy. `name`: the game, as its label says.
+    Db {
+        dir: PathBuf,
+        name: &'static str,
+        worldgroup: bool,
+    },
     /// silvermere's database.
     Silvermere { url: String },
     /// Its own files, edited where they are: nothing to publish.
@@ -87,13 +99,39 @@ enum Engine {
 }
 
 impl Engine {
-    fn of(game: Option<&Game>, set: LayoutSet) -> Self {
-        match game.map(|g| &g.source) {
-            Some(Source::Wcc { dir }) => Self::Wcc {
+    /// What the game open publishes into, its world worked on in `realm_dir`.
+    fn of(game: Option<&Game>, set: LayoutSet, realm_dir: &Path) -> Self {
+        let worldgroup = set == LayoutSet::Worldgroup;
+        match game {
+            Some(Game {
+                source: Source::Wcc { dir },
+                ..
+            }) => Self::Wcc {
                 dir: dir.clone(),
-                worldgroup: set == LayoutSet::Worldgroup,
+                worldgroup,
             },
-            Some(Source::Silvermere { url }) => Self::Silvermere { url: url.clone() },
+            // the game's own files, unless the world is worked on where they are
+            Some(
+                g @ Game {
+                    source: Source::Db { dir },
+                    label,
+                    ..
+                },
+            ) if g.copied_into(realm_dir) => Self::Db {
+                dir: dir.clone(),
+                name: if label.contains("MBBSEmu") {
+                    "MBBSEmu"
+                } else if label.contains("Worldgroup") {
+                    "Worldgroup"
+                } else {
+                    "the BBS"
+                },
+                worldgroup,
+            },
+            Some(Game {
+                source: Source::Silvermere { url },
+                ..
+            }) => Self::Silvermere { url: url.clone() },
             _ => Self::InPlace,
         }
     }
@@ -104,6 +142,10 @@ impl Engine {
                 worldgroup: true, ..
             } => "worldgroup",
             Self::Wcc { .. } => "majorbbs",
+            Self::Db {
+                name: "MBBSEmu", ..
+            } => "mbbsemu",
+            Self::Db { .. } => "db",
             Self::Silvermere { .. } => "silvermere",
             Self::InPlace => "files",
         }
@@ -116,6 +158,7 @@ impl Engine {
                 worldgroup: true, ..
             } => "Worldgroup",
             Self::Wcc { .. } => "The Major BBS",
+            Self::Db { name, .. } => name,
             Self::Silvermere { .. } => "silvermere",
             Self::InPlace => "the game",
         }
@@ -127,6 +170,10 @@ impl Engine {
             Self::Wcc {
                 worldgroup: true, ..
             } => "WCCUPDA2.DAT",
+            Self::Db {
+                worldgroup: true, ..
+            } => "WCCUPDA2.DB",
+            Self::Db { .. } => "WCCUPDAT.DB",
             _ => "WCCUPDAT.DAT",
         }
     }
@@ -134,8 +181,16 @@ impl Engine {
     fn ways(&self) -> &'static [Way] {
         match self {
             Self::Wcc { .. } => &[Way::Update, Way::Now],
-            Self::Silvermere { .. } => &[Way::Now],
+            Self::Db { .. } | Self::Silvermere { .. } => &[Way::Now],
             Self::InPlace => &[],
+        }
+    }
+
+    /// The folder a game runs on, for the ones Daydream looks for as processes.
+    fn game_dir(&self) -> Option<&Path> {
+        match self {
+            Self::Wcc { dir, .. } | Self::Db { dir, .. } => Some(dir),
+            _ => None,
         }
     }
 }
@@ -257,6 +312,41 @@ fn steps(engine: &Engine, way: Way, update: bool, live: Option<&Live>) -> Vec<St
                 "Start it the way you usually do.",
             ),
         ],
+        (Engine::Db { .. }, _) => vec![
+            check,
+            step(
+                "stop",
+                format!("Stop {name}"),
+                "Stop it the way you usually do: its console, or its service. Daydream waits, \
+                 and carries on once it has stopped.",
+            ),
+            step(
+                "backup",
+                "Back up",
+                "Each .db file about to be written is copied to a daydream-backup folder beside \
+                 it first.",
+            ),
+            step(
+                "write",
+                "Write the changes",
+                if update {
+                    format!(
+                        "Only the records you changed go in, each onto the game's record as \
+                         play left it, where it is, and {upd} with them, so the next start \
+                         keeps your edits."
+                    )
+                } else {
+                    "Only the records you changed go in, each onto the game's record as play \
+                     left it, where it is."
+                        .into()
+                },
+            ),
+            step(
+                "start",
+                format!("Start {name} again"),
+                "Start it the way you usually do.",
+            ),
+        ],
         (Engine::Silvermere { url }, _) => {
             let stopper = live.is_some_and(|l| l.stopper().is_some());
             let mut out = vec![check];
@@ -331,7 +421,7 @@ fn steps(engine: &Engine, way: Way, update: bool, live: Option<&Live>) -> Vec<St
 /// Whether a game is running, as the plan shows it; `live`: silvermere's, looked at already.
 fn running_json(engine: &Engine, live: Option<&Live>) -> Value {
     match (engine, live) {
-        (Engine::Wcc { dir, .. }, _) => {
+        (Engine::Wcc { dir, .. } | Engine::Db { dir, .. }, _) => {
             let r = running::check(dir);
             json!({ "running": r.running(), "by": r.by, "elsewhere": r.elsewhere })
         }
@@ -436,7 +526,7 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
     let cur = s.current();
     let dir = s.realm_dir()?;
     let realm = Realm::open(&dir)?;
-    let engine = Engine::of(cur.game.as_ref(), realm.layout_set());
+    let engine = Engine::of(cur.game.as_ref(), realm.layout_set(), &dir);
     let changes = daydream_store::changes::list(&realm)?;
     let n = changes.changes.len();
     let empty = n == 0 && changes.since.is_some();
@@ -465,13 +555,22 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
         _ if empty => check("ok", "Nothing is waiting to publish.".into()),
         _ => {}
     }
-    if changes.since.is_none() && !matches!(engine, Engine::InPlace) {
-        check(
+    match &engine {
+        Engine::InPlace => {}
+        _ if changes.since.is_some() => {}
+        // only the edits go into a game's .db files, so they must be known
+        Engine::Db { .. } => check(
+            "block",
+            "This working copy has no list of its changes, so they cannot be told from what \
+             play changed. Read the game again to make a fresh copy."
+                .into(),
+        ),
+        _ => check(
             "note",
             "This world was edited before Daydream kept a list of its changes, so publishing \
              writes it whole, once."
                 .into(),
-        );
+        ),
     }
     if let Some(by) = running["by"].as_str().filter(|_| is_running) {
         check(
@@ -480,6 +579,11 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
                 (Engine::Wcc { .. }, _) => format!(
                     "{} is running ({by}). Publishing at the next start needs no stop; \
                      publishing now waits for it to stop.",
+                    engine.name()
+                ),
+                (Engine::Db { .. }, _) => format!(
+                    "{} is running ({by}): you go on editing the copy while it runs, and \
+                     publishing waits for you to stop it.",
                     engine.name()
                 ),
                 (_, Some(l)) if l.stopper().is_some() => match l.players.as_ref().map(Vec::len) {
@@ -590,6 +694,11 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
                 format!("Now, with {} stopped", engine.name()),
                 match &engine {
                     Engine::Silvermere { .. } => silvermere_summary(live.as_ref()),
+                    Engine::Db { .. } => format!(
+                        "{} is stopped the way you usually do while Daydream waits, then your \
+                         changes go into its .db files, each onto the record as play left it.",
+                        engine.name()
+                    ),
                     _ => format!(
                         "{} is stopped from its console while Daydream waits, then the \
                          changes go straight into its files. Deletions, renumbering and \
@@ -801,6 +910,19 @@ fn written_line(w: &Written) -> Option<String> {
         Action::Unchanged => None,
         Action::Updated(n) => Some(format!("{name}: {n} record{} written in place", plural(n))),
         Action::Rebuilt(n) => Some(format!("{name}: written anew, {n} record{}", plural(n))),
+        Action::Rows {
+            changed,
+            added,
+            deleted,
+        } => {
+            let mut parts = Vec::new();
+            for (n, what) in [(changed, "changed"), (added, "added"), (deleted, "deleted")] {
+                if n > 0 {
+                    parts.push(format!("{n} {what}"));
+                }
+            }
+            Some(format!("{name}: {}", parts.join(", ")))
+        }
     }
 }
 
@@ -821,11 +943,10 @@ fn wait_stopped(job: &Job, engine: &Engine) -> Result<(), Stop> {
     let mut told = false;
     loop {
         let by = match engine {
-            Engine::Wcc { dir, .. } => running::check(dir).by,
             Engine::Silvermere { url } => {
                 daydream_silvermere::block_on(daydream_silvermere::info(url))?.running
             }
-            Engine::InPlace => None,
+            _ => engine.game_dir().and_then(|dir| running::check(dir).by),
         };
         let Some(by) = by else {
             job.step("stop", |s| s.cancel = false);
@@ -842,7 +963,10 @@ fn wait_stopped(job: &Job, engine: &Engine) -> Result<(), Stop> {
         if !told {
             job.log(
                 "stop",
-                format!("Waiting for {by} to stop. Daydream carries on by itself once it has."),
+                format!(
+                    "Waiting for {} to stop ({by}). Daydream carries on by itself once it has.",
+                    engine.name()
+                ),
             );
             job.step("stop", |s| s.cancel = true);
             told = true;
@@ -1226,6 +1350,14 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
                     .into(),
             }
         }
+        Engine::Db { dir, .. } => {
+            write_db(job, dir, &realm)?;
+            job.set("start", "yours");
+            format!(
+                "Your changes are in {}'s files. Start it again when you are ready.",
+                ctx.engine.name()
+            )
+        }
         Engine::InPlace => return Err(Stop::Failed("this world has nothing to publish".into())),
     };
     let skipped = job.lock().skipped.len();
@@ -1237,6 +1369,57 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
             if skipped == 1 { "" } else { "s" }
         )
     })
+}
+
+/// A game's `.db` files backed up, and the working copy's edits written into them.
+fn write_db(job: &Job, dir: &Path, realm: &Realm) -> Result<(), Stop> {
+    job.set("backup", "running");
+    let dry = WriteOptions {
+        dry_run: true,
+        ..WriteOptions::default()
+    };
+    let files: Vec<PathBuf> = daydream_store::game_db::write_db(realm, dir, &dry)?
+        .into_iter()
+        .filter(|w| w.action != Action::Unchanged)
+        .map(|w| w.dest)
+        .collect();
+    let backup = backup_dir(dir);
+    if !files.is_empty() {
+        std::fs::create_dir_all(&backup)
+            .map_err(|e| Stop::Failed(format!("backing up into {}: {e}", backup.display())))?;
+    }
+    for f in &files {
+        // a consistent copy of the file, its write-ahead log included
+        daydream_store::WbtrvDb::snapshot(f, &backup.join(f.file_name().unwrap_or_default()))?;
+    }
+    job.log(
+        "backup",
+        if files.is_empty() {
+            "Nothing to copy: the game's files already hold these records.".to_string()
+        } else {
+            format!(
+                "{} file{} copied to {}.",
+                files.len(),
+                if files.len() == 1 { "" } else { "s" },
+                backup.display()
+            )
+        },
+    );
+    job.set("backup", "done");
+
+    job.set("write", "running");
+    let written = daydream_store::game_db::write_db(realm, dir, &WriteOptions::default())?;
+    for w in &written {
+        if let Some(line) = written_line(w) {
+            job.log("write", line);
+        }
+        job.lock().skipped.extend(w.skipped.iter().cloned());
+    }
+    if written.iter().all(|w| w.action == Action::Unchanged) {
+        job.log("write", "Every file already held these records.");
+    }
+    job.set("write", "done");
+    Ok(())
 }
 
 /// silvermere's database backed up, and its world written from the working copy.

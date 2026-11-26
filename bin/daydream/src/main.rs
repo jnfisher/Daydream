@@ -670,6 +670,11 @@ fn write_dat(
             Action::Unchanged => "unchanged".to_string(),
             Action::Updated(n) => format!("{n} records updated in place"),
             Action::Rebuilt(n) => format!("rebuilt with {n} records"),
+            Action::Rows {
+                changed,
+                added,
+                deleted,
+            } => format!("{changed} changed, {added} added, {deleted} deleted"),
         };
         changed |= w.action != Action::Unchanged;
         let how = if w.merged || w.action == Action::Unchanged {

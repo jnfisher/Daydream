@@ -14,7 +14,8 @@ use tower::ServiceExt;
 const TOKEN: &str = "0123456789abcdef-token";
 
 /// A machine with one Btrieve game (`bbs/WGSERV`) and one MBBSEmu game in `.db` files
-/// (`emu`), under `root`; and the workspace beside them.
+/// (`emu`, its `.DAT` files converted as wbtrv32 converts them), under `root`; and the
+/// workspace beside them.
 struct Machine {
     _tmp: tempfile::TempDir,
     root: PathBuf,
@@ -42,6 +43,9 @@ fn machine() -> Machine {
         std::fs::copy(fixture(), emu.join(format!("{f}.DAT"))).unwrap();
         WbtrvDb::convert(&fixture(), &emu.join(format!("{f}.DB"))).unwrap();
     }
+    // MBBSEmu's own settings, by which it is known; and a file of the BBS's, not the game's
+    std::fs::write(emu.join("appsettings.json"), "{}").unwrap();
+    WbtrvDb::convert(&fixture(), &emu.join("BBSUSR.DB")).unwrap();
     let workspace = tmp.path().join("workspace");
     Machine {
         root,
@@ -217,7 +221,8 @@ async fn games_are_found_opened_and_written_back() {
     assert!(!copy.join("marker").exists());
     assert!(copy.with_extension("previous").join("marker").exists());
 
-    // the MBBSEmu game is edited where it is, and has nothing to write back
+    // the MBBSEmu game is edited in a copy of its world's .db files, and published, not
+    // written back as WCC files
     let (status, body) = call(
         &app,
         "POST",
@@ -227,14 +232,18 @@ async fn games_are_found_opened_and_written_back() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["current"]["live"], true);
-    assert_eq!(
-        body["current"]["realm_dir"],
-        std::fs::canonicalize(m.root.join("emu"))
-            .unwrap()
-            .display()
-            .to_string()
-    );
+    assert_eq!(body["current"]["live"], false);
+    assert_eq!(body["current"]["copy"], true);
+    let emu_copy = PathBuf::from(body["current"]["realm_dir"].as_str().unwrap());
+    assert!(emu_copy.starts_with(&m.workspace), "{}", emu_copy.display());
+    let (_, realm) = call(&app, "GET", "/api/realm", None, None).await;
+    let stems: Vec<&str> = realm["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["stem"].as_str().unwrap())
+        .collect();
+    assert_eq!(stems, ["WCCITEMS", "WCCKNMSR"]);
     let (status, body) = call(
         &app,
         "POST",
@@ -244,15 +253,158 @@ async fn games_are_found_opened_and_written_back() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("Publish"),
+        "{body}"
+    );
+    let (_, list) = call(&app, "GET", "/api/games", None, None).await;
+    assert!(game(&list, "db")["copy"]["pulled"].is_string(), "{list}");
 
     // a later start opens the game open last
     let last = daydream_server::games::workspace::Workspace::new(m.workspace.clone())
         .last()
         .unwrap();
-    assert_eq!(
-        last.realm_dir,
-        std::fs::canonicalize(m.root.join("emu")).unwrap()
+    assert_eq!(last.realm_dir, emu_copy);
+}
+
+/// The MBBSEmu game: its own files, opened where they are by an earlier Daydream or named at
+/// start, are worked on in their copy from the next start.
+#[tokio::test]
+async fn a_games_own_db_files_given_at_start_give_way_to_their_copy() {
+    let m = machine();
+    let emu = std::fs::canonicalize(m.root.join("emu")).unwrap();
+    let app = daydream_server::router_with(
+        Some(&emu),
+        Options {
+            games: Config {
+                workspace: Some(m.workspace.clone()),
+                search: vec![m.root.clone()],
+                default_search: false,
+                ..Config::default()
+            },
+            ..Options::default()
+        },
     );
+    let (_, list) = call(&app, "GET", "/api/games", None, None).await;
+    let current = &list["current"];
+    assert_eq!(current["copy"], true, "{list}");
+    assert_eq!(current["live"], false, "{list}");
+    assert_eq!(current["label"], "emu (MBBSEmu, .db files)");
+    let copy = PathBuf::from(current["realm_dir"].as_str().unwrap());
+    assert!(copy.starts_with(&m.workspace), "{}", copy.display());
+    assert!(copy.join("WCCITEMS.db").is_file());
+    // the BBS's own files stay out of it
+    assert!(!copy.join("BBSUSR.db").exists());
+    let last = daydream_server::games::workspace::Workspace::new(m.workspace.clone())
+        .last()
+        .unwrap();
+    assert_eq!(last.realm_dir, copy);
+}
+
+/// The MBBSEmu game published: its copy's edit goes into its own .db file once it has
+/// stopped, onto the record as play left it, and play's other changes stay.
+#[tokio::test]
+async fn an_mbbsemu_game_publishes_into_its_db_files() {
+    let m = machine();
+    let app = m.router(None, false);
+    let (_, list) = call(&app, "GET", "/api/games", None, None).await;
+    let emu = game(&list, "db");
+    let (_, body) = call(
+        &app,
+        "POST",
+        "/api/games/open",
+        Some(json!({"id": emu["id"]})),
+        None,
+    )
+    .await;
+    let copy = PathBuf::from(body["current"]["realm_dir"].as_str().unwrap());
+    let game_items = std::fs::canonicalize(m.root.join("emu"))
+        .unwrap()
+        .join("WCCITEMS.DB");
+
+    let (status, plan) = call(&app, "GET", "/api/publish", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    assert_eq!(plan["engine"], "mbbsemu");
+    assert_eq!(plan["name"], "MBBSEmu");
+    assert_eq!(plan["changes"], 0);
+    assert_eq!(plan["running"]["running"], false);
+
+    // an edit in the copy while the game plays on
+    let mut ours = WbtrvDb::open(&copy.join("WCCITEMS.db")).unwrap();
+    let mut edited = ours.get(2).unwrap().unwrap();
+    edited[0] ^= 0xFF;
+    ours.update(2, &edited).unwrap();
+    drop(ours);
+    let mut theirs = WbtrvDb::open(&game_items).unwrap();
+    theirs.track(false);
+    let mut played = theirs.get(3).unwrap().unwrap();
+    played[0] ^= 0xFF;
+    theirs.update(3, &played).unwrap();
+    drop(theirs);
+
+    let (_, plan) = call(&app, "GET", "/api/publish", None, None).await;
+    assert_eq!(plan["changes"], 1, "{plan}");
+    let ways: Vec<&str> = plan["ways"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ways, ["now"]);
+    assert_eq!(plan["ways"][0]["ready"], true, "{plan}");
+    let steps: Vec<&str> = plan["ways"][0]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(steps, ["check", "stop", "backup", "write", "start"]);
+    assert_eq!(plan["ways"][0]["steps"][1]["title"], "Stop MBBSEmu");
+
+    let (status, job) = call(
+        &app,
+        "POST",
+        "/api/publish",
+        Some(json!({"way": "now"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    let job = publish_ends(&app).await;
+    assert_eq!(job["state"], "done", "{job}");
+    assert_eq!(job["engine"], "mbbsemu");
+    let states: Vec<&str> = job["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["state"].as_str().unwrap())
+        .collect();
+    assert_eq!(states, ["done", "done", "done", "done", "yours"], "{job}");
+    assert!(
+        job["steps"][3]["log"]
+            .to_string()
+            .contains("WCCITEMS.DB: 1 changed"),
+        "{job}"
+    );
+
+    // the edit at the record's own id, play's change kept, the file as it was kept beside it
+    let theirs = WbtrvDb::open_read_only(&game_items).unwrap();
+    assert_eq!(theirs.get(2).unwrap().unwrap(), edited);
+    assert_eq!(theirs.get(3).unwrap().unwrap(), played);
+    let backup = std::fs::read_dir(game_items.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .find(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("daydream-backup-")
+        })
+        .expect("a backup folder");
+    let saved = WbtrvDb::open_read_only(&backup.path().join("WCCITEMS.DB")).unwrap();
+    assert_ne!(saved.get(2).unwrap().unwrap(), edited);
+    assert_eq!(saved.get(3).unwrap().unwrap(), played);
+    let (_, changes) = call(&app, "GET", "/api/changes", None, None).await;
+    assert_eq!(changes["changes"], json!([]), "{changes}");
 }
 
 /// Follows the publish under way until it ends.

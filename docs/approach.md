@@ -166,7 +166,7 @@ First pieces of work, in order:
 | Should AI agents be able to create content? | Yes, through an MCP server (M6), after M5, using the editors' own checks and previews |
 | Does the MME export format change? | No: exactly as MME reads it today |
 | How are silvermere realms edited? | Straight into its database file while the server is stopped |
-| Can Daydream write a realm's `.db` files while MBBSEmu has them open? | Working assumption: stop the realm first, until tested |
+| Can Daydream write a realm's `.db` files while MBBSEmu has them open? | No need: Daydream edits a copy taken while MBBSEmu runs, and writes only its edits into the `.db` files once MBBSEmu is stopped (Publish) |
 | Does the writer back to `.DAT` live in wbtrv32? | No: Daydream owns it |
 | Are GreaterMUD or Paramud data in scope? | Not for now |
 | Native store format? | wbtrv32's `.db` format |

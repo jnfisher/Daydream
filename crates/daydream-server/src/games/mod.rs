@@ -5,18 +5,22 @@
 //!
 //! | Kind | The game keeps its world in | Daydream edits | Back into the game |
 //! |---|---|---|---|
-//! | [`Source::Wcc`] | `WCC*.DAT` Btrieve files (Worldgroup, The Major BBS) | a working copy, converted from them | Tools, **Write to WCC files** (`write-dat`) |
-//! | [`Source::Db`] | `WCC*.db` files (MBBSEmu, wbtrv32), or a realm folder | the files themselves | nothing to do: every save is in the game's files |
-//! | [`Source::Silvermere`] | silvermere's SQLite file or PostgreSQL | a working copy, read from it | Tools, **silvermere**: Export |
+//! | [`Source::Wcc`] | `WCC*.DAT` Btrieve files (Worldgroup, The Major BBS) | a working copy, converted from them | Publish, or Tools, **Write to WCC files** (`write-dat`) |
+//! | [`Source::Db`] | `WCC*.db` files (MBBSEmu, wbtrv32) | a working copy, taken from them while the game runs | Publish, with the game stopped |
+//! | [`Source::Db`], a realm folder (no game) | its `.db` files | the files themselves | nothing to do |
+//! | [`Source::Silvermere`] | silvermere's SQLite file or PostgreSQL | a working copy, read from it | Publish, or Tools, **silvermere**: Export |
 //!
 //! Working copies live in Daydream's workspace ([`workspace`]), one per game, and remember
-//! where they came from, so the write-back cards know their target. A copy is made the
-//! first time a game is opened and kept after; **refresh** reads the game again (the copy it
-//! replaces is kept as `<copy>.previous`).
+//! where they came from, so publishing and the write-back cards know their target. A copy is
+//! made the first time a game is opened and kept after; **refresh** reads the game again (the
+//! copy it replaces is kept as `<copy>.previous`). A `.db` game is copied file by file, each
+//! at one moment, while it runs ([`daydream_store::WbtrvDb::snapshot`]); one opened where it
+//! is before Daydream copied them (an earlier Daydream did) moves to its copy at the next
+//! start ([`working_copy`]).
 //!
-//! A running game must not have its files written ([`running`]): saves into a live `.db`
-//! folder and `write-dat` into a folder a game runs on are refused, and silvermere's writer
-//! lock refuses while `silvermere serve` runs.
+//! A running game must not have its files written ([`running`]): publishing waits for it to
+//! stop, `write-dat` into a folder a game runs on is refused, and silvermere's writer lock
+//! refuses while `silvermere serve` runs.
 //!
 //! **Who may name a game.** Without an access token Daydream answers only this machine, and
 //! any folder or database URL can be typed. With a token (reached through a tunnel such as
@@ -56,7 +60,8 @@ use workspace::{Saved, Workspace};
 pub enum Source {
     /// A folder of `WCC*.DAT`/`.VIR` Btrieve files.
     Wcc { dir: PathBuf },
-    /// A folder of `WCC*.db` files, edited where they are.
+    /// A folder of `WCC*.db` files: a realm folder, edited where it is, or a game's own
+    /// (MBBSEmu's), edited in a working copy taken from them.
     Db { dir: PathBuf },
     /// silvermere's database, as a `sqlite:` or `postgres:` URL.
     Silvermere { url: String },
@@ -118,9 +123,10 @@ impl Source {
         Ok((found.source, found.label, found.live))
     }
 
-    /// Whether Daydream edits a working copy of it (else its own files).
-    pub fn copied(&self) -> bool {
-        !matches!(self, Self::Db { .. })
+    /// Whether Daydream edits a working copy of it (else its own files): every game's but a
+    /// realm folder's; `live`: a game runs on it ([`Found::live`]).
+    pub fn copied(&self, live: bool) -> bool {
+        live || !matches!(self, Self::Db { .. })
     }
 }
 
@@ -134,6 +140,15 @@ pub struct Game {
 }
 
 impl Game {
+    /// Whether the realm in `realm_dir` is this game's working copy, rather than its own
+    /// files.
+    pub fn copied_into(&self, realm_dir: &Path) -> bool {
+        match &self.source {
+            Source::Db { dir } => discover::canonical(dir) != discover::canonical(realm_dir),
+            _ => true,
+        }
+    }
+
     /// The game a realm folder given at start is: the source a working copy records, else
     /// the folder itself.
     pub fn of_realm(dir: &Path) -> Self {
@@ -165,6 +180,44 @@ impl Game {
                 .as_ref()
                 .map_or_else(|| format!("{name} (realm folder)"), |f| f.label.clone()),
             live: found.is_some_and(|f| f.live),
+        }
+    }
+}
+
+/// The realm a game given at start is worked on in, and the game: a game's own `.db` files
+/// (opened where they are by an earlier Daydream, or named at start) give way to their
+/// working copy, made the first time. When the copy cannot be made, the files are worked on
+/// where they are, as before, and why is logged.
+pub fn working_copy(ws: &Workspace, dir: &Path, game: Game) -> (PathBuf, Game) {
+    if !(game.live && matches!(game.source, Source::Db { .. })) {
+        return (dir.to_path_buf(), game);
+    }
+    match prepare(ws, &game.source, &game.label, true, false) {
+        Ok(copy) => {
+            tracing::info!(
+                "{} is a game's own files: working on its copy {}",
+                dir.display(),
+                copy.display()
+            );
+            let game = Game {
+                live: false,
+                ..game
+            };
+            if let Err(e) = ws.save_last(&workspace::Last {
+                realm_dir: copy.clone(),
+                game: Some(game.clone()),
+            }) {
+                tracing::warn!("remembering the open game: {e}");
+            }
+            (copy, game)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "{}: no working copy could be made ({}), so it is edited where it is",
+                dir.display(),
+                e.1
+            );
+            (dir.to_path_buf(), game)
         }
     }
 }
@@ -264,11 +317,13 @@ impl AppState {
             });
         }
         for (_, saved) in ws.copies() {
+            // only a game's .db files are copied: a realm folder is edited where it is
+            let live = matches!(saved.source, Source::Db { .. });
             found.push(Found {
                 source: saved.source,
                 label: saved.label,
                 found_by: "opened before".into(),
-                live: false,
+                live,
             });
         }
         if let Some(game) = &self.current().game {
@@ -325,15 +380,26 @@ impl AppState {
                 source: Source::Wcc { dir },
                 ..
             }) => Some(dir.clone()),
-            Some(Game {
-                source: Source::Db { .. },
-                live: true,
-                ..
-            }) if given.is_none() => {
-                return Err(bad(
-                    "this game's own .db files are open: every save is already in the game, \
-                     so there is nothing to write back",
-                ));
+            Some(
+                g @ Game {
+                    source: Source::Db { .. },
+                    ..
+                },
+            ) if given.is_none() => {
+                let copy = self
+                    .current()
+                    .realm_dir
+                    .as_deref()
+                    .is_some_and(|d| g.copied_into(d));
+                return Err(bad(if copy {
+                    "this game keeps its world in .db files, not WCC files: publish it from the \
+                     Publish page, which writes them with the game stopped"
+                } else if g.live {
+                    "this game's own .db files are open: every save is already in the game, so \
+                     there is nothing to write back"
+                } else {
+                    "give the WCC folder to write (the realm was not opened from one)"
+                }));
             }
             _ => None,
         };
@@ -362,7 +428,7 @@ impl AppState {
 
 /// One game, as the picker shows it.
 fn game_json(f: &Found, ws: &Workspace, current: Option<&Game>) -> Value {
-    let copy = f.source.copied().then(|| {
+    let copy = f.source.copied(f.live).then(|| {
         let dir = ws.copy_dir(&f.source, &f.label);
         let saved = workspace::read_saved(&dir);
         saved.map(|s| json!({ "dir": dir, "pulled": s.pulled }))
@@ -418,6 +484,7 @@ fn current_json(cur: &crate::Current) -> Value {
             "label": g.label,
             "location": g.source.shown(),
             "live": g.live,
+            "copy": g.copied_into(dir),
             "realm_dir": dir,
         }),
         (Some(dir), None) => json!({ "realm_dir": dir }),
@@ -514,7 +581,9 @@ pub(crate) fn open_game(s: &AppState, body: OpenJson) -> Result<Value, ApiError>
         };
         // no save may be half done in the realm being left
         let _writing = s.write.lock().map_err(internal)?;
-        let realm_dir = prepare(&s.games.workspace(), &source, &label, body.refresh)?;
+        let realm_dir = prepare(&s.games.workspace(), &source, &label, live, body.refresh)?;
+        // a copy is not the game's own files
+        let live = live && !source.copied(live);
         let game = Game {
             source,
             label,
@@ -532,15 +601,18 @@ pub(crate) fn open_game(s: &AppState, body: OpenJson) -> Result<Value, ApiError>
     }
 }
 
-/// The realm folder for `source`: its own folder, or its working copy (made, or made again
-/// when `refresh`).
+/// The realm folder for `source`: its working copy (made, or made again when `refresh`), or
+/// a realm folder's own; `live`: a game runs on it ([`Found::live`]).
 pub fn prepare(
     ws: &Workspace,
     source: &Source,
     label: &str,
+    live: bool,
     refresh: bool,
 ) -> Result<PathBuf, ApiError> {
-    if let Source::Db { dir } = source {
+    if let Source::Db { dir } = source
+        && !source.copied(live)
+    {
         let realm = Realm::open(dir)?;
         if realm.files().is_empty() {
             return Err(bad(format!("{}: no .db files", dir.display())));
@@ -588,7 +660,25 @@ pub fn prepare(
             // the copy as read is where its changes start: the import is not an edit
             daydream_store::journal::reset(scratch.path())?;
         }
-        Source::Db { .. } => unreachable!(),
+        Source::Db { dir } => {
+            // each of the world's files as it is at one moment, while the game runs on them
+            let game = Realm::open(dir)?;
+            let mut copied = 0;
+            for f in game
+                .files()
+                .iter()
+                .filter(|f| daydream_store::realm::is_wcc_stem(&f.stem))
+            {
+                let dest = scratch.path().join(format!("{}.db", f.stem));
+                daydream_store::WbtrvDb::snapshot(&f.path, &dest)?;
+                copied += 1;
+            }
+            if copied == 0 {
+                return Err(bad(format!("{}: no WCC*.db files", dir.display())));
+            }
+            // the copy as taken is where its changes start
+            daydream_store::journal::reset(scratch.path())?;
+        }
     }
     let saved = Saved {
         source: source.clone(),

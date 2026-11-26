@@ -265,7 +265,9 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         publish: publish::Jobs::default(),
     });
     if let Some(dir) = realm_dir {
-        state.set_current(dir.to_path_buf(), Some(games::Game::of_realm(dir)));
+        let game = games::Game::of_realm(dir);
+        let (dir, game) = games::working_copy(&state.games.workspace(), dir, game);
+        state.set_current(dir, Some(game));
     }
     Router::new()
         .route("/", get(index))

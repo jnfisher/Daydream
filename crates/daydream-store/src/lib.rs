@@ -9,14 +9,16 @@
 //! - [`key`]: wbtrv32's key columns, ported so Daydream's writes index exactly as wbtrv32's.
 //! - [`realm`]: a realm directory and its tables.
 //! - [`dat`]: writing a realm back into its Btrieve `WCC*.DAT` files.
+//! - [`game_db`]: writing a working copy back into a game's own `.db` files (MBBSEmu).
 //! - [`journal`]: what Daydream changed in a realm, record by record.
 //! - [`update`]: MajorMUD's update file, kept in step with the realm's edits.
 //! - [`three_way`]: an edit merged onto a record as the game has it now.
 //! - [`changes`]: the realm's changes since it was read from its game, listed and taken back.
 //! - [`history`]: the realm's saves, step by step, for undo and redo.
 //!
-//! Writes assume nothing else has the file open: stop MBBSEmu (or the realm) before
-//! editing, until live writes are tested.
+//! Writes assume nothing else writes the file meanwhile: a game's own files are written only
+//! with the game stopped. A copy of a running game's `.db` files can be taken
+//! ([`WbtrvDb::snapshot`]) and its edits written back later ([`game_db`]).
 
 #![forbid(unsafe_code)]
 
@@ -25,6 +27,7 @@ pub mod dat;
 pub mod db;
 #[cfg(test)]
 mod fixtures;
+pub mod game_db;
 pub mod history;
 pub mod journal;
 pub mod key;

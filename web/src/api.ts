@@ -169,7 +169,8 @@ export interface PublishJob {
 }
 
 export interface PublishPlan {
-  engine: 'worldgroup' | 'majorbbs' | 'silvermere' | 'files';
+  /** `mbbsemu` and `db`: a game's own .db files (MBBSEmu's, or wbtrv32's), worked on in a copy. */
+  engine: 'worldgroup' | 'majorbbs' | 'mbbsemu' | 'db' | 'silvermere' | 'files';
   /** The game, as a sysop calls it ("Worldgroup"). */
   name: string;
   game: string | null;

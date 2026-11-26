@@ -5,8 +5,9 @@
 //! are installed: each drive's top folders on Windows (`C:\WGSERV`, `C:\MBBSEmu`,
 //! `C:\Silvermere`), the user's home folder, the folder Daydream was started in, `/opt` and
 //! `/srv`, and any folder given with `--search`. It goes a few levels down from each, never
-//! into hidden or system folders, and stops after [`MAX_DIRS`] folders, so a search takes a
-//! moment and never wanders the whole disk.
+//! into hidden or system folders (nor the `daydream-backup-*` folders publishing leaves beside a
+//! game's files), and stops after [`MAX_DIRS`] folders, so a search takes a moment and never
+//! wanders the whole disk.
 //!
 //! On macOS the home folder's Desktop, Documents, Downloads, Pictures, Movies and Music are
 //! looked in only when given with `--search`: reading them makes macOS ask the person, once
@@ -14,9 +15,10 @@
 //!
 //! A folder is a game when it holds MajorMUD's item file and one of its other world files:
 //!
-//! - **`WCC*.db`** (MBBSEmu's own store, or wbtrv32's beside a Worldgroup): [`Source::Db`],
-//!   edited where it is. It is *live* when a game runs on it (Btrieve files or MBBSEmu
-//!   beside it), and not when it is a realm folder Daydream made (`daydream convert`).
+//! - **`WCC*.db`** (MBBSEmu's own store, or wbtrv32's beside a Worldgroup): [`Source::Db`].
+//!   It is *live* when a game runs on it (Btrieve files or MBBSEmu beside it), and then
+//!   edited in a working copy; a realm folder Daydream made (`daydream convert`) is not, and
+//!   is edited where it is.
 //! - **`WCC*.DAT` or `WCC*.VIR`** (Worldgroup, The Major BBS, MBBSEmu before it converts
 //!   them): [`Source::Wcc`], edited in a working copy and written back with `write-dat`.
 //!
@@ -225,8 +227,10 @@ fn walk(
             // no symlinks: they can loop, and lead off the roots
             let lower = name.to_ascii_lowercase();
             let path = e.path();
+            // nor the copies publishing keeps beside a game's files
             if !name.starts_with('.')
                 && !SKIP.contains(&lower.as_str())
+                && !lower.starts_with("daydream-backup-")
                 && !avoid.guarded.contains(&path)
             {
                 subdirs.push(path);
@@ -572,9 +576,12 @@ mod tests {
             std::fs::write(game.join(f), b"").unwrap();
         }
         let hidden = tmp.path().join(".hidden").join("game");
-        std::fs::create_dir_all(&hidden).unwrap();
-        for f in ["WCCITEMS.DAT", "WCCKNMSR.DAT"] {
-            std::fs::write(hidden.join(f), b"").unwrap();
+        let backup = game.join("daydream-backup-20261126-120000");
+        for dir in [&hidden, &backup] {
+            std::fs::create_dir_all(dir).unwrap();
+            for f in ["WCCITEMS.DAT", "WCCKNMSR.DAT"] {
+                std::fs::write(dir.join(f), b"").unwrap();
+            }
         }
         let roots = Roots {
             dirs: vec![(tmp.path().to_path_buf(), 3)],

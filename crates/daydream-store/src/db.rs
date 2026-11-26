@@ -104,6 +104,16 @@ impl std::fmt::Debug for WbtrvDb {
     }
 }
 
+/// How a `.db` is opened.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Open {
+    ReadOnly,
+    /// For Daydream's edits: wbtrv32's settings, the writes journaled.
+    Edit,
+    /// A game's own file: its settings left as they are, nothing journaled.
+    Game,
+}
+
 /// The connection settings wbtrv32 uses (`initializeConnection`).
 const PRAGMAS: &str = "PRAGMA journal_mode = WAL;\
                        PRAGMA synchronous = NORMAL;\
@@ -114,24 +124,30 @@ impl WbtrvDb {
     /// Opens an existing `.db` for reading and writing. Its writes are recorded in the
     /// journal of the folder it is in ([`crate::journal`]).
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        Self::open_with(path, false)
+        Self::open_with(path, Open::Edit)
     }
 
     /// Opens an existing `.db` read only.
     pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        Self::open_with(path, true)
+        Self::open_with(path, Open::ReadOnly)
     }
 
-    fn open_with(path: &Path, read_only: bool) -> Result<Self, StoreError> {
+    /// Opens a game's own `.db` for writing, as the game keeps it: its journal mode is left
+    /// as it is (wbtrv32's write-ahead log, or the rollback journal of MBBSEmu's), and its
+    /// writes are recorded in no journal of Daydream's.
+    pub fn open_game(path: &Path) -> Result<Self, StoreError> {
+        Self::open_with(path, Open::Game)
+    }
+
+    fn open_with(path: &Path, how: Open) -> Result<Self, StoreError> {
         let sql = sql_err(path);
-        let flags = if read_only {
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-        } else {
-            OpenFlags::SQLITE_OPEN_READ_WRITE
+        let flags = match how {
+            Open::ReadOnly => OpenFlags::SQLITE_OPEN_READ_ONLY,
+            Open::Edit | Open::Game => OpenFlags::SQLITE_OPEN_READ_WRITE,
         };
         let conn = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_FULL_MUTEX)
             .map_err(sql)?;
-        if !read_only {
+        if how == Open::Edit {
             conn.execute_batch(PRAGMAS).map_err(sql)?;
         }
         let meta = conn
@@ -172,7 +188,7 @@ impl WbtrvDb {
             conn,
             meta,
             keys,
-            tracked: !read_only,
+            tracked: how == Open::Edit,
             recorder: None,
         })
     }
@@ -263,19 +279,7 @@ impl WbtrvDb {
                 source,
             })?;
         }
-        for suffix in ["", "-wal", "-shm"] {
-            let mut p = dest.as_os_str().to_owned();
-            p.push(suffix);
-            match std::fs::remove_file(&p) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                    return Err(StoreError::Io {
-                        path: PathBuf::from(p),
-                        source: e,
-                    });
-                }
-                _ => {}
-            }
-        }
+        remove(dest)?;
         let sql = sql_err(dest);
         let conn = Connection::open(dest).map_err(sql)?;
         conn.execute_batch(PRAGMAS).map_err(sql)?;
@@ -294,8 +298,31 @@ impl WbtrvDb {
         })
     }
 
+    /// Copies the `.db` at `src` to `dest` (replacing any file there) as it is at one moment,
+    /// even while a game has it open and writes it: SQLite's `VACUUM INTO`, through a
+    /// read-only connection of its own, so the copy is whole and every record keeps its id.
+    pub fn snapshot(src: &Path, dest: &Path) -> Result<(), StoreError> {
+        remove(dest)?;
+        let sql = sql_err(src);
+        let conn = Connection::open_with_flags(
+            src,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
+        )
+        .map_err(sql)?;
+        // the game may hold a write for a moment
+        conn.busy_timeout(std::time::Duration::from_secs(10))
+            .map_err(sql)?;
+        let to = dest.to_str().ok_or_else(|| StoreError::Io {
+            path: dest.to_path_buf(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a UTF-8 path"),
+        })?;
+        conn.execute("VACUUM INTO ?1", [to]).map_err(sql)?;
+        Ok(())
+    }
+
     /// Whether this handle's writes are recorded in the realm's journal ([`crate::journal`]):
-    /// on for [`WbtrvDb::open`], off for a file being made.
+    /// on for [`WbtrvDb::open`], off for a file being made and for a game's own
+    /// ([`WbtrvDb::open_game`]).
     pub fn track(&mut self, on: bool) {
         self.tracked = on;
     }
@@ -582,6 +609,24 @@ impl WbtrvDb {
             })
         }
     }
+}
+
+/// Removes the `.db` at `path` and its `-wal` and `-shm`, where there are any.
+fn remove(path: &Path) -> Result<(), StoreError> {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut p = path.as_os_str().to_owned();
+        p.push(suffix);
+        match std::fs::remove_file(&p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(StoreError::Io {
+                    path: PathBuf::from(p),
+                    source: e,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn sql_err(path: &Path) -> impl Fn(rusqlite::Error) -> StoreError + Copy + '_ {

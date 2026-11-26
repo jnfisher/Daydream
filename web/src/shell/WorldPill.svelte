@@ -24,7 +24,7 @@
     <span class="eng"><Engine size={15} /></span>
     <span class="txt">
       <b>{name}</b>
-      <span class="hide-narrow">{kind}{#if run}{' · '}<span class="dot {run}"></span>{' '}{run}{/if}{#if c?.live}{' · live files'}{/if}</span>
+      <span class="hide-narrow">{kind}{#if run}{' · '}<span class="dot {run}" class:live={c?.live}></span>{' '}{run}{/if}{#if c?.live}{' · live files'}{/if}</span>
     </span>
     <ChevronDown size={13} class="hide-narrow" />
   </Popover.Trigger>
@@ -36,12 +36,13 @@
       </div>
       {#if c}
         <div class="pills">
-          {#if run === 'running'}<span class="pill bad"><span class="dot"></span>Running{#if app.runningBy} ({app.runningBy}){/if}</span>
-          {:else if run === 'stopped'}<span class="pill ok"><span class="dot"></span>Stopped</span>{/if}
+          <!-- a game running on its own files holds back the saves; under a working copy it plays on -->
+          {#if run === 'running'}<span class="pill {c.live ? 'bad' : 'ok'}"><span class="dot"></span>Running{#if app.runningBy}{' '}({app.runningBy}){/if}</span>
+          {:else if run === 'stopped'}<span class="pill" class:ok={c.live}><span class="dot"></span>Stopped</span>{/if}
           {#if c.live}<span class="pill warn">Live files</span>{/if}
           <span class="pill info">{waiting} change{waiting === 1 ? '' : 's'} waiting</span>
         </div>
-        {#if c.kind}<p class="how">{how({ kind: c.kind, live: !!c.live })}</p>{/if}
+        {#if c.kind}<p class="how">{how({ kind: c.kind, live: !!c.live, copy: !!c.copy })}</p>{/if}
       {/if}
       <div class="menu-sep"></div>
       <a class="menu-item" href="#/publish" onclick={() => (open = false)}><CloudUpload size={16} /><span>Publish…<span class="sub">Review the changes and write them into the game</span></span></a>
@@ -61,8 +62,10 @@
   .txt { display: flex; flex-direction: column; line-height: 1.15; text-align: left; min-width: 0; }
   .txt b { font-weight: 800; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 22ch; }
   .txt span { font-size: 11.5px; font-weight: 700; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dot.running { color: var(--bad); }
-  .dot.stopped { color: var(--ok); }
+  .dot.running { color: var(--mint); }
+  .dot.stopped { color: var(--ink-3); }
+  .dot.running.live { color: var(--bad); }
+  .dot.stopped.live { color: var(--ok); }
   :global(.world-pop) { width: min(380px, calc(100vw - 16px)); }
   .head { display: flex; gap: 12px; align-items: center; padding: 8px 10px 10px; }
   .who { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
