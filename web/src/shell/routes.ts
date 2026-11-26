@@ -1,7 +1,7 @@
 // Where the page is, from its hash. Every record has a stable link (`#/items/868`,
 // `#/rooms/1/224`, `#/users/Sysop`), so a link pasted into a chat, a note or an agent's
 // report opens the same record. Today's links (`#/Items/[868]`, `#/map/1/224`, `#/tools`)
-// keep working.
+// keep working; the old map is `#/map-classic/1/224`.
 
 import type { Cell, TableInfo } from '../api';
 
@@ -43,6 +43,7 @@ export function parse(hash: string, tables: TableInfo[]): Route {
   const head = safeDecode(parts[0] ?? '').toLowerCase();
   const rest = parts.slice(1);
   const place = PLACES[head];
+  if (head === 'map-classic') return { place: 'world', rest: ['classic', ...rest.map(safeDecode)] };
   if (place) {
     if (head === 'lists') return { place, rest: ['lists'] };
     if (place === 'library' || place === 'players') {

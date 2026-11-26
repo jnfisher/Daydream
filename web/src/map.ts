@@ -171,7 +171,7 @@ async function fetchMap(map: number): Promise<MapAnswer> {
   return body as MapAnswer;
 }
 
-/** The map page; `show` draws the map and room the hash names (`#/world/M/R`). */
+/** The map page; `show` draws the map and room the hash names (`#/map-classic/M/R`). */
 export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise<void> } {
   const el = h('div', { class: 'map-page' });
   const mapSel = h('select', { 'aria-label': 'Map' });
@@ -218,7 +218,7 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
   let data: MapAnswer | null = null;
   let lastLay: Layout | null = null;
   const go = (map: number, room: number) => {
-    location.hash = `#/world/${map}/${room}`;
+    location.hash = `#/map-classic/${map}/${room}`;
   };
   draw.addEventListener('click', () => go(Number(mapSel.value), Number(roomBox.value) || 1));
   mapSel.addEventListener('change', () => go(Number(mapSel.value), 1));
@@ -238,7 +238,7 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
     const list = h('ul', { class: 'map-exits' });
     for (const e of r.exits) {
       const target = e.kind === 8 ? `map ${e.para1} room ${e.to}` : `room ${e.to}`;
-      const a = h('a', { href: e.kind === 8 ? `#/world/${e.para1}/${e.to}` : `#/world/${map}/${e.to}` }, target);
+      const a = h('a', { href: e.kind === 8 ? `#/map-classic/${e.para1}/${e.to}` : `#/map-classic/${map}/${e.to}` }, target);
       const sw = h('span', { class: 'swatch' });
       sw.style.background = lineColour(e.kind);
       list.append(h('li', {}, sw, `${DIRS[e.dir]}: `, a, ` (${EXIT_TYPE[e.kind] ?? `type ${e.kind}`})`));

@@ -126,7 +126,8 @@ box for everything, **Changes** (every save waiting to publish, each one openabl
 undoable) and **Publish**.
 
 - **Every record has a link** that stays the same: `#/items/868`, `#/rooms/1/224`,
-  `#/users/Sysop`, `#/world/1/224` for a room on the map. Links from before still work.
+  `#/users/Sysop`, `#/world/1/224` for a room on the map. Links from before still work, and
+  NMR's map with its room digger is still at `#/map-classic/1/224`.
 - **Undo works for every save**, wherever it was made (an editor, a tool, an agent, a
   command): Ctrl+Z, or the toast after a save. Changes also takes back one record at a time.
 - **A record opens beside the page** from search, a change or a reference, without leaving
@@ -141,6 +142,25 @@ undoable) and **Publish**.
 | Ctrl+S | Save the record |
 | `[` and `]` | The previous and next record, as NMR's buttons step |
 | Esc | Close the record beside the page |
+
+**The World** draws a whole map on one canvas, laid out from room 1 by its exits (a room
+whose cell is taken goes to the nearest free one), and the layout holds still as you look
+around. Drag to pan, scroll or pinch to zoom, double-click to close in. A click on a room
+opens its card beside the map, and the keys walk its exits from there. Rooms are coloured by
+place (guessed from their names), area, monsters, light or your own edits; a click on a
+colour in the legend picks its rooms out. An exit that takes something to pass (a door, a
+key, a toll, a trap) carries its symbol, a one-way exit an arrow, and an exit to a room drawn
+elsewhere, to another map (a click goes there) or to a room the map does not have ends in a
+chip. **Show** turns names, symbols and grid dots on and off and says what the marks mean.
+
+| Keys on the map | Do |
+|---|---|
+| Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
+| `U` `D` | Walk up or down |
+| `H` | The start room |
+| `+` `-` | Zoom in or out |
+| Shift+1, Shift+2 | Every room in view; close up on the room |
+| `F` | Full screen (Esc comes back) |
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little

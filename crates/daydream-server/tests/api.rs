@@ -440,6 +440,34 @@ async fn the_ui_is_served() {
     }
     let (status, _) = get(dir.path(), "/fonts/comic-sans.woff2").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    // the code that loads when first used: every chunk the build listed, and nothing else
+    let listed = include_str!("../src/chunks.rs");
+    let chunks: Vec<&str> = listed
+        .match_indices("include_str!(\"chunks/")
+        .map(|(i, m)| listed[i + m.len()..].split('"').next().unwrap())
+        .collect();
+    assert!(!chunks.is_empty(), "the map's code is a chunk");
+    for name in chunks {
+        let res = app(dir.path())
+            .oneshot(
+                Request::get(format!("/chunks/{name}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "{name}");
+        let ty = res.headers()["content-type"].to_str().unwrap();
+        assert!(ty.starts_with("text/javascript"), "{name}: {ty}");
+        assert!(
+            res.headers()["cache-control"]
+                .to_str()
+                .unwrap()
+                .contains("immutable")
+        );
+    }
+    let (status, _) = get(dir.path(), "/chunks/elsewhere.js").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 async fn post_bytes(dir: &std::path::Path, uri: &str, body: Vec<u8>) -> (StatusCode, Value) {
@@ -1225,6 +1253,7 @@ async fn with_a_token_every_route_asks_for_it() {
     let open = [
         "/app.js",
         "/app.css",
+        "/chunks/x",
         "/fonts/x",
         "/notices.txt",
         "/login",

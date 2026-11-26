@@ -1,10 +1,11 @@
 // Bundles the UI into the server's sources (crates/daydream-server/src): app.js and app.css,
-// the two fonts in fonts/, and notices.txt, the licenses of every package the bundle holds.
+// the code split from it in chunks/ (listed for the server in chunks.rs), the
+// two fonts in fonts/, and notices.txt, the licenses of every package the bundle holds.
 // The output is committed, so building the server needs no node; CI checks it is current
 // and within the size budget (budget.mjs).
 import { build } from 'esbuild';
 import svelte from 'esbuild-svelte';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const here = (p) => new URL(p, import.meta.url).pathname;
@@ -16,10 +17,16 @@ const FONTS = [
   ['fredoka.woff2', '@fontsource-variable/fredoka', 'files/fredoka-latin-wght-normal.woff2'],
 ];
 
+// chunks are named by their contents: the last build's go
+rmSync(join(out, 'chunks'), { recursive: true, force: true });
+
 const result = await build({
-  entryPoints: [here('src/main.ts')],
+  entryPoints: { app: here('src/main.ts') },
   bundle: true,
   format: 'esm',
+  // a place's code (the map) loads when the place is first opened, not with the first page
+  splitting: true,
+  chunkNames: 'chunks/[name]-[hash]',
   target: 'es2022',
   minify: true,
   legalComments: 'none',
@@ -32,7 +39,7 @@ const result = await build({
     js: '// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt',
     css: '/* Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt */',
   },
-  outfile: join(out, 'app.js'),
+  outdir: out,
   metafile: true,
   logLevel: 'warning',
 });
@@ -59,4 +66,30 @@ const notices = [...packages].sort().map((pkg) => {
 writeFileSync(
   join(out, 'notices.txt'),
   "Daydream's web UI is built from these packages, whose licenses follow.\n\n" + notices.join('\n'),
+);
+
+// the server serves each chunk by name (crates/daydream-server/src/chunks.rs)
+const appCss = readFileSync(join(out, 'app.css'), 'utf8');
+for (const f of existsSync(join(out, 'chunks')) ? readdirSync(join(out, 'chunks')) : []) {
+  if (f.endsWith('.js')) continue;
+  // nothing would load a chunk's styles: they must be app.css's already (a package's, shared
+  // with the first page), and a component loaded later keeps its own in its code
+  const text = readFileSync(join(out, 'chunks', f), 'utf8').replace(/^\/\*.*?\*\/\n/, '').trim();
+  if (!appCss.includes(text)) throw new Error(`${f}: give the component that styles it <svelte:options css="injected" />`);
+  rmSync(join(out, 'chunks', f));
+}
+const chunks = existsSync(join(out, 'chunks')) ? readdirSync(join(out, 'chunks')).sort() : [];
+writeFileSync(
+  join(out, 'chunks.rs'),
+  `//! The UI's code split from app.js by \`npm run build\` in web/ (do not edit): each place's own code,
+//! loaded when the place is first opened, and the code app.js shares with them. A chunk's name
+//! changes with its contents, so a browser may keep it for good.
+
+/// A chunk's code, by its file name.
+pub(crate) fn get(name: &str) -> Option<&'static str> {
+    Some(match name {
+${chunks.map((f) => `        ${JSON.stringify(f)} => include_str!(${JSON.stringify(`chunks/${f}`)}),\n`).join('')}        _ => return None,
+    })
+}
+`,
 );
