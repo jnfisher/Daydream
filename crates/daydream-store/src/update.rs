@@ -520,6 +520,117 @@ pub fn compile(realm_dir: &Path, how: Compile) -> Result<Report, StoreError> {
     Ok(report)
 }
 
+/// Members of a kind's record that the game's merge leaves as the game has them: what play
+/// changes (a room's floor, an item's copies in play, a monster's kill time) and the game's own
+/// bookkeeping. These are the "kept" columns of the merge rules silvermere's importer follows
+/// (its docs/import.md, "Merge rules"); a race's or class's members the merge does not compare
+/// are kept too, as a record that differs only in them is not copied.
+fn kept_by_merge(kind: Kind) -> &'static [&'static str] {
+    match kind {
+        Kind::Race => &["modified", "unk_0x065", "unk_0x072"],
+        Kind::Class => &["modified", "unk_0x069"],
+        Kind::Room => &[
+            "monsters",
+            "nummonsters",
+            "items",
+            "itemuses",
+            "itemcounts",
+            // only hidden items that cannot be picked up are added, into a free slot
+            "hiditems",
+            "hiduses",
+            "hidcounts",
+            "runic",
+            "platinum",
+            "gold",
+            "silver",
+            "copper",
+            "hidrunic",
+            "hidplatinum",
+            "hidgold",
+            "hidsilver",
+            "hidcopper",
+            "owner",
+            "lastkill",
+            "foundmask",
+            "areacount",
+            "searchers",
+            "changed",
+            "unk_0x008",
+            "unk_0x5F0",
+            "unk_0x5F5",
+        ],
+        Kind::Shop => &["dirty", "unk_0x1dc"],
+        Kind::Item => &["active", "unk_0x008", "unk_0x3bf", "dirty"],
+        Kind::Spell | Kind::Text => &[],
+        Kind::Monster => &["curalive", "killdate", "killtime", "unk_0x004", "dirty"],
+        Kind::Message => &["modified", "unk_0x0FB"],
+        Kind::Action => &[],
+    }
+}
+
+/// Whether the update file carries a change into the game, at its next start or cleanup:
+/// `Err` says why not, for a person. The game's merge adds a record it lacks and copies an
+/// image's design members over the record it has, for the ten kinds the file holds; it deletes
+/// and renumbers nothing, leaves what play changes as it is ([`kept_by_merge`]), and leaves an
+/// action marked `AT_KEEP` and a gang's shop alone. Such a change reaches the game only when
+/// its files are written while it is stopped ([`crate::dat::write_dat`]).
+pub fn carries(change: &crate::changes::Change, set: LayoutSet) -> Result<(), String> {
+    use crate::changes::How;
+    let kind = change.table.and_then(Kind::of).ok_or_else(|| {
+        let what = match change.table {
+            Some(Table::Users) => "players".to_string(),
+            Some(t) => t.slug().replace('-', " "),
+            None => "records of this file".to_string(),
+        };
+        format!("the update file holds no {what}")
+    })?;
+    if change.how == How::Deleted {
+        return Err("the update file cannot delete a record".into());
+    }
+    if let Some(was) = &change.was {
+        return Err(format!(
+            "renumbered from {was}: the update file cannot move a record"
+        ));
+    }
+    let layout = kind.layout(set);
+    match kind {
+        Kind::Action => {
+            let keep = member(layout, "targets", &change.record)
+                .map(int)
+                .unwrap_or(0);
+            if keep & 0x40 != 0 {
+                return Err("an action marked to keep is never replaced by the update".into());
+            }
+        }
+        Kind::Shop => {
+            if member(layout, "type", &change.record).map(int) == Some(11) {
+                return Err("a gang's shop is never replaced by the update".into());
+            }
+            // a slot's quantity comes with a new item in it; alone, the game keeps its own
+            let qty = change.members.contains(&"qty");
+            if qty && !change.members.contains(&"items") && !change.members.contains(&"type") {
+                return Err("the game keeps its own stock quantities".into());
+            }
+        }
+        _ => {}
+    }
+    if change.how == How::Changed {
+        let kept: Vec<&str> = change
+            .members
+            .iter()
+            .copied()
+            .filter(|m| kept_by_merge(kind).contains(m))
+            .collect();
+        if !kept.is_empty() {
+            return Err(format!(
+                "the game keeps its own {} as it plays",
+                kept.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -840,5 +951,77 @@ mod tests {
         assert_eq!(describe(Kind::Spell, set, &s), "spell 300");
         assert_eq!(Kind::from_code(7), Some(Kind::Monster));
         assert_eq!(Kind::from_code(0), None);
+    }
+
+    fn change(
+        table: Table,
+        how: crate::changes::How,
+        members: &[&'static str],
+        record: Vec<u8>,
+    ) -> crate::changes::Change {
+        crate::changes::Change {
+            stem: "WCCX".into(),
+            id: 1,
+            table: Some(table),
+            how,
+            what: "it".into(),
+            name: None,
+            members: members.to_vec(),
+            was: None,
+            record,
+        }
+    }
+
+    #[test]
+    fn the_update_file_carries_design_edits_not_play_deletions_or_players() {
+        use crate::changes::How::{Added, Changed, Deleted};
+        let dos = LayoutSet::Dos;
+        let item = |members: &[&'static str]| change(Table::Items, Changed, members, vec![0; 1061]);
+        assert_eq!(carries(&item(&["maxdmg", "speed"]), dos), Ok(()));
+        let kept = carries(&item(&["maxdmg", "active"]), dos).unwrap_err();
+        assert!(kept.contains("active"), "{kept}");
+        assert!(carries(&change(Table::Items, Deleted, &[], vec![0; 1061]), dos).is_err());
+        assert_eq!(
+            carries(&change(Table::Rooms, Added, &[], vec![0; 1528]), dos),
+            Ok(())
+        );
+        let floor = carries(
+            &change(Table::Rooms, Changed, &["name", "items"], vec![0; 1528]),
+            dos,
+        );
+        assert!(floor.unwrap_err().contains("items"));
+        let player = carries(&change(Table::Users, Changed, &["exp"], vec![0; 1]), dos);
+        assert_eq!(player, Err("the update file holds no players".to_string()));
+
+        let mut renumbered = item(&["number"]);
+        renumbered.was = Some("item 2".into());
+        assert!(
+            carries(&renumbered, dos)
+                .unwrap_err()
+                .contains("renumbered")
+        );
+
+        // an action marked AT_KEEP stays the game's
+        let layout = Kind::Action.layout(dos);
+        let at = layout.field("targets").unwrap().offset;
+        let mut action = vec![0; layout.len];
+        action[at] = 0x41;
+        let keep = carries(&change(Table::Actions, Changed, &["texts"], action), dos);
+        assert!(keep.unwrap_err().contains("keep"));
+
+        // a shop's quantities come only with the items they count
+        let shop = |members: &[&'static str], ty: u8| {
+            let layout = Kind::Shop.layout(dos);
+            let mut r = vec![0; layout.len];
+            r[layout.field("type").unwrap().offset] = ty;
+            change(Table::Shops, Changed, members, r)
+        };
+        assert!(carries(&shop(&["qty"], 0), dos).is_err());
+        assert_eq!(carries(&shop(&["items", "qty"], 0), dos), Ok(()));
+        assert!(
+            carries(&shop(&["name"], 11), dos)
+                .unwrap_err()
+                .contains("gang")
+        );
     }
 }

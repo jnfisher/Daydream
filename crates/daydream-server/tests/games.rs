@@ -255,6 +255,150 @@ async fn games_are_found_opened_and_written_back() {
     );
 }
 
+/// Follows the publish under way until it ends.
+async fn publish_ends(app: &axum::Router) -> Value {
+    for _ in 0..200 {
+        let (status, job) = call(app, "GET", "/api/publish/job", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{job}");
+        if job["state"] != "running" {
+            return job;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the publish did not end");
+}
+
+#[tokio::test]
+async fn a_wcc_game_publishes_step_by_step() {
+    let m = machine();
+    let app = m.router(None, false);
+    let (_, list) = call(&app, "GET", "/api/games", None, None).await;
+    let wg = game(&list, "wcc");
+    let (_, body) = call(
+        &app,
+        "POST",
+        "/api/games/open",
+        Some(json!({"id": wg["id"]})),
+        None,
+    )
+    .await;
+    let copy = PathBuf::from(body["current"]["realm_dir"].as_str().unwrap());
+
+    // nothing changed yet: nothing to publish, either way
+    let (status, plan) = call(&app, "GET", "/api/publish", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    assert_eq!(plan["engine"], "majorbbs");
+    assert_eq!(plan["changes"], 0);
+    assert_eq!(plan["running"]["running"], false);
+    assert!(
+        plan["checks"].to_string().contains("Nothing is waiting"),
+        "{plan}"
+    );
+    let ways: Vec<&Value> = plan["ways"].as_array().unwrap().iter().collect();
+    assert_eq!(
+        ways.iter()
+            .map(|w| w["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["update", "now"]
+    );
+    assert!(ways.iter().all(|w| w["ready"] == false), "{plan}");
+    // the game had no update file, so its working copy has none to write
+    assert!(
+        ways[0]["why"].as_str().unwrap().contains("no update file"),
+        "{plan}"
+    );
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/publish",
+        Some(json!({"way": "now"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "nothing is waiting to publish");
+
+    // an edit: publishing now is ready, through the update file is not
+    WbtrvDb::open(&copy.join("WCCITEMS.db"))
+        .unwrap()
+        .delete(2)
+        .unwrap();
+    let (_, plan) = call(&app, "GET", "/api/publish", None, None).await;
+    assert_eq!(plan["changes"], 1);
+    assert_eq!(plan["way"], "now");
+    let steps: Vec<&str> = plan["ways"][1]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(steps, ["check", "stop", "backup", "write", "start"]);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/publish",
+        Some(json!({"way": "update"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    let before = std::fs::read(m.wg().join("WCCITEMS.DAT")).unwrap();
+    let (status, job) = call(
+        &app,
+        "POST",
+        "/api/publish",
+        Some(json!({"way": "now"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    assert_eq!(job["state"], "running");
+    let job = publish_ends(&app).await;
+    assert_eq!(job["state"], "done", "{job}");
+    let states: Vec<&str> = job["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["state"].as_str().unwrap())
+        .collect();
+    assert_eq!(states, ["done", "done", "done", "done", "yours"], "{job}");
+    assert!(
+        job["steps"][1]["log"][0]
+            .as_str()
+            .unwrap()
+            .contains("not running"),
+        "{job}"
+    );
+    assert!(
+        job["steps"][3]["log"].to_string().contains("WCCITEMS.DAT"),
+        "{job}"
+    );
+
+    // written, with the file as it was kept beside it, and nothing waits any more
+    assert_ne!(std::fs::read(m.wg().join("WCCITEMS.DAT")).unwrap(), before);
+    let backup = std::fs::read_dir(m.wg())
+        .unwrap()
+        .flatten()
+        .find(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("daydream-backup-")
+        })
+        .expect("a backup folder");
+    assert_eq!(
+        std::fs::read(backup.path().join("WCCITEMS.DAT")).unwrap(),
+        before
+    );
+    let (_, changes) = call(&app, "GET", "/api/changes", None, None).await;
+    assert_eq!(changes["changes"], json!([]), "{changes}");
+    let (_, plan) = call(&app, "GET", "/api/publish", None, None).await;
+    assert_eq!(plan["job"]["state"], "done");
+    // no publish is waiting, so none is cancelled
+    let (_, body) = call(&app, "POST", "/api/publish/cancel", None, None).await;
+    assert_eq!(body["cancelled"], false);
+}
+
 #[tokio::test]
 async fn a_typed_folder_opens_here_but_not_for_a_token_holder() {
     let m = machine();

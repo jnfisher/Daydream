@@ -141,7 +141,7 @@ pub fn database_url(given: &str) -> String {
 }
 
 /// The SQLite file a URL names, if it names one.
-fn sqlite_path(url: &str) -> Option<&str> {
+pub fn sqlite_path(url: &str) -> Option<&str> {
     let rest = url
         .strip_prefix("sqlite://")
         .or_else(|| url.strip_prefix("sqlite:"))?;

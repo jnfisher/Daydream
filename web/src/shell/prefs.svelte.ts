@@ -53,6 +53,7 @@ const NOTES: Record<string, [number, number, number][]> = {
   toggle: [[880, 0, 0.05]],
   undo: [[520, 0, 0.06], [390, 0.05, 0.08]],
   nope: [[180, 0, 0.12], [150, 0.1, 0.14]],
+  tada: [[523, 0, 0.09], [659, 0.08, 0.09], [784, 0.16, 0.1], [1047, 0.24, 0.2]],
 };
 
 /** A soft synthesized sound, when the little sounds are on. */
