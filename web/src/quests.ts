@@ -5,6 +5,7 @@
 // the one it links to.
 
 import { renderAnsi } from './ansi';
+import { recordHref } from './shell/routes';
 
 /** A node of the tree: a section, a comment or a text block line. */
 export interface QuestNode {
@@ -80,7 +81,7 @@ function h<K extends keyof HTMLElementTagNameMap>(
 }
 
 const editLink = (block: number, part: number, label: string) =>
-  h('a', { href: `#/Textblocks/${encodeURIComponent(JSON.stringify([block, part]))}` }, label);
+  h('a', { href: recordHref('Textblocks', [block, part]) }, label);
 
 async function textblock(block: number, part: number): Promise<string | null> {
   const key = encodeURIComponent(JSON.stringify([block, part]));

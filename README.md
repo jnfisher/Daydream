@@ -37,8 +37,8 @@ cargo run -p daydream -- dump ./realm WCCITEMS  # every item as a JSON line
 
 ### Choosing the game in the browser
 
-`daydream serve` with no realm opens the game you had open last, or none, and the game
-button at the top of the page (the game picker) opens another. Daydream assumes it runs on
+`daydream serve` with no realm opens the game you had open last, or none, and the world
+button at the top of the page (**Open another world…**, the game picker) opens another. Daydream assumes it runs on
 the machine that hosts the game, and looks for games where they are usually installed: the
 drives' top folders on Windows (`C:\WGSERV`, `C:\MBBSEmu`, `C:\Silvermere`), your home
 folder, the folder it was started in, `/opt` and `/srv`, a few levels down, plus any folder
@@ -48,9 +48,9 @@ Pictures, Movies and Music, so macOS does not ask whether Daydream may read them
 
 | Game | Found by | Edited in | Written back by |
 |---|---|---|---|
-| Worldgroup, The Major BBS (`WCC*.DAT`) | its world files | a working copy, made when first opened | Tools, **Write to WCC files** (no folder to type) |
+| Worldgroup, The Major BBS (`WCC*.DAT`) | its world files | a working copy, made when first opened | **Publish**, Write to WCC files (no folder to type) |
 | MBBSEmu, or wbtrv32 (`WCC*.db`) | its world files | the game's own files | nothing to do: every save is in the game |
-| silvermere (SQLite or PostgreSQL, such as Neon) | `silvermere.toml`, `silvermere.db`, `SILVERMERE_DATABASE_URL`, `/etc/silvermere/env` | a working copy, read from its database | Tools, **silvermere**, Export |
+| silvermere (SQLite or PostgreSQL, such as Neon) | `silvermere.toml`, `silvermere.db`, `SILVERMERE_DATABASE_URL`, `/etc/silvermere/env` | a working copy, read from its database | **Publish**, silvermere, Export |
 
 A folder or database Daydream did not find can be typed in the picker. Working copies are
 kept in `DAYDREAM_HOME` (else `%LOCALAPPDATA%\daydream`, or `~/.local/share/daydream`),
@@ -71,6 +71,36 @@ the games Daydream found itself, the ones opened before and the one it was start
 and the write-back cards write only to the open game. Nobody holding the token can make it
 read or write another folder or database. `serve --allow-any-source` lifts that; adding
 `--search DIR` is the narrower way to offer another game.
+
+### Finding your way
+
+The rail down the left (along the bottom on a phone) has the six places: **Home** (the
+world at a glance), **World** (the map), **Library** (every record, table by table),
+**Story** (quests and the text they are made of), **Players** (users, gangs and bank
+books) and **Workshop** (NMR's tools and lists). The top bar has the open world, one search
+box for everything, **Changes** (every save waiting to publish, each one openable and
+undoable) and **Publish**.
+
+- **Every record has a link** that stays the same: `#/items/868`, `#/rooms/1/224`,
+  `#/users/Sysop`, `#/world/1/224` for a room on the map. Links from before still work.
+- **Undo works for every save**, wherever it was made (an editor, a tool, an agent, a
+  command): Ctrl+Z, or the toast after a save. Changes also takes back one record at a time.
+- **A record opens beside the page** from search, a change or a reference, without leaving
+  what you were doing; its **Open full page** goes to its editor.
+
+| Keys | Do |
+|---|---|
+| Ctrl+K (⌘K), or `/` | Search records, places and commands: a name, a number (`868`, `1/224`), or a kind first (`item axe`, `r 12`) |
+| Enter, Shift+Enter | In search: open beside the page, or the full page |
+| `g` then `h` `w` `l` `s` `p` `k` | Go to Home, World, Library, Story, Players, Workshop; `g i` Items, `g m` Monsters |
+| Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | Undo and redo the last save |
+| Ctrl+S | Save the record |
+| `[` and `]` | The previous and next record, as NMR's buttons step |
+| Esc | Close the record beside the page |
+
+The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
+Starlight, or whichever matches the system's light or dark. It also turns on the little
+sounds, which are off until you do. Licenses: `/notices.txt`.
 
 To and from Nightmare Redux's `.mdb` export (the tables NMR's Database Export writes and its
 Database Import reads):
@@ -276,7 +306,7 @@ same files.
 | `crates/daydream-nmr` | NMR's `.mdb` format: export a realm to it, import it, read and write the file; one row at a time for the editors (`rows`) |
 | `crates/daydream-silvermere` | silvermere's database: its schema and repositories (copied), the writer lock, and moving a realm's world in and out |
 | `crates/daydream-server` | The HTTP server: the editors' API, and the web UI embedded |
-| `web` | The web UI's TypeScript sources; `npm run build` bundles them into the server |
+| `web` | The web UI: the frame (Svelte 5 and Bits UI, `web/src/shell`) around today's pages (TypeScript); `npm run build` bundles it, its two fonts and the licenses into the server |
 | `crates/daydream-store` | The realm store: wbtrv32 `.db` files, read and written with wbtrv32's exact key columns; the journal of what Daydream changed, the history of saves for undo, the update file kept in step with it, and writing only the edits back onto the game's files |
 | `crates/daydream-wcc` | The Btrieve reader and the 1.11p record decoders and encoders |
 | `crates/daydream-types` | Record types, enums, ids and byte layouts |
@@ -310,11 +340,13 @@ The silvermere adapter's tests run on SQLite, and on PostgreSQL too when
 set to a silvermere binary, they also serve the export with it. CI does both, with
 silvermere's release binary cached.
 
-The web UI's bundle (`crates/daydream-server/src/app.js`) is committed, so building the
-server needs no node. After changing `web/src`, rebuild it:
+The web UI's bundle (`crates/daydream-server/src`: `app.js`, `app.css`, `fonts/` and
+`notices.txt`) is committed, so building the server needs no node. After changing
+`web/src`, rebuild it, and keep it within its size budget (175 KB of script and 25 KB of
+styles, gzipped; CI checks both):
 
 ```sh
-cd web && npm ci && npm run check && npm run build
+cd web && npm ci && npm run check && npm run build && npm run budget
 ```
 
 ## License

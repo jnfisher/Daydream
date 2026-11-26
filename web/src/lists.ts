@@ -3,7 +3,7 @@
 // record they name links to its editor.
 
 import { MONSTER_GROUP } from './layouts';
-import { questOrganizer } from './quests';
+import { recordHref } from './shell/routes';
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -35,7 +35,7 @@ async function get(url: string): Promise<any> {
 
 /** A link to a record's editor. */
 const link = (table: string, key: number[], label: string) =>
-  h('a', { href: `#/${table}/${encodeURIComponent(JSON.stringify(key))}` }, label);
+  h('a', { href: recordHref(table, key) }, label);
 
 const roomLink = (map: number, room: number, label = `${map}/${room}`) => link('Rooms', [map, room], label);
 
@@ -191,5 +191,5 @@ function npcRooms(): HTMLElement {
 }
 
 export function listsPage(): HTMLElement {
-  return h('div', { class: 'tools' }, limitedItems(), findItem(), controlRooms(), monsterGroups(), npcRooms(), questOrganizer());
+  return h('div', { class: 'tools' }, limitedItems(), findItem(), controlRooms(), monsterGroups(), npcRooms());
 }

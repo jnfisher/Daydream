@@ -138,7 +138,10 @@ fn presented(headers: &HeaderMap) -> Option<&str> {
 
 /// Routes anyone may fetch: the page's own files, the sign-in page and the health check.
 fn open(path: &str) -> bool {
-    matches!(path, "/app.js" | "/app.css" | "/login" | "/api/health")
+    matches!(
+        path,
+        "/app.js" | "/app.css" | "/notices.txt" | "/login" | "/api/health"
+    ) || path.starts_with("/fonts/")
 }
 
 /// The guard in front of every route.

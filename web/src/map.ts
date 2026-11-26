@@ -5,6 +5,7 @@
 // room centres the map on it; its editor is a link away.
 
 import { EXITS as DIRS, EXIT_TYPE } from './layouts';
+import { recordHref } from './shell/routes';
 
 const SIZE = 41;
 const CELL = 22;
@@ -170,7 +171,7 @@ async function fetchMap(map: number): Promise<MapAnswer> {
   return body as MapAnswer;
 }
 
-/** The map page; `show` draws the map and room the hash names (`#/map/M/R`). */
+/** The map page; `show` draws the map and room the hash names (`#/world/M/R`). */
 export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise<void> } {
   const el = h('div', { class: 'map-page' });
   const mapSel = h('select', { 'aria-label': 'Map' });
@@ -217,7 +218,7 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
   let data: MapAnswer | null = null;
   let lastLay: Layout | null = null;
   const go = (map: number, room: number) => {
-    location.hash = `#/map/${map}/${room}`;
+    location.hash = `#/world/${map}/${room}`;
   };
   draw.addEventListener('click', () => go(Number(mapSel.value), Number(roomBox.value) || 1));
   mapSel.addEventListener('change', () => go(Number(mapSel.value), 1));
@@ -232,12 +233,12 @@ export function mapPage(): { el: HTMLElement; show: (fresh?: boolean) => Promise
     side.append(
       h('h3', {}, `Room ${map}/${r.room}`),
       h('p', {}, r.name || '(no name)'),
-      h('p', {}, h('a', { href: `#/Rooms/${encodeURIComponent(JSON.stringify([map, r.room]))}` }, 'Open in the room editor')),
+      h('p', {}, h('a', { href: recordHref('Rooms', [map, r.room]) }, 'Open in the room editor')),
     );
     const list = h('ul', { class: 'map-exits' });
     for (const e of r.exits) {
       const target = e.kind === 8 ? `map ${e.para1} room ${e.to}` : `room ${e.to}`;
-      const a = h('a', { href: e.kind === 8 ? `#/map/${e.para1}/${e.to}` : `#/map/${map}/${e.to}` }, target);
+      const a = h('a', { href: e.kind === 8 ? `#/world/${e.para1}/${e.to}` : `#/world/${map}/${e.to}` }, target);
       const sw = h('span', { class: 'swatch' });
       sw.style.background = lineColour(e.kind);
       list.append(h('li', {}, sw, `${DIRS[e.dir]}: `, a, ` (${EXIT_TYPE[e.kind] ?? `type ${e.kind}`})`));

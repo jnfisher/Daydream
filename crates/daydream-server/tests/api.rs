@@ -426,6 +426,9 @@ async fn the_ui_is_served() {
         ("/", "text/html"),
         ("/app.js", "text/javascript"),
         ("/app.css", "text/css"),
+        ("/fonts/nunito.woff2", "font/woff2"),
+        ("/fonts/fredoka.woff2", "font/woff2"),
+        ("/notices.txt", "text/plain"),
     ] {
         let res = app(dir.path())
             .oneshot(Request::get(uri).body(Body::empty()).unwrap())
@@ -435,6 +438,8 @@ async fn the_ui_is_served() {
         let ty = res.headers()["content-type"].to_str().unwrap().to_string();
         assert!(ty.starts_with(kind), "{uri}: {ty}");
     }
+    let (status, _) = get(dir.path(), "/fonts/comic-sans.woff2").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 async fn post_bytes(dir: &std::path::Path, uri: &str, body: Vec<u8>) -> (StatusCode, Value) {
@@ -801,6 +806,12 @@ async fn changes_are_listed_and_taken_back() {
         )
     );
     assert_eq!(c["members"], serde_json::json!(["name"]));
+    assert_eq!(c["labels"], serde_json::json!(["Name"]));
+    // what the editors open it by
+    assert_eq!(
+        (&c["nmr"], &c["key"]),
+        (&serde_json::json!("Races"), &serde_json::json!([1]))
+    );
 
     let (status, _) = send(
         dir.path(),
@@ -1210,7 +1221,15 @@ async fn without_a_token_every_route_refuses_other_machines() {
 async fn with_a_token_every_route_asks_for_it() {
     let dir = realm();
     let token = "0123456789abcdef-token";
-    let open = ["/app.js", "/app.css", "/login", "/api/health"];
+    // the page's own files, which hold nothing of the realm, load before signing in
+    let open = [
+        "/app.js",
+        "/app.css",
+        "/fonts/x",
+        "/notices.txt",
+        "/login",
+        "/api/health",
+    ];
     let wrong: [&[(&str, &str)]; 4] = [
         &[],
         &[("authorization", "Bearer 0123456789abcdef-wrong")],

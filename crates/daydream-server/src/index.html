@@ -2,28 +2,44 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Daydream</title>
+<script>try{var t=localStorage.getItem('dd-theme');if(t==='daydream'||t==='starlight')document.documentElement.dataset.dd=t}catch(e){}</script>
+<link rel="preload" href="/fonts/nunito.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header>
-  <h1>Daydream</h1>
-  <span id="realm"></span>
-  <nav id="tables"></nav>
-</header>
-<main>
-  <aside>
-    <input id="filter" type="search" placeholder="Filter by number or name" aria-label="Filter records">
-    <div id="count"></div>
-    <ul id="rows"></ul>
-  </aside>
-  <section id="editor"></section>
-</main>
-<section id="tools" hidden></section>
-<section id="lists" hidden></section>
-<section id="map" hidden></section>
-<section id="games" hidden></section>
+<div class="dd-app">
+  <header id="dd-top"></header>
+  <nav id="dd-rail" aria-label="Places"></nav>
+  <div class="dd-main">
+    <section id="home" class="place" hidden></section>
+    <section id="library" class="place" hidden>
+      <nav id="tables" class="subnav" aria-label="Tables"></nav>
+      <main>
+        <aside>
+          <input id="filter" type="search" placeholder="Filter by number or name" aria-label="Filter records">
+          <div id="count"></div>
+          <ul id="rows"></ul>
+        </aside>
+        <section id="editor"></section>
+      </main>
+    </section>
+    <section id="map" class="place page" hidden></section>
+    <section id="story" class="place page" hidden></section>
+    <section id="workshop" class="place" hidden>
+      <nav class="subnav" aria-label="Workshop">
+        <a href="#/workshop" data-tab="tools">Tools</a>
+        <a href="#/workshop/lists" data-tab="lists">Lists</a>
+      </nav>
+      <section id="tools" class="page" hidden></section>
+      <section id="lists" class="page" hidden></section>
+    </section>
+    <section id="games" class="place page" hidden></section>
+    <section id="publish" class="place page" hidden></section>
+    <div id="dd-inspector"></div>
+  </div>
+</div>
 <div id="status" role="status"></div>
 <script type="module" src="/app.js"></script>
 </body>

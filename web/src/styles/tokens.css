@@ -1,0 +1,107 @@
+/* Daydream's design tokens: every colour, font and shape the UI uses, per theme.
+   Daydream (pastel on pearl) is the default; Starlight (deep indigo) follows a system set to
+   dark, or the viewer's choice. The choice lives on <html data-dd>, set before the first paint
+   by index.html; with no choice the system decides. Record types own a pastel each: rooms
+   mint, items butter, monsters peach, spells pink, text blocks lilac, messages sky, shops teal. */
+
+:root {
+  --scheme: day;
+  --bg: #f3f5ff;
+  --surface: #ffffff;
+  --surface-2: #f6f4ff;
+  --surface-3: #ece8fd;
+  --ink: #2e2650;
+  --ink-2: #5d5682;
+  --ink-3: #7d76a3;
+  --line: #e4e0f4;
+  --line-2: #cfc9ea;
+  --outline: #2e2650;
+  --shadow: #2e2650;
+  --on-pastel: #2e2650;
+
+  --pink: #ff7eb6;   --pink-2: #ffe0ee;   --pink-ink: #b0216a;
+  --lilac: #a98bff;  --lilac-2: #ebe4ff;  --lilac-ink: #5536c9;
+  --sky: #6cc2ff;    --sky-2: #dcf0ff;    --sky-ink: #19679f;
+  --mint: #5fd8a8;   --mint-2: #d6f7ea;   --mint-ink: #12704e;
+  --butter: #ffd25e; --butter-2: #fff2c6; --butter-ink: #7d5800;
+  --peach: #ff9f73;  --peach-2: #ffe5d8;  --peach-ink: #a8410f;
+  --teal: #45cfc6;   --teal-2: #d5f6f3;   --teal-ink: #0d6a64;
+
+  --accent: var(--pink);
+  --link: #5536c9;
+  --select: #ece6ff;
+  --focus: #8a6bff;
+  --ok: #12704e;   --ok-bg: #d6f7ea;
+  --warn: #7d5800; --warn-bg: #fff2c6;
+  --bad: #c0245e;  --bad-bg: #ffe2ec;
+
+  --rainbow: linear-gradient(90deg, #ff9ac8 0%, #ffc48a 20%, #ffe68a 40%, #a6eec8 60%, #9ad7ff 80%, #c4b0ff 100%);
+  --sky-wash: linear-gradient(180deg, #e7f0ff 0%, #f5f0ff 60%, #fff4f9 100%);
+  --cloud: #ffffff;
+  --star: transparent;
+
+  /* game text always shows on a black screen, in a themed frame: MajorMUD's colours assume black */
+  --term-bg: #000000;
+  --term-fg: #aaaaaa;
+  --term-frame: var(--outline);
+
+  --font-display: "Fredoka", "Nunito", ui-rounded, system-ui, sans-serif;
+  --font-ui: "Nunito", ui-rounded, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+
+  --r-lg: 18px;
+  --r: 12px;
+  --r-sm: 9px;
+  --stroke: 1.5px;
+  --pop: cubic-bezier(.34, 1.56, .64, 1);
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --lift: 0 3px 0 var(--shadow);
+  --float: 0 18px 50px rgba(46, 38, 80, .16), 0 2px 6px rgba(46, 38, 80, .08);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-dd]) {
+    --scheme: night;
+    --bg: #13112a; --surface: #1f1b3d; --surface-2: #272249; --surface-3: #312b59;
+    --ink: #f2efff; --ink-2: #bdb6e6; --ink-3: #9790c4; --line: #332d5e; --line-2: #463f78;
+    --outline: #0b0a1a; --shadow: #0b0a1a; --on-pastel: #241d45;
+    --pink: #ff8dc4; --pink-2: #45203f; --pink-ink: #ffb6d9;
+    --lilac: #b8a5ff; --lilac-2: #2d2660; --lilac-ink: #d3c7ff;
+    --sky: #7fcbff; --sky-2: #17334f; --sky-ink: #ace0ff;
+    --mint: #72e6b9; --mint-2: #163d34; --mint-ink: #a2f3d2;
+    --butter: #ffdb78; --butter-2: #3b3117; --butter-ink: #ffe7a6;
+    --peach: #ffae88; --peach-2: #43271c; --peach-ink: #ffcbb2;
+    --teal: #5fe0d6; --teal-2: #123b3a; --teal-ink: #9ef0ea;
+    --link: #d3c7ff; --select: #342c6a; --focus: #b8a5ff;
+    --ok: #a2f3d2; --ok-bg: #163d34; --warn: #ffe7a6; --warn-bg: #3b3117; --bad: #ff9fc1; --bad-bg: #4a1f33;
+    --sky-wash: radial-gradient(120% 90% at 15% 0%, #2c2563 0%, #1a1638 45%, #13112a 100%);
+    --cloud: #2a2452;
+    --star: #f2efff;
+    --term-frame: #463f78;
+    --float: 0 18px 50px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3);
+    color-scheme: dark;
+  }
+}
+
+:root[data-dd="starlight"] {
+  --scheme: night;
+  --bg: #13112a; --surface: #1f1b3d; --surface-2: #272249; --surface-3: #312b59;
+  --ink: #f2efff; --ink-2: #bdb6e6; --ink-3: #9790c4; --line: #332d5e; --line-2: #463f78;
+  --outline: #0b0a1a; --shadow: #0b0a1a; --on-pastel: #241d45;
+  --pink: #ff8dc4; --pink-2: #45203f; --pink-ink: #ffb6d9;
+  --lilac: #b8a5ff; --lilac-2: #2d2660; --lilac-ink: #d3c7ff;
+  --sky: #7fcbff; --sky-2: #17334f; --sky-ink: #ace0ff;
+  --mint: #72e6b9; --mint-2: #163d34; --mint-ink: #a2f3d2;
+  --butter: #ffdb78; --butter-2: #3b3117; --butter-ink: #ffe7a6;
+  --peach: #ffae88; --peach-2: #43271c; --peach-ink: #ffcbb2;
+  --teal: #5fe0d6; --teal-2: #123b3a; --teal-ink: #9ef0ea;
+  --link: #d3c7ff; --select: #342c6a; --focus: #b8a5ff;
+  --ok: #a2f3d2; --ok-bg: #163d34; --warn: #ffe7a6; --warn-bg: #3b3117; --bad: #ff9fc1; --bad-bg: #4a1f33;
+  --sky-wash: radial-gradient(120% 90% at 15% 0%, #2c2563 0%, #1a1638 45%, #13112a 100%);
+  --cloud: #2a2452;
+  --star: #f2efff;
+  --term-frame: #463f78;
+  --float: 0 18px 50px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3);
+  color-scheme: dark;
+}

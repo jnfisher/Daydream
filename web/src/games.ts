@@ -75,19 +75,19 @@ export const games = {
   open: (body: Record<string, unknown>) => call<{ current: Current }>('POST', '/api/games/open', body),
 };
 
-const KINDS: Record<Game['kind'], string> = {
+export const KINDS: Record<Game['kind'], string> = {
   wcc: 'MajorMUD (.DAT files)',
   db: 'MajorMUD (.db files)',
   silvermere: 'silvermere',
 };
 
 /** How a game is worked on, in a line. */
-function how(g: { kind: Game['kind']; live: boolean }): string {
+export function how(g: { kind: Game['kind']; live: boolean }): string {
   switch (g.kind) {
     case 'wcc':
-      return 'Edited in a working copy; Tools, Write to WCC files puts it back. Stop the game for that.';
+      return 'Edited in a working copy; Publish writes it back into the game. Stop the game for that.';
     case 'silvermere':
-      return 'Edited in a working copy; Tools, silvermere, Export puts it back. Stop silvermere for that.';
+      return 'Edited in a working copy; Publish writes it back into silvermere. Stop silvermere for that.';
     case 'db':
       return g.live
         ? 'The game’s own files: every save goes straight into the game, so stop it while editing.'
