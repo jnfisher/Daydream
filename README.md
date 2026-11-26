@@ -49,7 +49,7 @@ Pictures, Movies and Music, so macOS does not ask whether Daydream may read them
 | Game | Found by | Edited in | Written back by |
 |---|---|---|---|
 | Worldgroup, The Major BBS (`WCC*.DAT`) | its world files | a working copy, made when first opened | **Publish**, Write to WCC files (no folder to type) |
-| MBBSEmu, or wbtrv32 (`WCC*.db`) | its world files | the game's own files | nothing to do: every save is in the game |
+| MBBSEmu, or wbtrv32 (`WCC*.db`) | its world files | a working copy, taken from its `.db` files while it runs | **Publish** |
 | silvermere (SQLite or PostgreSQL, such as Neon) | `silvermere.toml`, `silvermere.db`, `SILVERMERE_DATABASE_URL`, `/etc/silvermere/env` | a working copy, read from its database | **Publish**, silvermere, Export |
 
 A folder or database Daydream did not find can be typed in the picker. Working copies are
@@ -60,12 +60,13 @@ beside it as `.previous`. `daydream games` lists what the picker would show.
 **Stop the game to write into it, not to edit.** Edits go into the working copy while the
 game runs; only writing back into its world files needs it stopped (publishing through the
 update file, below, needs no stop at all), and Daydream refuses while it sees it
-running: a Worldgroup or MBBSEmu process whose program or folder is the game's (on
-Windows, also a WCC file open in another program), or silvermere's writer lock. A game
-edited in its own `.db` files (MBBSEmu) refuses every save while it runs. The game changes
-some of its files as it runs (rooms' floors, shop stock, players), so writing back writes
-only what the working copy changed, onto the files as the game has them then: nothing the
-game did meanwhile is undone (see `write-dat` below).
+running: a Worldgroup or MBBSEmu process whose program or folder is the game's, a WCC file
+another program holds (open without sharing on Windows; open or locked on Linux), or
+silvermere's writer lock. The game changes some of its files as it runs (rooms' floors,
+shop stock, players), so writing back writes only what the working copy changed, onto the
+files as the game has them then: nothing the game did meanwhile is undone (see `write-dat`
+below). An MBBSEmu game opened in its own `.db` files by an earlier Daydream moves to a
+working copy at the next start.
 
 **With an access token** (Daydream reached from elsewhere, as below), the picker opens only
 the games Daydream found itself, the ones opened before and the one it was started with,
@@ -83,7 +84,7 @@ how it gets into the game, step by step, the ways the game allows:
 | Worldgroup, The Major BBS | **At the next start**, with the game running | check, back up the update file, write it; MajorMUD merges it at its next start or nightly cleanup |
 | | **Now, with the game stopped** | check, wait while you stop the game, back up each file about to change, write only the changes (and the update file), and you start it again |
 | silvermere | **Now** | check, warn the players (a countdown you choose: now, 1, 5 or 15 minutes), shut down (silvermere saves every character), back up the database (SQLite), write the world, start it again and wait until it answers. Without an admin token: wait while you stop it, and you start it again |
-| MBBSEmu (its own `.db` files) | none | every save is in the game already |
+| MBBSEmu (its own `.db` files) | **Now, with the game stopped** | check, wait while you stop MBBSEmu, back up each `.db` file about to change, write only the changes into them (each onto the game's record as play left it, at its own place, and the update file whole), and you start it again |
 
 The update file carries edits and new records of the ten kinds it holds. It cannot delete or
 renumber a record, carry players, gangs or bank books, or change what MajorMUD keeps as play

@@ -3,6 +3,7 @@
 mod support;
 
 mod dat_write;
+mod game_db;
 mod oracle;
 mod publish_stock;
 mod realm_fixture;

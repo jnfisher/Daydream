@@ -75,6 +75,8 @@ export function warning(minutes: number, why: string): string {
 export const GAME: Record<string, string> = {
   worldgroup: 'Worldgroup',
   majorbbs: 'The Major BBS',
+  mbbsemu: 'MBBSEmu',
+  db: 'the BBS',
   silvermere: 'silvermere',
   files: 'the game',
 };

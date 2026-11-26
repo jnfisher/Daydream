@@ -53,6 +53,13 @@ pub enum Action {
     Updated(usize),
     /// Written anew with this many records.
     Rebuilt(usize),
+    /// Records of a game's `.db` written where they are ([`crate::game_db`]): changed in
+    /// place, added at the next id, deleted.
+    Rows {
+        changed: usize,
+        added: usize,
+        deleted: usize,
+    },
 }
 
 /// One `.db` written back.
@@ -95,6 +102,16 @@ pub enum DatError {
     },
     #[error("{stem}: no {stem}.DAT or {stem}.VIR in {}", dir.display())]
     NoSource { stem: String, dir: PathBuf },
+    #[error("{stem}: no {stem}.DB in {}", dir.display())]
+    NoDb { stem: String, dir: PathBuf },
+    #[error(
+        "the working copy has no list of its changes since it was read from the game, so its \
+         edits cannot be told from what the game changed: open the game again to read a fresh \
+         copy"
+    )]
+    NoJournal,
+    #[error("{}: a game's .db files are written where they are", .0.display())]
+    NotElsewhere(PathBuf),
     #[error(
         "{}: changed since the realm's {stem}.db was converted from it (the game ran on it?); \
          writing the realm would lose those changes",
@@ -229,7 +246,7 @@ fn now() -> u32 {
 }
 
 /// One record's change since the realm's base, as the journal and the `.db` give it.
-enum Change {
+pub(crate) enum Change {
     Edit { base: Vec<u8>, now: Vec<u8> },
     Add(Vec<u8>),
     Delete(Vec<u8>),
@@ -237,7 +254,10 @@ enum Change {
 
 /// The changes of the `.db`'s records that `entries` hold, by record id. An entry whose
 /// record is as it was is no change.
-fn changes_of(db: &WbtrvDb, entries: &[journal::Entry]) -> Result<Vec<(i64, Change)>, StoreError> {
+pub(crate) fn changes_of(
+    db: &WbtrvDb,
+    entries: &[journal::Entry],
+) -> Result<Vec<(i64, Change)>, StoreError> {
     let mut out = Vec::new();
     for e in entries {
         let now = db.get(e.id)?;
@@ -252,16 +272,11 @@ fn changes_of(db: &WbtrvDb, entries: &[journal::Entry]) -> Result<Vec<(i64, Chan
     Ok(out)
 }
 
-/// A record, for a person: `item 12`, `room 1/5`, else its first key's value.
-fn describe(file: &BtrieveFile, table: Option<Table>, set: LayoutSet, record: &[u8]) -> String {
+/// A record, for a person: `item 12`, `room 1/5`, else `key`: its first key's value.
+pub(crate) fn describe(table: Option<Table>, set: LayoutSet, record: &[u8], key: &[u8]) -> String {
     if let Some(kind) = table.and_then(crate::update::Kind::of) {
         return crate::update::describe(kind, set, record);
     }
-    let key = file
-        .keys
-        .first()
-        .and_then(|k| k.extract(record))
-        .unwrap_or_default();
     let text: String = key
         .iter()
         .take_while(|&&b| b != 0)
@@ -277,28 +292,32 @@ fn describe(file: &BtrieveFile, table: Option<Table>, set: LayoutSet, record: &[
 /// How a record is found in the game's file: by its value of the file's first unique key,
 /// else (a file with no unique key, a record whose key is null) by all its bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Ident {
+pub(crate) enum Ident {
     Key(Vec<u8>),
     Bytes(Vec<u8>),
 }
 
-/// The file's records once the changes are merged onto the game's (`live`, in its order;
-/// added records after), and the changes skipped (by record id, with why).
-fn merge_onto(
-    file: &BtrieveFile,
-    live: &[(RecordAddress, Vec<u8>)],
+/// The game's records once changes are merged onto them ([`merge_onto`]).
+pub(crate) struct Merged {
+    /// The game's records in their order, each as the merge leaves it (`None`: deleted), then
+    /// the records added.
+    pub records: Vec<Option<Vec<u8>>>,
+    /// The changes skipped, by record id, with why.
+    pub skipped: Vec<(i64, String)>,
+}
+
+/// The game's records (`live`, in its order) once the changes are merged onto them.
+/// `ident` tells which of the game's records a change is to.
+pub(crate) fn merge_onto(
+    live: &[&[u8]],
     changes: &[(i64, Change)],
+    ident: impl Fn(&[u8]) -> Ident,
     layout: Option<&Layout>,
     what: impl Fn(&[u8]) -> String,
-) -> (Vec<Vec<u8>>, Vec<(i64, String)>) {
-    let unique = file.keys.iter().find(|k| !k.allows_duplicates());
-    let ident = |r: &[u8]| match unique.filter(|k| !k.is_null(r)).and_then(|k| k.identity(r)) {
-        Some(v) => Ident::Key(v),
-        None => Ident::Bytes(r.to_vec()),
-    };
-    let mut target: Vec<Option<Vec<u8>>> = live.iter().map(|(_, r)| Some(r.clone())).collect();
+) -> Merged {
+    let mut target: Vec<Option<Vec<u8>>> = live.iter().map(|r| Some(r.to_vec())).collect();
     let mut by_ident: HashMap<Ident, Vec<usize>> = HashMap::new();
-    for (i, (_, r)) in live.iter().enumerate() {
+    for (i, r) in live.iter().enumerate() {
         by_ident.entry(ident(r)).or_default().push(i);
     }
     // the record found by `id` still in the file; of several, the one like `like`
@@ -395,7 +414,10 @@ fn merge_onto(
             }
         }
     }
-    (target.into_iter().flatten().collect(), skipped)
+    Merged {
+        records: target,
+        skipped,
+    }
 }
 
 /// Writes every `.db` of `realm` back into the Btrieve files of the WCC folder `wcc` (or
@@ -527,11 +549,20 @@ fn write(
                 old.iter().map(|(_, r)| r.clone()).collect()
             } else {
                 let layout = f.table.map(|t| layout_of(t, set));
-                let (records, s) = merge_onto(&file, &old, &changes, layout, |r| {
-                    describe(&file, f.table, set, r)
-                });
-                skipped = s;
-                records
+                let unique = file.keys.iter().find(|k| !k.allows_duplicates());
+                let ident =
+                    |r: &[u8]| match unique.filter(|k| !k.is_null(r)).and_then(|k| k.identity(r)) {
+                        Some(v) => Ident::Key(v),
+                        None => Ident::Bytes(r.to_vec()),
+                    };
+                let what = |r: &[u8]| {
+                    let key = file.keys.first().and_then(|k| k.extract(r));
+                    describe(f.table, set, r, &key.unwrap_or_default())
+                };
+                let live: Vec<&[u8]> = old.iter().map(|(_, r)| r.as_slice()).collect();
+                let merged = merge_onto(&live, &changes, ident, layout, what);
+                skipped = merged.skipped;
+                merged.records.into_iter().flatten().collect()
             }
         } else {
             db.records()?.into_iter().map(|(_, r)| r).collect()

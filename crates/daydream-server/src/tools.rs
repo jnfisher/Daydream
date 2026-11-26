@@ -454,6 +454,11 @@ pub(crate) async fn write_dat(
                     Action::Unchanged => ("unchanged", None),
                     Action::Updated(n) => ("updated", Some(n)),
                     Action::Rebuilt(n) => ("rebuilt", Some(n)),
+                    Action::Rows {
+                        changed,
+                        added,
+                        deleted,
+                    } => ("written", Some(changed + added + deleted)),
                 };
                 json!({
                     "stem": w.stem,

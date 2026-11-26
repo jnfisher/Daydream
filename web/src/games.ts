@@ -8,6 +8,8 @@ export interface Current {
   label?: string;
   location?: string;
   live?: boolean;
+  /** The world is worked on in a copy of the game's files, not in them. */
+  copy?: boolean;
   realm_dir: string;
 }
 
@@ -82,13 +84,14 @@ export const KINDS: Record<Game['kind'], string> = {
 };
 
 /** How a game is worked on, in a line. */
-export function how(g: { kind: Game['kind']; live: boolean }): string {
+export function how(g: { kind: Game['kind']; live: boolean; copy?: boolean }): string {
   switch (g.kind) {
     case 'wcc':
       return 'Edited in a working copy; Publish writes it back into the game. Stop the game for that.';
     case 'silvermere':
       return 'Edited in a working copy; Publish writes it back into silvermere. Stop silvermere for that.';
     case 'db':
+      if (g.copy) return 'Edited in a working copy while the game runs; Publish writes it into the game’s .db files. Stop the game for that.';
       return g.live
         ? 'The game’s own files: every save goes straight into the game, so stop it while editing.'
         : 'A realm folder, edited where it is.';
@@ -119,7 +122,7 @@ function statusBadge(id: string): HTMLElement {
         el.className = 'badge stopped';
         if (s.elsewhere.length) {
           el.textContent = 'stopped here';
-          el.title = `Running elsewhere on this machine: ${s.elsewhere.join(', ')}`;
+          el.title = `Running elsewhere on this machine: ${s.elsewhere.join('; ')}`;
         }
       }
     })
@@ -160,9 +163,9 @@ export function gamesPage(opened: () => void): HTMLElement {
       cur.append(
         h('p', {}, h('strong', {}, c.label!), ' ', c.id ? statusBadge('current') : ''),
         h('p', { class: 'hint' }, `${KINDS[c.kind!]}: ${c.location}`),
-        h('p', { class: 'hint' }, how({ kind: c.kind!, live: !!c.live })),
+        h('p', { class: 'hint' }, how({ kind: c.kind!, live: !!c.live, copy: !!c.copy })),
       );
-      if (c.kind !== 'db') cur.append(h('p', { class: 'hint' }, `Working copy: ${c.realm_dir}`));
+      if (c.kind !== 'db' || c.copy) cur.append(h('p', { class: 'hint' }, `Working copy: ${c.realm_dir}`));
     } else if (l.current) {
       cur.append(h('p', {}, l.current.realm_dir));
     } else {
