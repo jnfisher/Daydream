@@ -117,6 +117,69 @@ export interface History {
   redo: Step | null;
 }
 
+/** One step of publishing, as the plan lists it and a job runs it. */
+export interface PublishStep {
+  id: string;
+  title: string;
+  detail: string;
+  /** `yours` is for the sysop to do (start the game again). */
+  state: 'waiting' | 'running' | 'done' | 'failed' | 'skipped' | 'yours';
+  log: string[];
+}
+
+export type PublishWayId = 'update' | 'now';
+
+/** A way of publishing into the open world's game (`/api/publish`). */
+export interface PublishWay {
+  id: PublishWayId;
+  title: string;
+  summary: string;
+  button: string;
+  ready: boolean;
+  /** Why it cannot be taken, when it cannot. */
+  why: string | null;
+  /** The changes the update file cannot carry (`item 12: ...`). */
+  not_carried: string[];
+  steps: PublishStep[];
+}
+
+export interface PublishCheck {
+  level: 'ok' | 'note' | 'warn' | 'block';
+  text: string;
+}
+
+/** A publish under way, or the last one. */
+export interface PublishJob {
+  id: number;
+  way: PublishWayId;
+  engine: string;
+  game: string;
+  state: 'running' | 'done' | 'failed' | 'cancelled';
+  started: number;
+  finished: number | null;
+  steps: PublishStep[];
+  /** Edits that could not be written: they stay among the changes. */
+  skipped: string[];
+  error: string | null;
+  result: string | null;
+}
+
+export interface PublishPlan {
+  engine: 'worldgroup' | 'majorbbs' | 'silvermere' | 'files';
+  /** The game, as a sysop calls it ("Worldgroup"). */
+  name: string;
+  game: string | null;
+  location: string | null;
+  running: { running: boolean | null; by?: string | null; error?: string; elsewhere: string[] };
+  changes: number;
+  since: number | null;
+  ways: PublishWay[];
+  /** The way to offer first. */
+  way: PublishWayId | null;
+  checks: PublishCheck[];
+  job: PublishJob | null;
+}
+
 const t = (table: string) => `/api/tables/${encodeURIComponent(table)}`;
 const k = (key: Cell[]) => `?key=${encodeURIComponent(JSON.stringify(key))}`;
 
@@ -134,6 +197,10 @@ export const api = {
     call<Report>('POST', `${t(table)}/row`, { values }),
   remove: (table: string, key: Cell[]) => call<Report>('DELETE', `${t(table)}/row${k(key)}`),
   changes: () => call<ChangeList>('GET', '/api/changes'),
+  publishPlan: () => call<PublishPlan>('GET', '/api/publish'),
+  publish: (way: PublishWayId) => call<PublishJob>('POST', '/api/publish', { way }),
+  publishJob: () => call<PublishJob | null>('GET', '/api/publish/job'),
+  cancelPublish: () => call<{ cancelled: boolean }>('POST', '/api/publish/cancel', {}),
   /** Puts records back as they were when the realm was last read or published. */
   revert: (body: { changes: { stem: string; id: number }[] } | { all: true }) =>
     call<{ reverted: number; failed: { stem: string; id: number; why: string }[] }>('POST', '/api/changes/revert', body),

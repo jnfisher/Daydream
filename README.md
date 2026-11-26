@@ -58,7 +58,8 @@ one per game; **Read again** replaces one with the game as it is now, keeping th
 beside it as `.previous`. `daydream games` lists what the picker would show.
 
 **Stop the game to write into it, not to edit.** Edits go into the working copy while the
-game runs; only writing back needs it stopped, and Daydream refuses while it sees it
+game runs; only writing back into its world files needs it stopped (publishing through the
+update file, below, needs no stop at all), and Daydream refuses while it sees it
 running: a Worldgroup or MBBSEmu process whose program or folder is the game's (on
 Windows, also a WCC file open in another program), or silvermere's writer lock. A game
 edited in its own `.db` files (MBBSEmu) refuses every save while it runs. The game changes
@@ -71,6 +72,30 @@ the games Daydream found itself, the ones opened before and the one it was start
 and the write-back cards write only to the open game. Nobody holding the token can make it
 read or write another folder or database. `serve --allow-any-source` lifts that; adding
 `--search DIR` is the narrower way to offer another game.
+
+### Publishing
+
+**Publish** (the rainbow button) shows what goes out (the changes waiting), the checks, and
+how it gets into the game, step by step, the ways the game allows:
+
+| Game | Way | Steps |
+|---|---|---|
+| Worldgroup, The Major BBS | **At the next start**, with the game running | check, back up the update file, write it; MajorMUD merges it at its next start or nightly cleanup |
+| | **Now, with the game stopped** | check, wait while you stop the game, back up each file about to change, write only the changes (and the update file), and you start it again |
+| silvermere | **Now, with silvermere stopped** | check, wait for its writer lock, back up the database (SQLite), write the world, and you start it again |
+| MBBSEmu (its own `.db` files) | none | every save is in the game already |
+
+The update file carries edits and new records of the ten kinds it holds. It cannot delete or
+renumber a record, carry players, gangs or bank books, or change what MajorMUD keeps as play
+changes it (what lies on the floors, shop stock, kill timers, a gang's shop, an action marked
+to keep): the page names each change it cannot carry, and those publish now instead.
+
+Hold the button down until it fills, or press Enter. Publishing goes on in the background
+wherever you go in Daydream, the top bar's button follows it, and **Cancel** stops it while
+it still waits for the game to stop. Backups go in a `daydream-backup-<date>-<time>` folder
+beside the files. The server answers the same at `GET /api/publish` (the plan),
+`POST /api/publish` (`{"way": "update"}` or `"now"`), `GET /api/publish/job` and
+`POST /api/publish/cancel`.
 
 ### Finding your way
 

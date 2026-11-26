@@ -4,11 +4,13 @@
 -->
 <script lang="ts">
   import CloudUpload from '@lucide/svelte/icons/cloud-upload';
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle';
   import Search from '@lucide/svelte/icons/search';
   import ChangesTray from './ChangesTray.svelte';
   import Mascot from './Mascot.svelte';
   import ThemeMenu from './ThemeMenu.svelte';
   import WorldPill from './WorldPill.svelte';
+  import { pub } from './publishing.svelte';
   import { app } from './state.svelte';
 
   const mod = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
@@ -22,7 +24,11 @@
 <div class="top-right">
   <span class="hide-narrow"><ThemeMenu /></span>
   <ChangesTray />
-  <a class="btn rainbow" href="#/publish" title="Send your changes to the game"><CloudUpload size={16} /><span class="hide-narrow">Publish</span></a>
+  {#if pub.job?.state === 'running'}
+    <button type="button" class="btn rainbow busy" title="Publishing: show how it goes" onclick={() => (pub.sheet = true)}><LoaderCircle size={16} /><span class="hide-narrow">Publishing…</span></button>
+  {:else}
+    <a class="btn rainbow" href="#/publish" title="Send your changes to the game"><CloudUpload size={16} /><span class="hide-narrow">Publish</span></a>
+  {/if}
 </div>
 
 <style>
@@ -37,6 +43,9 @@
   .search-box:hover { border-color: var(--ink-3); }
   .grow { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+  .busy :global(svg) { animation: spin 1.1s linear infinite; }
+  @keyframes spin { to { rotate: 360deg; } }
+  @media (prefers-reduced-motion: reduce) { .busy :global(svg) { animation: none; } }
   @media (max-width: 760px) {
     .search-box { flex: 0 0 40px; padding: 0; justify-content: center; }
   }

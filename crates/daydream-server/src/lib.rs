@@ -44,6 +44,7 @@ pub mod games;
 pub mod history;
 pub mod mcp;
 pub mod mme;
+pub mod publish;
 pub mod reports;
 pub mod silvermere;
 pub mod tables;
@@ -67,6 +68,8 @@ pub struct AppState {
     games: games::Config,
     /// The games found by the last search.
     found: Mutex<Option<Vec<games::Found>>>,
+    /// The publish under way, or the last one ([`publish`]).
+    publish: publish::Jobs,
 }
 
 /// The game open and its realm.
@@ -256,6 +259,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
             .map(daydream_silvermere::database_url),
         games: options.games,
         found: Mutex::new(None),
+        publish: publish::Jobs::default(),
     });
     if let Some(dir) = realm_dir {
         state.set_current(dir.to_path_buf(), Some(games::Game::of_realm(dir)));
@@ -297,6 +301,9 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/tools/preset", post(tools::preset))
         .route("/api/tools/renumber", post(tools::renumber))
         .route("/api/tools/write-dat", post(tools::write_dat))
+        .route("/api/publish", get(publish::get).post(publish::start))
+        .route("/api/publish/job", get(publish::job))
+        .route("/api/publish/cancel", post(publish::cancel))
         .route("/api/games", get(games::list))
         .route("/api/games/status", get(games::status))
         .route("/api/games/open", post(games::open))

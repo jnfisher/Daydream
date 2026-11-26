@@ -17,6 +17,8 @@ import Inspector from './shell/Inspector.svelte';
 import Palette from './shell/Palette.svelte';
 import { JUMPS } from './shell/places';
 import Publish from './shell/Publish.svelte';
+import { resumePublish } from './shell/publishing.svelte';
+import PublishSheet from './shell/PublishSheet.svelte';
 import Rail from './shell/Rail.svelte';
 import { parse, recordHref, type Place, type Route } from './shell/routes';
 import { app, closeInspector, loadRecent, realmChanged, redo, refreshNow, refreshStatus, undo } from './shell/state.svelte';
@@ -211,6 +213,7 @@ async function start() {
   const overlays = document.body.appendChild(document.createElement('div'));
   mount(Palette, { target: overlays });
   mount(ToastStack, { target: overlays });
+  mount(PublishSheet, { target: overlays });
   document.addEventListener('keydown', keys);
 
   try {
@@ -222,6 +225,7 @@ async function start() {
       loadRecent();
       void refreshNow();
       void refreshStatus();
+      void resumePublish();
     }
   } catch (e) {
     toast(messageOf(e), { kind: 'error' });

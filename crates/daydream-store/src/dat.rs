@@ -101,6 +101,13 @@ pub enum DatError {
         file.display()
     )]
     SourceChanged { stem: String, file: PathBuf },
+    #[error("the realm has no update file (WCCUPDAT or WCCUPDA2)")]
+    NoUpdateFile,
+    #[error(
+        "the update file cannot carry {}: write the files with the game stopped instead",
+        .0.join("; ")
+    )]
+    NotCarried(Vec<String>),
 }
 
 /// Where and how to write.
@@ -399,6 +406,65 @@ pub fn write_dat(
     wcc: &Path,
     options: &WriteOptions,
 ) -> Result<Vec<Written>, DatError> {
+    write(realm, wcc, options, None)
+}
+
+/// The changes of `realm` that its update file cannot carry into the game, each with why
+/// (`item 12: the update file cannot delete a record`); empty when it carries them all
+/// ([`crate::update::carries`]).
+pub fn not_carried(realm: &Realm) -> Result<Vec<String>, DatError> {
+    let changes = crate::changes::list(realm)?;
+    if changes.since.is_none() {
+        return Ok(vec![
+            "the edits made before Daydream kept a list of them, which are not known".into(),
+        ]);
+    }
+    let set = realm.layout_set();
+    let room = crate::update::UpdateFile::find(realm)?.map(|f| f.room());
+    let mut out = Vec::new();
+    for c in &changes.changes {
+        let why = match crate::update::carries(c, set) {
+            Err(why) => Some(why),
+            Ok(()) if room.is_some_and(|room| c.record.len() > room) => {
+                Some("too long for one record of the update file".into())
+            }
+            Ok(()) => None,
+        };
+        if let Some(why) = why {
+            out.push(format!("{}: {why}", c.what));
+        }
+    }
+    Ok(out)
+}
+
+/// Writes only the realm's update file (`WCCUPDAT`, `WCCUPDA2` on Worldgroup) into the WCC
+/// folder, for the game to merge into its world at its next start or nightly cleanup: a
+/// publish that needs no stop, the game's own merge keeping what play changed. Every change
+/// must be one the update file carries ([`not_carried`]), else nothing is written; once
+/// written, the realm's changes count afresh, as the game now has them to apply.
+pub fn write_update_file(
+    realm: &Realm,
+    wcc: &Path,
+    options: &WriteOptions,
+) -> Result<Written, DatError> {
+    let not = not_carried(realm)?;
+    if !not.is_empty() {
+        return Err(DatError::NotCarried(not));
+    }
+    let stem = crate::update::UpdateFile::find(realm)?
+        .ok_or(DatError::NoUpdateFile)?
+        .stem;
+    let mut written = write(realm, wcc, options, Some(&stem))?;
+    written.pop().ok_or(DatError::NoUpdateFile)
+}
+
+/// [`write_dat`], for every file or only the one of stem `only`.
+fn write(
+    realm: &Realm,
+    wcc: &Path,
+    options: &WriteOptions,
+    only: Option<&str>,
+) -> Result<Vec<Written>, DatError> {
     struct Plan {
         written: Written,
         db: PathBuf,
@@ -423,6 +489,9 @@ pub fn write_dat(
     // the changes not written, which stay pending
     let mut keep: Vec<(String, i64)> = Vec::new();
     for f in realm.files() {
+        if only.is_some_and(|only| only != f.stem) {
+            continue;
+        }
         let source = source_of(wcc, &f.stem)?.ok_or_else(|| DatError::NoSource {
             stem: f.stem.clone(),
             dir: wcc.to_path_buf(),
