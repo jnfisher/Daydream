@@ -3,15 +3,16 @@
 //!
 //! | Route | Answer |
 //! |---|---|
-//! | `GET /api/changes` | `{since, changes: [{stem, id, table, how, what, name, members, was, nmr, key}]}` |
+//! | `GET /api/changes` | `{since, changes: [{stem, id, table, how, what, name, members, labels, was, nmr, key}]}` |
 //! | `POST /api/changes/revert` | `{changes: [{stem, id}]}` or `{all: true}`: `{reverted, failed}` |
 //!
 //! `since` is when the realm was read from its game or last written back (seconds since
 //! 1970), or `null` for a realm edited before Daydream journaled its edits: its changes are
 //! not known, and publishing writes it whole. `how` is `added`, `changed` or `deleted`;
-//! `members` the members a changed record changed; `was` what a renumbered record was;
-//! `nmr` and `key` the editors' table and key for the record (`Items`, `[868]`), or `null`
-//! for a record no editor shows.
+//! `members` the members a changed record changed, and `labels` the same as the editors
+//! label their columns (`Max Hit`); `was` what a renumbered record was; `nmr` and `key` the
+//! editors' table and key for the record (`Items`, `[868]`). `labels`, `nmr` and `key` are
+//! `null` for a record no editor shows.
 //! Taking a change back puts the record as it was, as a save does (the update file follows).
 
 use std::sync::Arc;
@@ -19,7 +20,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use daydream_nmr::rows::{cell_json, record_key};
+use daydream_nmr::rows::{cell_json, member_labels, record_key};
 use daydream_store::Realm;
 use daydream_store::changes::{self, Change};
 use daydream_types::records::LayoutSet;
@@ -38,6 +39,7 @@ fn change_json(c: &Change, set: LayoutSet) -> Value {
         "what": c.what,
         "name": c.name,
         "members": c.members,
+        "labels": link.as_ref().map(|(t, _)| member_labels(t, &c.members)),
         "was": c.was,
         "nmr": link.as_ref().map(|(t, _)| t.name),
         "key": link.map(|(_, key)| key.iter().map(cell_json).collect::<Vec<_>>()),

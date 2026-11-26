@@ -11,9 +11,10 @@
   const opens = $derived(c.how !== 'deleted' && c.nmr !== null && c.key !== null);
   const detail = $derived.by(() => {
     const bits = [c.what];
-    if (c.how === 'changed' && c.members.length) {
-      const shown = c.members.slice(0, 3).join(', ');
-      bits.push(c.members.length > 3 ? `${shown} +${c.members.length - 3} more` : shown);
+    const what = c.labels ?? c.members;
+    if (c.how === 'changed' && what.length) {
+      const shown = what.slice(0, 3).join(', ');
+      bits.push(what.length > 3 ? `${shown} +${what.length - 3} more` : shown);
     }
     if (c.was) bits.push(`was ${c.was}`);
     return bits.join(' · ');

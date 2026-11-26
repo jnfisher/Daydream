@@ -806,6 +806,7 @@ async fn changes_are_listed_and_taken_back() {
         )
     );
     assert_eq!(c["members"], serde_json::json!(["name"]));
+    assert_eq!(c["labels"], serde_json::json!(["Name"]));
     // what the editors open it by
     assert_eq!(
         (&c["nmr"], &c["key"]),

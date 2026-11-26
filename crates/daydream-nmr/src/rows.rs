@@ -90,6 +90,37 @@ pub fn index_columns(t: &NmrTable) -> Vec<&'static str> {
         .unwrap_or_default()
 }
 
+/// The columns a record's members are, as the editors label them: `maxdmg` is `Max Hit`.
+/// A member that is several numbered columns (`desc`: `Desc 0` to `Desc 6`) is their name
+/// without the number. A member no column shows is left out; each label comes once.
+pub fn member_labels(t: &NmrTable, members: &[&str]) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+    for member in members {
+        let cols: Vec<&str> = t
+            .columns
+            .iter()
+            .filter(|c| match c.source {
+                schema::Source::Element { pieces, .. } | schema::Source::Unsigned(pieces) => {
+                    pieces.iter().any(|p| p.member == *member)
+                }
+                _ => false,
+            })
+            .map(|c| c.name)
+            .collect();
+        let label = match cols.as_slice() {
+            [] => continue,
+            [one] => (*one).to_string(),
+            many => many[0]
+                .trim_end_matches(|ch: char| ch.is_ascii_digit() || ch == ' ' || ch == '#')
+                .to_string(),
+        };
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+    labels
+}
+
 /// The NMR table a WCC record type's rows are in, and a record's key there: what the
 /// editors open it by (`Items`, `[868]`). `None` for a record type no NMR table holds.
 pub fn record_key(
@@ -714,6 +745,20 @@ mod tests {
         let (t, key) = record_key(Table::Rooms, set, &r).unwrap();
         assert_eq!(t.name, "Rooms");
         assert_eq!(key, vec![Value::Long(1), Value::Long(224)]);
+    }
+
+    #[test]
+    fn members_are_labelled_as_the_editors_label_their_columns() {
+        let table = |name: &str| record_tables().find(|t| t.name == name).unwrap();
+        assert_eq!(
+            member_labels(table("Items"), &["maxdmg", "speed", "nothing-such"]),
+            ["Max Hit", "Speed"]
+        );
+        // a member of several numbered columns, named once
+        assert_eq!(
+            member_labels(table("Rooms"), &["desc", "name", "desc"]),
+            ["Desc", "Name"]
+        );
     }
 
     #[test]

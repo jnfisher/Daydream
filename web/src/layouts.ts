@@ -32,6 +32,12 @@ export interface Grid {
   across?: string;
   /** Names for the numbers, from `from` on (exit directions). */
   names?: string[];
+  /**
+   * The columns are lists of their own that share the numbers (an item's class, race and negate
+   * lists), so a row is in use when any of them is set. Otherwise the first column says what the
+   * row holds (the item a monster drops), and a row without it is an empty slot.
+   */
+  separate?: boolean;
 }
 
 /** Columns that pair up as a small table: a row per label, a cell per header. */
@@ -126,6 +132,7 @@ export const LAYOUTS: Record<string, Layout> = {
         ],
         from: 0,
         to: 9,
+        separate: true,
       },
     },
     { title: 'Abilities p1', grid: abilities(0, 9) },

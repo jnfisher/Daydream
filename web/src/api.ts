@@ -85,6 +85,8 @@ export interface Change {
   name: string | null;
   /** The members a changed record changed. */
   members: string[];
+  /** The same, as the editors label their columns (`Max Hit`); null where no editor shows it. */
+  labels: string[] | null;
   /** What a renumbered record was. */
   was: string | null;
   /** The editors' table and key for it, or null. */

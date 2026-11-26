@@ -11,7 +11,7 @@
   import { ABILITIES } from '../abilities';
   import { api, type Cell, type Row } from '../api';
   import { renderAnsi, toShown } from '../ansi';
-  import { columnsShown, layoutFor, type Field, type Layout, type Pick } from '../layouts';
+  import { columnsShown, layoutFor, type Field, type Grid, type Layout, type Pick } from '../layouts';
   import { kindOf } from './kinds';
   import { keyLabel, recordHref } from './routes';
   import { app, closeInspector, inspect, remember, rowsOf } from './state.svelte';
@@ -106,14 +106,59 @@
   const value = (col: string): Cell => shown?.values[col] ?? null;
   const text = (v: Cell) => (v === null ? '' : toShown(String(v)));
 
-  /** A grid's rows that hold something: the abilities a record has, not the 20 blank slots. */
-  function gridRows(g: NonNullable<Layout[number]['grid']>) {
+  const set = (col: string) => {
+    const v = value(col);
+    return v !== null && v !== 0 && v !== '';
+  };
+
+  /**
+   * A grid's rows that hold something: the abilities a record has, not the 20 blank slots. A row
+   * is in use when its first column is set (a drop slot with no item is empty, whatever its
+   * chance), or any column of a grid of separate lists.
+   */
+  function gridRows(g: Grid) {
     const out: { n: number; label: string; cells: { col: string; pick?: Pick }[] }[] = [];
     for (let n = g.from; n <= g.to; n++) {
       const cells = g.columns.map((c) => ({ col: c.template.replace('#', String(n)), pick: c.pick }));
-      if (cells.some(({ col }) => { const v = value(col); return v !== null && v !== 0 && v !== ''; })) {
-        out.push({ n, label: g.names?.[n - g.from] ?? String(n), cells });
+      if (g.separate ? cells.some(({ col }) => set(col)) : set(cells[0]!.col)) {
+        out.push({ n, label: g.across ? `${g.across} ${n - g.from + 1}` : (g.names?.[n - g.from] ?? String(n)), cells });
       }
+    }
+    return out;
+  }
+
+  /**
+   * A tab's fields as the card lists them. A wide field's unlabelled lines join it, so a
+   * description's lines read as one text, without the blank lines at its ends; a text with
+   * nothing in it is left out.
+   */
+  function entries(fields: Field[]) {
+    const out: { field: Field; lines?: string[] }[] = [];
+    for (const field of fields) {
+      if (!info?.columns.some((c) => c.name === field.col)) continue;
+      const last = out.at(-1);
+      if (field.wide && field.label === '' && last?.lines) last.lines.push(text(value(field.col)));
+      else out.push(field.wide ? { field, lines: [text(value(field.col))] } : { field });
+    }
+    return out.filter(({ lines }) => {
+      if (!lines) return true;
+      while (lines.length && !lines.at(-1)!.trim()) lines.pop();
+      while (lines.length && !lines[0]!.trim()) lines.shift();
+      return lines.length > 0;
+    });
+  }
+
+  /**
+   * A text's lines run together, as the card is narrower than the game's lines: a line goes on
+   * after a space (straight on after a hyphen), and a blank line still breaks.
+   */
+  function flow(lines: string[]): string {
+    let out = '';
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      if (!line.trim()) out += '\n';
+      else if (!out || out.endsWith('\n')) out += line;
+      else out += (out.endsWith('-') ? '' : ' ') + line.trimStart();
     }
     return out;
   }
@@ -134,7 +179,7 @@
     {:else}
       {@const rk = kindOf(field.pick.ref)}
       {@const ref = field.pick.ref}
-      <button type="button" class="ref {rk.cls}" onclick={() => inspect({ table: ref, key: [n], name: names[ref]?.get(n) })}>
+      <button type="button" class="ref {rk.cls}" title="{rk.one} {n}{names[ref]?.get(n) ? `: ${names[ref]?.get(n)}` : ''}" onclick={() => inspect({ table: ref, key: [n], name: names[ref]?.get(n) })}>
         <span class="tile"><rk.icon size={12} /></span><span class="num">{n}</span><span class="nm">{names[ref]?.get(n) ?? ''}</span>
       </button>
     {/if}
@@ -185,10 +230,12 @@
       <div class="body">
         {#if current?.fields}
           <dl>
-            {#each current.fields as f (f.col)}
-              {#if info?.columns.some((c) => c.name === f.col) && !(f.wide && text(value(f.col)).trim() === '')}
-                <dt title={f.col}>{f.label ?? f.col}</dt>
-                <dd class:wide={f.wide}>{@render cell(f)}</dd>
+            {#each entries(current.fields) as { field, lines } (field.col)}
+              <dt title={field.col}>{field.label ?? field.col}</dt>
+              {#if lines}
+                <dd class="wide">{flow(lines)}</dd>
+              {:else}
+                <dd>{@render cell(field)}</dd>
               {/if}
             {/each}
           </dl>
@@ -204,18 +251,29 @@
           </table>
         {/if}
         {#if current?.grid}
-          {@const rows = gridRows(current.grid)}
-          {#if rows.length}
-            <table class="mini">
-              <thead><tr><th>#</th>{#each current.grid.columns as c (c.template)}<th>{c.label ?? c.template}</th>{/each}</tr></thead>
+          {@const g = current.grid}
+          {@const rows = gridRows(g)}
+          {#if !rows.length}
+            <p class="faint">Nothing here.</p>
+          {:else if g.across}
+            <!-- many columns (an attack's ten): a row for each, a column for each attack in use -->
+            <table class="mini across">
+              <thead><tr><th></th>{#each rows as r (r.n)}<th>{r.label}</th>{/each}</tr></thead>
               <tbody>
-                {#each rows as r (r.n)}
-                  <tr><th>{r.label}</th>{#each r.cells as c (c.col)}<td>{@render cell({ col: c.col, pick: c.pick })}</td>{/each}</tr>
+                {#each g.columns as c, i (c.template)}
+                  <tr><th>{c.label ?? c.template}</th>{#each rows as r (r.n)}<td>{@render cell(r.cells[i]!)}</td>{/each}</tr>
                 {/each}
               </tbody>
             </table>
           {:else}
-            <p class="faint">Nothing here.</p>
+            <table class="mini">
+              <thead><tr><th>#</th>{#each g.columns as c (c.template)}<th>{c.label ?? c.template}</th>{/each}</tr></thead>
+              <tbody>
+                {#each rows as r (r.n)}
+                  <tr><th>{r.label}</th>{#each r.cells as c (c.col)}<td>{@render cell(c)}</td>{/each}</tr>
+                {/each}
+              </tbody>
+            </table>
           {/if}
         {/if}
         {#if current?.preview}
@@ -256,6 +314,12 @@
   .mini th, .mini td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   .mini thead th { color: var(--ink-3); font-weight: 800; font-size: 11.5px; }
   .mini tbody th { color: var(--ink-3); font-weight: 700; width: 1%; white-space: nowrap; }
+  .mini .ref { max-width: 11rem; }
+  /* the attacks share the width, and a long message chip is cut short in its cell */
+  .mini.across { table-layout: fixed; }
+  .mini.across thead th:first-child { width: 6.8rem; }
+  .mini.across tbody th { overflow: hidden; text-overflow: ellipsis; }
+  .mini.across .ref { max-width: 100%; }
   .terminal { margin: 0; }
   .error { color: var(--bad); font-weight: 700; }
   .loading { margin: 0; }
