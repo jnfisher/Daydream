@@ -60,12 +60,14 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: type check
         run: npm run check
+      - name: unit tests
+        run: npm test
       - name: the committed bundle is current
         run: |
           npm run build
           if [ -n "$(git status --porcelain -- ../crates/daydream-server/src)" ]; then
             git status --short -- ../crates/daydream-server/src
-            echo "::error::the bundle in crates/daydream-server/src (app.js, app.css, fonts, notices.txt) is stale: run npm run build in web/ and commit it"
+            echo "::error::the bundle in crates/daydream-server/src (app.js, app.css, chunks, fonts, notices.txt) is stale: run npm run build in web/ and commit it"
             exit 1
           fi
       - name: within the size budget

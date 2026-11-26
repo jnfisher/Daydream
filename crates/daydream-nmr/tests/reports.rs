@@ -234,7 +234,11 @@ fn a_map_view_has_its_rooms_exits_and_the_maps() {
             ("Exit 6", l(9)),
             ("Type 6", l(8)),
             ("Para1 6", l(3)),
+            ("Para4 6", l(5)),
             ("Shop Number", l(4)),
+            ("Type", l(1)),
+            ("Mon Type", l(6)),
+            ("Light", l(-50)),
         ],
         vec![
             ("Map Number", l(1)),
@@ -260,12 +264,16 @@ fn a_map_view_has_its_rooms_exits_and_the_maps() {
     assert_eq!(names, [(1, "Square"), (2, "Road")]);
     let square = &view.rooms[0];
     assert_eq!(square.shop, 4);
+    assert_eq!(
+        (square.room_type, square.mon_type, square.light),
+        (1, 6, -50)
+    );
     let exits: Vec<_> = square
         .exits
         .iter()
-        .map(|e| (e.dir, e.to, e.kind, e.para1))
+        .map(|e| (e.dir, e.to, e.kind, e.para1, e.para4))
         .collect();
-    assert_eq!(exits, [(0, 2, 0, 0), (6, 9, 8, 3)]);
+    assert_eq!(exits, [(0, 2, 0, 0, 0), (6, 9, 8, 3, 5)]);
     assert!(map_view(&realm, Dos, 7).unwrap().rooms.is_empty());
 }
 

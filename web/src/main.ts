@@ -1,7 +1,7 @@
 // Daydream's web UI: the frame (the top bar, the rail of places, the Ctrl+K palette, the
-// inspector and the toasts) around the places. Home, Story and Publish are the frame's own;
-// the record editors, the map, Tools, Lists and the game picker are today's pages, shown
-// inside it until the redesign reaches each one.
+// inspector and the toasts) around the places. Home, the World map, Story, Worlds and Publish
+// are the frame's own; the record editors, Tools, Lists and the old map (#/map-classic) are
+// today's pages, shown inside it until the redesign reaches each one.
 
 import './styles/tokens.css';
 import './styles/base.css';
@@ -36,7 +36,7 @@ const SECTION: Record<Place, string> = {
   home: 'home',
   library: 'library',
   players: 'library',
-  world: 'map',
+  world: 'world',
   story: 'story',
   workshop: 'workshop',
   worlds: 'games',
@@ -46,6 +46,7 @@ const SECTION: Record<Place, string> = {
 // ---- the places, made the first time they are shown -------------------------------------
 
 let theMap: ReturnType<typeof mapPage> | null = null;
+let world: { show: (rest: string[], fresh: boolean) => Promise<void> } | null = null;
 let worlds: { load: (refresh?: boolean) => Promise<void> } | null = null;
 const made = new Set<string>();
 
@@ -78,6 +79,7 @@ function canonical(r: Route): string {
     case 'players':
       return r.table ? recordHref(r.table, r.key) : `#/${r.place}`;
     case 'world':
+      if (r.rest[0] === 'classic') return ['#/map-classic', ...r.rest.slice(1)].join('/');
       return r.rest.length ? `#/world/${r.rest.join('/')}` : '#/world';
     case 'workshop':
       return r.rest[0] === 'lists' ? '#/workshop/lists' : '#/workshop';
@@ -112,16 +114,27 @@ async function route() {
   last = r;
   app.route = r;
 
-  const section = SECTION[r.place];
+  const classic = r.place === 'world' && r.rest[0] === 'classic';
+  const section = classic ? 'map' : SECTION[r.place];
   for (const el of document.querySelectorAll<HTMLElement>('.dd-main > .place')) el.hidden = el.id !== section;
   switch (r.place) {
     case 'world':
-      if (!theMap) {
-        theMap = mapPage();
-        $('map').append(theMap.el);
+      if (classic) {
+        if (!theMap) {
+          theMap = mapPage();
+          $('map').append(theMap.el);
+        }
+        // coming back from elsewhere, the rooms may have been edited: drawn afresh
+        void theMap.show(was?.place !== 'world' || was.rest[0] !== 'classic');
+        break;
       }
-      // coming back from elsewhere, the rooms may have been edited: drawn afresh
-      void theMap.show(was?.place !== 'world');
+      if (!world) {
+        // the map's code loads the first time it is opened
+        const { default: World } = await import('./world/World.svelte');
+        world ??= mount(World, { target: $('world') });
+      }
+      // coming back from elsewhere, the rooms may have been edited: read afresh
+      void world.show(r.rest, was?.place !== 'world' || was.rest[0] === 'classic');
       break;
     case 'workshop':
       showWorkshop(r.rest[0] === 'lists' ? 'lists' : 'tools');

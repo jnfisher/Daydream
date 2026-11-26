@@ -1,5 +1,7 @@
 // The server's editor API (crates/daydream-server/src/tables.rs).
 
+import type { MapAnswer } from './world/model';
+
 export type Cell = number | string | null;
 
 export interface ColumnInfo {
@@ -242,6 +244,8 @@ export const api = {
     call<Report>('POST', `${t(table)}/row`, { values }),
   remove: (table: string, key: Cell[]) => call<Report>('DELETE', `${t(table)}/row${k(key)}`),
   changes: () => call<ChangeList>('GET', '/api/changes'),
+  /** One map's rooms, and the realm's maps. */
+  map: (map: number) => call<MapAnswer>('GET', `/api/map?map=${map}`),
   publishPlan: () => call<PublishPlan>('GET', '/api/publish'),
   publish: (way: PublishWayId, warn?: PublishWarn) => call<PublishJob>('POST', '/api/publish', { way, warn }),
   publishJob: () => call<PublishJob | null>('GET', '/api/publish/job'),

@@ -142,6 +142,7 @@ fn open(path: &str) -> bool {
         path,
         "/app.js" | "/app.css" | "/notices.txt" | "/login" | "/api/health"
     ) || path.starts_with("/fonts/")
+        || path.starts_with("/chunks/")
 }
 
 /// The guard in front of every route.

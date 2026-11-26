@@ -211,8 +211,8 @@
     </header>
     <div class="actions">
       <a class="btn sm sticker" href={recordHref(top.table, top.key)} onclick={closeInspector}><Maximize2 size={14} />Open full page</a>
-      {#if top.table === 'Rooms'}
-        <a class="btn sm" href="#/world/{top.key[0]}/{top.key[1]}" onclick={closeInspector}><MapPin size={14} />Show on the map</a>
+      {#if top.table === 'Rooms' && app.route.place !== 'world'}
+        <a class="btn sm" href="#/world/{top.key[0]}/{top.key[1]}"><MapPin size={14} />Show on the map</a>
       {/if}
     </div>
     {#if error}

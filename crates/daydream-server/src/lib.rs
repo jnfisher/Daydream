@@ -42,6 +42,7 @@ use serde_json::{Value, json};
 
 pub mod auth;
 pub mod changes;
+mod chunks;
 pub mod control;
 pub mod games;
 pub mod history;
@@ -275,6 +276,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/mcp/{token}", post(mcp::post_keyed).get(mcp::get))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
+        .route("/chunks/{name}", get(chunk))
         .route("/fonts/{name}", get(font))
         .route("/notices.txt", get(notices))
         .route("/api/health", get(health))
@@ -386,6 +388,22 @@ async fn app_css() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
         include_str!("app.css"),
     )
+}
+
+/// The UI's code that loads when first used (a place's, split from app.js by `web/build.mjs`).
+/// A chunk's name changes with its contents, so a browser may keep it for good.
+async fn chunk(UrlPath(name): UrlPath<String>) -> Response {
+    let Some(code) = chunks::get(&name) else {
+        return not_found(format!("chunk {name}")).into_response();
+    };
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        code,
+    )
+        .into_response()
 }
 
 /// The UI's fonts (Nunito and Fredoka, under the SIL Open Font License; see `/notices.txt`).

@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node build.mjs",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
-    "budget": "node budget.mjs"
+    "budget": "node budget.mjs",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "devDependencies": {
     "esbuild": "0.28.2",

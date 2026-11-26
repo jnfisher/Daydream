@@ -19,6 +19,8 @@ pub struct MapExit {
     pub kind: i64,
     pub para1: i64,
     pub para2: i64,
+    pub para3: i64,
+    pub para4: i64,
 }
 
 /// A room, with what NMR's map can mark on it.
@@ -34,6 +36,11 @@ pub struct MapRoom {
     pub control: i64,
     pub death: i64,
     pub exit_room: i64,
+    /// The room type (`Type`: shop, arena, lair...).
+    pub room_type: i64,
+    /// Which monsters come (`Mon Type`).
+    pub mon_type: i64,
+    pub light: i64,
 }
 
 /// One map's rooms, and the realm's maps.
@@ -59,10 +66,13 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
         at("Death Room")?,
         at("Exit Room")?,
     );
+    let (room_type, mon_type, light) = (at("Type")?, at("Mon Type")?, at("Light")?);
     let exits = rows.family("Exit", 10, "")?;
     let kinds = rows.family("Type", 10, "")?;
     let p1 = rows.family("Para1", 10, "")?;
     let p2 = rows.family("Para2", 10, "")?;
+    let p3 = rows.family("Para3", 10, "")?;
+    let p4 = rows.family("Para4", 10, "")?;
     let mut out: Vec<MapRoom> = rows
         .0
         .rows
@@ -79,6 +89,8 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
                     kind: n(&r[kinds[d]]),
                     para1: n(&r[p1[d]]),
                     para2: n(&r[p2[d]]),
+                    para3: n(&r[p3[d]]),
+                    para4: n(&r[p4[d]]),
                 })
                 .collect(),
             shop: n(&r[shop]),
@@ -88,6 +100,9 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
             control: n(&r[control]),
             death: n(&r[death]),
             exit_room: n(&r[exit_room]),
+            room_type: n(&r[room_type]),
+            mon_type: n(&r[mon_type]),
+            light: n(&r[light]),
         })
         .collect();
     out.sort_by_key(|r| r.room);
