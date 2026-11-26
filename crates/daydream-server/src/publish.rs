@@ -421,9 +421,14 @@ fn steps(engine: &Engine, way: Way, update: bool, live: Option<&Live>) -> Vec<St
 /// Whether a game is running, as the plan shows it; `live`: silvermere's, looked at already.
 fn running_json(engine: &Engine, live: Option<&Live>) -> Value {
     match (engine, live) {
-        (Engine::Wcc { dir, .. } | Engine::Db { dir, .. }, _) => {
+        (Engine::Wcc { dir, .. }, _) => {
             let r = running::check(dir);
             json!({ "running": r.running(), "by": r.by, "elsewhere": r.elsewhere })
+        }
+        // only MBBSEmu runs a game from its .db files
+        (Engine::Db { dir, .. }, _) => {
+            let r = running::check(dir);
+            json!({ "running": r.running(), "by": r.by, "elsewhere": r.mbbsemu_elsewhere })
         }
         (Engine::Silvermere { .. }, Some(live)) => match &live.error {
             None => {
@@ -661,14 +666,26 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
     }
     if let Some(others) = running["elsewhere"].as_array().filter(|a| !a.is_empty()) {
         let others: Vec<&str> = others.iter().filter_map(Value::as_str).collect();
-        check(
-            "note",
-            format!(
-                "Other games run on this computer ({}). Daydream cannot tell whether they use \
-                 this folder.",
-                others.join(", ")
+        let others = others.join("; ");
+        match &engine {
+            // nothing ties an MBBSEmu in a container to its folder: it may be this game, and
+            // writing under it loses the edits or play
+            Engine::Db { .. } if !is_running => check(
+                "warn",
+                format!(
+                    "MBBSEmu runs on this computer, and Daydream cannot tie it to this folder \
+                     ({others}): one in a container may be running this game. Make sure it is \
+                     stopped before publishing."
+                ),
             ),
-        );
+            _ => check(
+                "note",
+                format!(
+                    "Other games run on this computer ({others}). Daydream cannot tell \
+                     whether they use this folder."
+                ),
+            ),
+        }
     }
 
     let blocked = empty || checks.iter().any(|c| c["level"] == "block");

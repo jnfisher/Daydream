@@ -1,7 +1,8 @@
 //! Whether a game is running on a folder: its files must not be written while it does.
 //!
-//! A MajorMUD game is a process: Worldgroup's `WGSERVER.EXE`, The Major BBS, or MBBSEmu
-//! (`MBBSEmu`, or `dotnet MBBSEmu.dll`). A process is tied to a folder when its program,
+//! A MajorMUD game is a process: Worldgroup's `WGSERVER.EXE` (`WGSSRV.EXE` when it runs as a
+//! Windows service, `WGSAPPGO.EXE` for its console), The Major BBS, or MBBSEmu (`MBBSEmu`, or
+//! `dotnet MBBSEmu.dll`). A process is tied to a folder when its program,
 //! its working folder or a path on its command line is in that folder. One that cannot be
 //! tied (another BBS on the machine, or a process whose paths the system does not show) is
 //! reported as a warning, not as running here. A folder's `WCC*` files are also looked at
@@ -24,7 +25,9 @@ use serde::Serialize;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// Program names of MajorMUD's hosts (lower case, no `.exe`).
-const HOSTS: &[&str] = &["wgserver", "wgserv", "majorbbs", "bbsv10", "mbbsemu"];
+const HOSTS: &[&str] = &[
+    "wgserver", "wgserv", "wgssrv", "wgsappgo", "majorbbs", "bbsv10", "mbbsemu",
+];
 
 /// A game process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -34,6 +37,9 @@ pub struct GameProcess {
     /// Its program, working folder and command line's paths.
     #[serde(skip)]
     pub paths: Vec<PathBuf>,
+    /// MBBSEmu ([`is_mbbsemu`]).
+    #[serde(skip)]
+    pub mbbsemu: bool,
 }
 
 /// What is known about a folder's game.
@@ -44,6 +50,9 @@ pub struct Running {
     pub by: Option<String>,
     /// Game processes that could not be tied to the folder.
     pub elsewhere: Vec<String>,
+    /// Of those, the MBBSEmu ones: one in a container may run this folder's `.db` files.
+    #[serde(skip)]
+    pub mbbsemu_elsewhere: Vec<String>,
 }
 
 impl Running {
@@ -93,6 +102,7 @@ pub fn game_processes() -> Vec<GameProcess> {
         paths.extend(cmd.iter().map(PathBuf::from).filter(|a| a.is_absolute()));
         out.push(GameProcess {
             pid: pid.as_u32(),
+            mbbsemu: is_mbbsemu(&name, &cmd),
             name,
             paths,
         });
@@ -102,22 +112,29 @@ pub fn game_processes() -> Vec<GameProcess> {
     out
 }
 
+/// A program's name, lower case, without its folder or `.exe` / `.dll`.
+fn stem(s: &str) -> String {
+    let s = s
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(s)
+        .to_ascii_lowercase();
+    s.strip_suffix(".exe")
+        .or_else(|| s.strip_suffix(".dll"))
+        .map(str::to_string)
+        .unwrap_or(s)
+}
+
 /// Whether a process (by name and command line) is one of MajorMUD's hosts.
 pub fn is_host(name: &str, cmd: &[String]) -> bool {
-    let stem = |s: &str| {
-        let s = s
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(s)
-            .to_ascii_lowercase();
-        s.strip_suffix(".exe")
-            .or_else(|| s.strip_suffix(".dll"))
-            .map(str::to_string)
-            .unwrap_or(s)
-    };
+    HOSTS.contains(&stem(name).as_str()) || is_mbbsemu(name, cmd)
+}
+
+/// Whether a process is MBBSEmu, which runs a game from its `.db` files (Worldgroup and The
+/// Major BBS run theirs from its `.DAT` files).
+pub fn is_mbbsemu(name: &str, cmd: &[String]) -> bool {
     let n = stem(name);
-    HOSTS.contains(&n.as_str())
-        || ((n == "dotnet" || n == "mono") && cmd.iter().any(|a| stem(a) == "mbbsemu"))
+    n == "mbbsemu" || ((n == "dotnet" || n == "mono") && cmd.iter().any(|a| stem(a) == "mbbsemu"))
 }
 
 /// Whether a game runs on `dir`.
@@ -133,6 +150,9 @@ pub fn check(dir: &Path) -> Running {
         if here && out.by.is_none() {
             out.by = Some(shown);
         } else if !here {
+            if p.mbbsemu {
+                out.mbbsemu_elsewhere.push(shown.clone());
+            }
             out.elsewhere.push(shown);
         }
     }
@@ -281,6 +301,9 @@ mod tests {
     #[test]
     fn hosts_by_name() {
         assert!(is_host("WGSERVER.EXE", &[]));
+        // Worldgroup as a Windows service, and its console
+        assert!(is_host("WGSSRV.EXE", &[]));
+        assert!(is_host("wgsappgo.exe", &[]));
         assert!(is_host("MBBSEmu", &[]));
         assert!(is_host("mbbsemu.exe", &[]));
         assert!(is_host(
@@ -290,6 +313,10 @@ mod tests {
         assert!(!is_host("dotnet", &["dotnet".into(), "other.dll".into()]));
         assert!(!is_host("silvermere", &[]));
         assert!(!is_host("bash", &[]));
+        // MBBSEmu runs a game's .db files; Worldgroup its .DAT files
+        assert!(is_mbbsemu("MBBSEmu", &[]));
+        assert!(is_mbbsemu("mono", &["mono".into(), "MBBSEmu.exe".into()]));
+        assert!(!is_mbbsemu("WGSERVER.EXE", &[]));
     }
 
     #[test]
@@ -321,6 +348,55 @@ mod tests {
             "{found}"
         );
         assert_eq!(file_in_use(tmp.path()), None);
+    }
+
+    /// An MBBSEmu in another folder does not run here, but is named: one in a container may
+    /// run this folder's game.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_mbbsemu_elsewhere_is_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (here, there) = (tmp.path().join("here"), tmp.path().join("there"));
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        // a stand-in for MBBSEmu: sleep, under its name
+        let Some(sleep) = ["/usr/bin/sleep", "/bin/sleep"]
+            .into_iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+        else {
+            return;
+        };
+        let emu = there.join("MBBSEmu");
+        std::fs::copy(sleep, &emu).unwrap();
+        let spawn = || {
+            std::process::Command::new(&emu)
+                .arg("30")
+                .current_dir(&there)
+                .spawn()
+        };
+        // a program just written can be busy a moment while another test starts a process
+        let mut child = spawn()
+            .or_else(|_| {
+                std::thread::sleep(Duration::from_millis(200));
+                spawn()
+            })
+            .unwrap();
+        let shown = format!("MBBSEmu, process {}", child.id());
+        // the processes are looked at afresh once FRESH has passed
+        let deadline = Instant::now() + FRESH * 3;
+        let mut seen = (check(&here), check(&there));
+        while seen.1.by.as_deref() != Some(shown.as_str()) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+            seen = (check(&here), check(&there));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let (here, there) = seen;
+        assert_eq!(there.by.as_deref(), Some(shown.as_str()), "{there:?}");
+        assert!(!here.running(), "{here:?}");
+        assert!(here.elsewhere.contains(&shown), "{here:?}");
+        assert!(here.mbbsemu_elsewhere.contains(&shown), "{here:?}");
     }
 
     #[cfg(target_os = "linux")]

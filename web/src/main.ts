@@ -9,7 +9,7 @@ import './styles/legacy.css';
 import { mount } from 'svelte';
 import { api } from './api';
 import * as editor from './editor';
-import { games, gamesPage } from './games';
+import { games } from './games';
 import { listsPage } from './lists';
 import { mapPage } from './map';
 import Home from './shell/Home.svelte';
@@ -26,6 +26,7 @@ import Story from './shell/Story.svelte';
 import { messageOf, toast } from './shell/toasts.svelte';
 import ToastStack from './shell/ToastStack.svelte';
 import TopBar from './shell/TopBar.svelte';
+import Worlds from './shell/Worlds.svelte';
 import { toolsPage } from './tools';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -45,6 +46,7 @@ const SECTION: Record<Place, string> = {
 // ---- the places, made the first time they are shown -------------------------------------
 
 let theMap: ReturnType<typeof mapPage> | null = null;
+let worlds: { load: (refresh?: boolean) => Promise<void> } | null = null;
 const made = new Set<string>();
 
 function once(id: string, make: () => void) {
@@ -126,13 +128,8 @@ async function route() {
       break;
     case 'worlds':
       // what is found, open and running changes: asked afresh every time
-      $('games').replaceChildren(
-        gamesPage(() => {
-          // another world: the page starts again on it
-          location.hash = '#/home';
-          location.reload();
-        }),
-      );
+      if (worlds) void worlds.load();
+      else worlds = mount(Worlds, { target: $('games') });
       break;
     case 'story':
       once('story', () => mount(Story, { target: $('story') }));

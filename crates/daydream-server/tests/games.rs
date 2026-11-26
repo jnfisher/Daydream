@@ -138,6 +138,22 @@ async fn games_are_found_opened_and_written_back() {
     assert_eq!(wg["copy"], Value::Null);
     let emu = game(&list, "db");
     assert_eq!(emu["live"], true);
+    // where Daydream looked: the folder it was given, with what it found there, and the
+    // working copies (none yet)
+    let looked = list["looked"].as_array().unwrap();
+    let folder = &looked[0];
+    assert_eq!(folder["kind"], "folder", "{list}");
+    assert_eq!(folder["given"], true);
+    let root = daydream_server::games::discover::canonical(&m.root).unwrap();
+    assert_eq!(folder["where"], root.display().to_string());
+    let mut labels = vec![wg["label"].clone(), emu["label"].clone()];
+    labels.sort_by_key(|l| l.to_string());
+    let mut there = folder["found"].as_array().unwrap().clone();
+    there.sort_by_key(|l| l.to_string());
+    assert_eq!(there, labels, "{folder}");
+    let copies = looked.last().unwrap();
+    assert_eq!(copies["kind"], "copies", "{list}");
+    assert_eq!(copies["found"], json!([]));
 
     let (status, st) = call(
         &app,
@@ -259,6 +275,13 @@ async fn games_are_found_opened_and_written_back() {
     );
     let (_, list) = call(&app, "GET", "/api/games", None, None).await;
     assert!(game(&list, "db")["copy"]["pulled"].is_string(), "{list}");
+    // both games now have their working copies
+    let mut copied = list["looked"].as_array().unwrap().last().unwrap()["found"]
+        .as_array()
+        .unwrap()
+        .clone();
+    copied.sort_by_key(|l| l.to_string());
+    assert_eq!(copied, labels, "{list}");
 
     // a later start opens the game open last
     let last = daydream_server::games::workspace::Workspace::new(m.workspace.clone())

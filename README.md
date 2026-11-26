@@ -37,9 +37,10 @@ cargo run -p daydream -- dump ./realm WCCITEMS  # every item as a JSON line
 
 ### Choosing the game in the browser
 
-`daydream serve` with no realm opens the game you had open last, or none, and the world
-button at the top of the page (**Open another world…**, the game picker) opens another. Daydream assumes it runs on
-the machine that hosts the game, and looks for games where they are usually installed: the
+`daydream serve` with no realm opens the game you had open last, or none. The **Worlds**
+page (**Open another world…** under the world button at the top of the page) shows every
+game Daydream found, which one is open and whether each runs, where it looked, and opens
+another. Daydream assumes it runs on the machine that hosts the game, and looks for games where they are usually installed: the
 drives' top folders on Windows (`C:\WGSERV`, `C:\MBBSEmu`, `C:\Silvermere`), your home
 folder, the folder it was started in, `/opt` and `/srv`, a few levels down, plus any folder
 given with `--search DIR`. On macOS it leaves out your Desktop, Documents, Downloads,
@@ -52,23 +53,25 @@ Pictures, Movies and Music, so macOS does not ask whether Daydream may read them
 | MBBSEmu, or wbtrv32 (`WCC*.db`) | its world files | a working copy, taken from its `.db` files while it runs | **Publish** |
 | silvermere (SQLite or PostgreSQL, such as Neon) | `silvermere.toml`, `silvermere.db`, `SILVERMERE_DATABASE_URL`, `/etc/silvermere/env` | a working copy, read from its database | **Publish**, silvermere, Export |
 
-A folder or database Daydream did not find can be typed in the picker. Working copies are
+A folder or database Daydream did not find can be typed on the Worlds page. Working copies are
 kept in `DAYDREAM_HOME` (else `%LOCALAPPDATA%\daydream`, or `~/.local/share/daydream`),
 one per game; **Read again** replaces one with the game as it is now, keeping the old copy
-beside it as `.previous`. `daydream games` lists what the picker would show.
+beside it as `.previous`. `daydream games` lists what the Worlds page would show.
 
 **Stop the game to write into it, not to edit.** Edits go into the working copy while the
 game runs; only writing back into its world files needs it stopped (publishing through the
 update file, below, needs no stop at all), and Daydream refuses while it sees it
-running: a Worldgroup or MBBSEmu process whose program or folder is the game's, a WCC file
-another program holds (open without sharing on Windows; open or locked on Linux), or
-silvermere's writer lock. The game changes some of its files as it runs (rooms' floors,
+running: a Worldgroup (`WGSERVER`, or its service `WGSSRV` and console `WGSAPPGO`) or
+MBBSEmu process whose program or folder is the game's, a WCC file another program holds
+(open without sharing on Windows; open or locked on Linux), or silvermere's writer lock. An
+MBBSEmu that Daydream cannot tie to the game's folder (one in a container, say) is a warning
+before an MBBSEmu game publishes, since it may be running that game. The game changes some of its files as it runs (rooms' floors,
 shop stock, players), so writing back writes only what the working copy changed, onto the
 files as the game has them then: nothing the game did meanwhile is undone (see `write-dat`
 below). An MBBSEmu game opened in its own `.db` files by an earlier Daydream moves to a
 working copy at the next start.
 
-**With an access token** (Daydream reached from elsewhere, as below), the picker opens only
+**With an access token** (Daydream reached from elsewhere, as below), the Worlds page opens only
 the games Daydream found itself, the ones opened before and the one it was started with,
 and the write-back cards write only to the open game. Nobody holding the token can make it
 read or write another folder or database. `serve --allow-any-source` lifts that; adding
@@ -292,7 +295,7 @@ claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over 
 For Claude Desktop, add `{"command": "daydream", "args": ["mcp", "/path/to/realm"]}` under
 `mcpServers` in its config. `daydream serve` also answers MCP over HTTP at
 `http://127.0.0.1:7340/mcp`. Over HTTP the agent also gets `list_games` and `open_game`, which
-choose the game as the web UI's picker does, so it can connect before a game is open.
+choose the game as the web UI's Worlds page does, so it can connect before a game is open.
 
 ### Reaching Daydream from elsewhere
 

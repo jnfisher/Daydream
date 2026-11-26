@@ -194,11 +194,3 @@ main.login input { padding: .45rem .7rem; }
 main.login button { background: var(--accent); color: var(--on-pastel); border-color: var(--outline); box-shadow: var(--lift); }
 main.login .error { color: var(--danger); }
 main.login p { color: var(--muted); font-size: .85rem; }
-.badge { display: inline-block; font-size: .75rem; font-weight: 800; padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); margin-left: .4rem; white-space: nowrap; }
-.badge.running { color: var(--danger); border-color: var(--danger); }
-.badge.stopped { color: var(--ok); border-color: var(--ok); }
-.badge.live { color: var(--danger); border-color: var(--danger); }
-.games-list td { vertical-align: top; padding-top: .4rem; padding-bottom: .4rem; }
-.games-list tr.current td { background: var(--select); }
-.games-list .hint { color: var(--muted); font-size: .8rem; margin: 0; }
-.games-list .toolbar { margin: 0; display: flex; gap: .4rem; flex-wrap: wrap; }
