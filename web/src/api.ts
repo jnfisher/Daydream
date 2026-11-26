@@ -125,6 +125,10 @@ export interface PublishStep {
   /** `yours` is for the sysop to do (start the game again). */
   state: 'waiting' | 'running' | 'done' | 'failed' | 'skipped' | 'yours';
   log: string[];
+  /** When the countdown under way ends, in seconds since 1970. */
+  until?: number;
+  /** The step may be called off now (a countdown, or waiting for the sysop). */
+  cancel?: boolean;
 }
 
 export type PublishWayId = 'update' | 'now';
@@ -177,7 +181,47 @@ export interface PublishPlan {
   /** The way to offer first. */
   way: PublishWayId | null;
   checks: PublishCheck[];
+  /** silvermere's remote control, when the world is silvermere's. */
+  control: GameControl | null;
   job: PublishJob | null;
+}
+
+/** A player in silvermere's game, as its admin API lists them. */
+export interface Player {
+  name: string;
+  level: number;
+  class: string;
+  race: string;
+  idle_secs: number;
+}
+
+/** Running the game from Daydream: silvermere's admin API and what starts it (`/api/control`). */
+export interface GameControl {
+  engine: string | null;
+  running?: boolean;
+  error?: string | null;
+  /** Its admin API, and where Daydream learned it: `set` by hand, `silvermere.toml`, `default`, `unknown`. */
+  admin?: string | null;
+  admin_from?: 'set' | 'silvermere.toml' | 'default' | 'unknown';
+  /** Its `/healthz` answered. */
+  answers?: boolean;
+  token?: boolean;
+  token_state?: 'none' | 'unchecked' | 'ok' | 'unknown' | 'no-read';
+  token_text?: string;
+  players?: Player[] | null;
+  planned?: { at: string; in_secs: number } | null;
+  /** What starts it again, when Daydream found it. */
+  start?: { kind: 'systemd-user' | 'systemd' | 'launchd' | 'process'; command: string; can: boolean } | null;
+  /** A publish starts it again. */
+  autostart?: boolean;
+  /** The admin API's address may be changed here. */
+  custom?: boolean;
+}
+
+/** How silvermere warns the players before it stops for a publish. */
+export interface PublishWarn {
+  in_secs: number;
+  message: string;
 }
 
 const t = (table: string) => `/api/tables/${encodeURIComponent(table)}`;
@@ -198,9 +242,14 @@ export const api = {
   remove: (table: string, key: Cell[]) => call<Report>('DELETE', `${t(table)}/row${k(key)}`),
   changes: () => call<ChangeList>('GET', '/api/changes'),
   publishPlan: () => call<PublishPlan>('GET', '/api/publish'),
-  publish: (way: PublishWayId) => call<PublishJob>('POST', '/api/publish', { way }),
+  publish: (way: PublishWayId, warn?: PublishWarn) => call<PublishJob>('POST', '/api/publish', { way, warn }),
   publishJob: () => call<PublishJob | null>('GET', '/api/publish/job'),
   cancelPublish: () => call<{ cancelled: boolean }>('POST', '/api/publish/cancel', {}),
+  control: () => call<GameControl>('GET', '/api/control'),
+  /** Changes the open game's admin API, token or whether a publish starts it again (`""` clears). */
+  setControl: (body: { admin?: string; token?: string; autostart?: boolean }) => call<GameControl>('PUT', '/api/control', body),
+  /** Tells everyone in the game. */
+  say: (text: string) => call<{ delivered: number }>('POST', '/api/control/say', { text }),
   /** Puts records back as they were when the realm was last read or published. */
   revert: (body: { changes: { stem: string; id: number }[] } | { all: true }) =>
     call<{ reverted: number; failed: { stem: string; id: number; why: string }[] }>('POST', '/api/changes/revert', body),

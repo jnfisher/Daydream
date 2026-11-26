@@ -78,15 +78,25 @@ pub fn write_saved(realm_dir: &Path, saved: &Saved) -> std::io::Result<()> {
     write_private(&path, &serde_json::to_vec_pretty(saved)?)
 }
 
-/// Writes a file only its owner may read (a silvermere URL can hold a password).
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, bytes)?;
+/// Writes a file only its owner may read (a silvermere URL can hold a password, the
+/// control settings an admin token): made so from the start, and made so again when it was
+/// there before.
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
-    Ok(())
+    file.write_all(bytes)
 }
 
 /// A workspace folder.

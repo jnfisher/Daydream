@@ -82,7 +82,7 @@ how it gets into the game, step by step, the ways the game allows:
 |---|---|---|
 | Worldgroup, The Major BBS | **At the next start**, with the game running | check, back up the update file, write it; MajorMUD merges it at its next start or nightly cleanup |
 | | **Now, with the game stopped** | check, wait while you stop the game, back up each file about to change, write only the changes (and the update file), and you start it again |
-| silvermere | **Now, with silvermere stopped** | check, wait for its writer lock, back up the database (SQLite), write the world, and you start it again |
+| silvermere | **Now** | check, warn the players (a countdown you choose: now, 1, 5 or 15 minutes), shut down (silvermere saves every character), back up the database (SQLite), write the world, start it again and wait until it answers. Without an admin token: wait while you stop it, and you start it again |
 | MBBSEmu (its own `.db` files) | none | every save is in the game already |
 
 The update file carries edits and new records of the ten kinds it holds. It cannot delete or
@@ -91,11 +91,26 @@ changes it (what lies on the floors, shop stock, kill timers, a gang's shop, an 
 to keep): the page names each change it cannot carry, and those publish now instead.
 
 Hold the button down until it fills, or press Enter. Publishing goes on in the background
-wherever you go in Daydream, the top bar's button follows it, and **Cancel** stops it while
-it still waits for the game to stop. Backups go in a `daydream-backup-<date>-<time>` folder
-beside the files. The server answers the same at `GET /api/publish` (the plan),
-`POST /api/publish` (`{"way": "update"}` or `"now"`), `GET /api/publish/job` and
-`POST /api/publish/cancel`.
+wherever you go in Daydream, the top bar's button follows it, **Cancel** stops it while it
+waits for the game to stop, and **Call it off** stops silvermere's countdown (silvermere tells
+the players). Backups go in a `daydream-backup-<date>-<time>` folder beside the files. The
+server answers the same at `GET /api/publish` (the plan), `POST /api/publish`
+(`{"way": "update"}` or `"now"`, for silvermere with `"warn": {"in_secs": 300, "message":
+"..."}`), `GET /api/publish/job` and `POST /api/publish/cancel`.
+
+**silvermere's admin API** lets Daydream warn the players, stop silvermere and start it again.
+Make a token where silvermere runs with `silvermere admin token new daydream --scopes
+read,write,admin`, add the `[[admin.tokens]]` block it prints to `silvermere.toml`, start
+silvermere again once (it reads its tokens when it starts), and paste the token on the
+Publish page's **Server** card. Daydream keeps it in its workspace (`control/<game>.json`,
+mode 600), never shows it again, and sends it only to the admin API `silvermere.toml` names
+(`[server] admin_bind`). To start silvermere again it uses what started it: its systemd unit
+(a system unit only when Daydream runs as root), its launchd agent, or the same command line
+in the same folder when it was started by hand (its output goes to `control/<game>.log`).
+Daydream runs only what it found running silvermere, never a command it is sent, and the
+**Start it again** switch turns that off. The card also says something to everyone in the
+game. Routes: `GET` and `PUT /api/control` (`{"token", "autostart", "admin"}`) and
+`POST /api/control/say` (`{"text"}`).
 
 ### Finding your way
 

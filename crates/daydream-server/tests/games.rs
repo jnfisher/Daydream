@@ -790,3 +790,271 @@ async fn the_mcp_server_connects_with_no_game_open_and_opens_one() {
     .await;
     assert_eq!(tables["result"]["isError"], false, "{tables}");
 }
+
+/// silvermere published end to end, as a sysop with an admin token has it: told to warn the
+/// players (nobody is in the game, so it stops at once), silvermere saves and stops, the
+/// world is written, and Daydream starts it again with the command line it ran with. Needs
+/// the stock world and `SILVERMERE_BIN` (CI keeps both); skipped without the binary.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn silvermere_is_published_and_started_again() {
+    let Some(bin) = silvermere_bin() else {
+        eprintln!("SILVERMERE_BIN is not set: skipped");
+        return;
+    };
+    let vir = daydream_wcc::stock_files::vir_dir(None).unwrap_or_else(|e| {
+        panic!("the test needs the stock distribution and could not get it: {e}")
+    });
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    daydream_store::realm::convert_dir(&vir, &src).unwrap();
+    let install = tmp.path().join("games").join("silvermere");
+    let (token, admin_port) = silvermere_install(&bin, &install);
+    let url = daydream_silvermere::database_url(
+        &install.join("data/silvermere.db").display().to_string(),
+    );
+    let realm = daydream_store::Realm::open(&src).unwrap();
+    daydream_silvermere::export(&realm, &url, &daydream_silvermere::ExportOptions::default())
+        .await
+        .unwrap();
+
+    let app = daydream_server::router_with(
+        None,
+        Options {
+            games: Config {
+                workspace: Some(tmp.path().join("workspace")),
+                search: vec![tmp.path().join("games")],
+                default_search: false,
+                allow_any_source: false,
+                ..Config::default()
+            },
+            ..Options::default()
+        },
+    );
+    let (_, list) = call(&app, "GET", "/api/games", None, None).await;
+    let id = game(&list, "silvermere")["id"].clone();
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/api/games/open",
+        Some(json!({ "id": id })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    publish_with_silvermere_running(&app, &bin, &install, &token, admin_port).await;
+}
+
+/// A silvermere installation at `install`, as a sysop sets one up: `silvermere.toml` with an
+/// admin API on a free port and an admin token for Daydream, which `silvermere admin token
+/// new` made. The token, and the admin API's port.
+fn silvermere_install(bin: &Path, install: &Path) -> (String, u16) {
+    std::fs::create_dir_all(install.join("data")).unwrap();
+    let made = std::process::Command::new(bin)
+        .current_dir(install)
+        .args(["admin", "token", "new", "daydream"])
+        .args(["--scopes", "read,write,admin"])
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&made.stdout).into_owned();
+    assert!(
+        made.status.success(),
+        "{out}{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    let token = out
+        .lines()
+        .find_map(|l| l.strip_prefix("Token (shown once, store it now):"))
+        .unwrap_or_else(|| panic!("no token in {out}"))
+        .trim()
+        .to_string();
+    let block = &out[out
+        .find("[[admin.tokens]]")
+        .expect("the [[admin.tokens]] block")..];
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    std::fs::write(
+        install.join("silvermere.toml"),
+        format!(
+            "[server]\ntelnet_bind = \"127.0.0.1:0\"\nadmin_bind = \"127.0.0.1:{port}\"\n\
+             web_bind = \"\"\n\n{block}"
+        ),
+    )
+    .unwrap();
+    (token, port)
+}
+
+/// Whether silvermere's admin API at `port` answers.
+fn answers(port: u16) -> bool {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .timeout_global(Some(std::time::Duration::from_secs(2)))
+        .build()
+        .into();
+    agent
+        .get(&format!("http://127.0.0.1:{port}/healthz"))
+        .call()
+        .is_ok()
+}
+
+/// The silvermere a test started, and the one Daydream started again after it, stopped
+/// when dropped (by the pid in its lock file).
+struct Silvermere {
+    first: std::process::Child,
+    lock: PathBuf,
+}
+
+impl Drop for Silvermere {
+    fn drop(&mut self) {
+        let _ = self.first.kill();
+        let _ = self.first.wait();
+        let pid: String = std::fs::read_to_string(&self.lock)
+            .unwrap_or_default()
+            .chars()
+            .filter(char::is_ascii_digit)
+            .collect();
+        if !pid.is_empty() {
+            let _ = std::process::Command::new("kill").arg(&pid).status();
+        }
+    }
+}
+
+/// With the silvermere game at `install` open in `app` and stopped: starts it in its folder
+/// as a sysop would, gives Daydream the admin token and lets it start silvermere again, then
+/// edits an item and publishes, and checks every step went through and silvermere answers
+/// again.
+async fn publish_with_silvermere_running(
+    app: &axum::Router,
+    bin: &Path,
+    install: &Path,
+    token: &str,
+    admin_port: u16,
+) {
+    let log = std::fs::File::create(install.join("serve.log")).unwrap();
+    let first = std::process::Command::new(bin)
+        .current_dir(install)
+        .arg("serve")
+        .stdin(std::process::Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .unwrap();
+    let running = Silvermere {
+        first,
+        lock: install.join("data/silvermere.db.lock"),
+    };
+    let started = std::time::Instant::now();
+    while !answers(admin_port) {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(60),
+            "silvermere did not start:\n{}",
+            std::fs::read_to_string(install.join("serve.log")).unwrap_or_default()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    // before the token, the plan waits for the sysop to stop it
+    let (_, plan) = call(app, "GET", "/api/publish", None, None).await;
+    assert_eq!(plan["control"]["token_state"], "none", "{plan}");
+    let steps = |plan: &Value| -> Vec<String> {
+        plan["ways"][0]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(!steps(&plan).contains(&"warn".to_string()), "{plan}");
+
+    let (status, control) = call(
+        app,
+        "PUT",
+        "/api/control",
+        Some(json!({ "token": token, "autostart": true })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{control}");
+    assert_eq!(control["token_state"], "ok", "{control}");
+    assert_eq!(control["start"]["kind"], "process", "{control}");
+    assert_eq!(control["players"], json!([]), "{control}");
+    // the token is never given back
+    assert!(!control.to_string().contains(token));
+
+    // an edit to publish
+    let (_, rows) = call(app, "GET", "/api/tables/Items/rows", None, None).await;
+    let key = rows["rows"][0][0].clone();
+    let uri = format!("/api/tables/Items/row?key={}", url_escape(&key.to_string()));
+    let (status, saved) = call(
+        app,
+        "PUT",
+        &uri,
+        Some(json!({"values": {"Name": "published sword"}})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+
+    let (_, plan) = call(app, "GET", "/api/publish", None, None).await;
+    assert_eq!(
+        steps(&plan),
+        ["check", "warn", "stop", "backup", "write", "start"],
+        "{plan}"
+    );
+    let (status, job) = call(
+        app,
+        "POST",
+        "/api/publish",
+        Some(json!({"way": "now", "warn": {"in_secs": 300, "message": "a test"}})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    let started = std::time::Instant::now();
+    let job = loop {
+        let (_, job) = call(app, "GET", "/api/publish/job", None, None).await;
+        if job["state"] != "running" {
+            break job;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(240),
+            "the publish did not end: {job}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    };
+    assert_eq!(job["state"], "done", "{job}");
+    for step in job["steps"].as_array().unwrap() {
+        assert_eq!(step["state"], "done", "{job}");
+    }
+    assert!(
+        job["result"].as_str().unwrap().contains("running again"),
+        "{job}"
+    );
+    // nobody was in the game, so no countdown
+    assert!(
+        job["steps"][1]["log"][0]
+            .as_str()
+            .unwrap()
+            .contains("Nobody is in the game"),
+        "{job}"
+    );
+    assert!(answers(admin_port), "{job}");
+    let (_, changes) = call(app, "GET", "/api/changes", None, None).await;
+    assert_eq!(changes["changes"], json!([]), "{changes}");
+    drop(running);
+}
+
+/// `text` made safe for a query string.
+fn url_escape(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}

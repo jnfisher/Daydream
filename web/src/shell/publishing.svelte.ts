@@ -7,9 +7,10 @@ import Database from '@lucide/svelte/icons/database';
 import FileText from '@lucide/svelte/icons/file-text';
 import HardDrive from '@lucide/svelte/icons/hard-drive';
 import HeartPulse from '@lucide/svelte/icons/heart-pulse';
+import Megaphone from '@lucide/svelte/icons/megaphone';
 import Play from '@lucide/svelte/icons/play';
 import Power from '@lucide/svelte/icons/power';
-import { api, type PublishJob, type PublishPlan, type PublishStep, type PublishWayId } from '../api';
+import { api, type PublishJob, type PublishPlan, type PublishStep, type PublishWarn, type PublishWayId } from '../api';
 import { sfx } from './prefs.svelte';
 import { app, refreshNow, refreshStatus } from './state.svelte';
 import { messageOf, toast } from './toasts.svelte';
@@ -43,6 +44,8 @@ export function stepIcon(step: PublishStep, way: PublishWayId): typeof Power {
   switch (step.id) {
     case 'check':
       return HeartPulse;
+    case 'warn':
+      return Megaphone;
     case 'stop':
       return Power;
     case 'backup':
@@ -54,6 +57,18 @@ export function stepIcon(step: PublishStep, way: PublishWayId): typeof Power {
     default:
       return Clock;
   }
+}
+
+/** How long silvermere's players may be given before it closes, in minutes (0: now). */
+export const WARN_MINUTES = [0, 1, 5, 15];
+
+/** Why silvermere closes, unless the sysop says otherwise (the server's own default too). */
+export const DEFAULT_MESSAGE = 'a world update, back in a minute or two';
+
+/** What silvermere's players read first, `minutes` before it closes. */
+export function warning(minutes: number, why: string): string {
+  if (!minutes) return `The server shuts down now: ${why}`;
+  return `The server will shut down in ${minutes} minute${minutes === 1 ? '' : 's'}: ${why}`;
 }
 
 /** The game an engine publishes into, as a sysop calls it. */
@@ -91,19 +106,21 @@ function ended(job: PublishJob): void {
   void refreshNow();
   void refreshStatus();
   void loadPlan();
-  if (job.state === 'done') sfx('tada');
+  // written, but a step after it went wrong (silvermere did not come back)
+  const troubled = job.steps.some((s) => s.state === 'failed');
+  if (job.state === 'done') sfx(troubled ? 'nope' : 'tada');
   else if (job.state === 'failed') sfx('nope');
   // shown over the page: the sheet says it; elsewhere a toast does
   if (pub.sheet) return;
   const show = () => (pub.sheet = true);
-  if (job.state === 'done') toast(job.result ?? 'Published.', { action: 'See how it went', onAction: show, ms: 9000 });
+  if (job.state === 'done') toast(job.result ?? 'Published.', { kind: troubled ? 'error' : 'info', action: 'See how it went', onAction: show, ms: 9000 });
   else if (job.state === 'failed') toast(`Publishing stopped: ${job.error ?? 'something went wrong'}`, { kind: 'error', action: 'Show me', onAction: show });
 }
 
-/** Starts publishing `way`. */
-export async function publish(way: PublishWayId): Promise<void> {
+/** Starts publishing `way`; `warn`: how silvermere warns its players first. */
+export async function publish(way: PublishWayId, warn?: PublishWarn): Promise<void> {
   try {
-    pub.job = await api.publish(way);
+    pub.job = await api.publish(way, warn);
     pub.sheet = true;
     follow();
   } catch (e) {
@@ -113,11 +130,11 @@ export async function publish(way: PublishWayId): Promise<void> {
   }
 }
 
-/** Stops a publish that is waiting for the game to stop. */
+/** Calls off a publish while it may be: silvermere's countdown, or waiting for the game to stop. */
 export async function cancelPublish(): Promise<void> {
   try {
     const r = await api.cancelPublish();
-    if (!r.cancelled) toast('It is past waiting now, so it carries on.');
+    if (!r.cancelled) toast('It is past that now, so it carries on.');
   } catch (e) {
     toast(messageOf(e), { kind: 'error' });
   }

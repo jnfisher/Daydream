@@ -417,6 +417,29 @@ pub fn silvermere_url(toml: &str, dir: &Path) -> Option<String> {
         .map(|f| format!("sqlite:{}", f.display()))
 }
 
+/// The string `key` of `[section]` (`""`: the top level) in a settings file, read as
+/// [`silvermere_url`] reads one: no TOML library, just the lines.
+pub fn toml_get(toml: &str, section: &str, key: &str) -> Option<String> {
+    let mut current = String::new();
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            current = line
+                .trim_matches(|c| c == '[' || c == ']')
+                .trim()
+                .to_string();
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if current == section && k.trim() == key {
+            return toml_string(v);
+        }
+    }
+    None
+}
+
 /// A TOML value as a string: a quoted string's contents (comment after it dropped).
 fn toml_string(v: &str) -> Option<String> {
     let v = v.trim();

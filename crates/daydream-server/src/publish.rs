@@ -7,7 +7,7 @@
 //! |---|---|---|
 //! | Worldgroup, The Major BBS (`WCC*.DAT`) | `update`: at the next start | check, back up, write the update file, live at the next start or cleanup |
 //! | | `now`: with the game stopped | check, stop the game (Daydream waits), back up, write, start it again |
-//! | silvermere | `now` | check, stop silvermere (Daydream waits for its writer lock), back up, write, start it again |
+//! | silvermere | `now` | check, warn the players (with an admin token), stop silvermere (Daydream waits for its writer lock), back up, write, start it again |
 //!
 //! A world edited where it is (MBBSEmu's `.db` files) has nothing to publish.
 //!
@@ -20,25 +20,32 @@
 //!
 //! Daydream cannot stop or start Worldgroup or The Major BBS, so publishing now waits while the
 //! sysop stops the game, carries on by itself once it has, and leaves starting it again to
-//! the sysop. One publish runs at a time, in the background, and the page follows it.
+//! the sysop. silvermere has a remote control ([`crate::control`]): with an admin token
+//! Daydream has it warn the players, count down (`warn.in_secs`, at once when nobody is in
+//! the game; Cancel calls it off and silvermere tells the players) and stop, and it starts
+//! silvermere again the way it was started, then waits until it answers. Without a token
+//! the sysop stops it, and Daydream still starts it again. A silvermere that was not running
+//! stays stopped. One publish runs at a time, in the background, and the page follows it.
 //!
 //! | Route | Answer |
 //! |---|---|
-//! | `GET /api/publish` | the plan: `{engine, game, location, running, changes, since, ways: [{id, title, summary, ready, why, not_carried, steps, button}], way, checks, job}` |
-//! | `POST /api/publish` | `{way}`: starts publishing that way; the job |
+//! | `GET /api/publish` | the plan: `{engine, game, location, running, changes, since, ways: [{id, title, summary, ready, why, not_carried, steps, button}], way, checks, control, job}` (`control`: silvermere's, as `GET /api/control` answers) |
+//! | `POST /api/publish` | `{way, warn?: {in_secs, message}}`: starts publishing that way; the job |
 //! | `GET /api/publish/job` | the job under way or the last one (`null` before any) |
-//! | `POST /api/publish/cancel` | stops a job that is still waiting for the game to stop |
+//! | `POST /api/publish/cancel` | calls off a job while its step may be (`cancel`): a countdown, or waiting for the sysop |
 //!
 //! A job is `{id, way, engine, game, state, started, finished, steps: [{id, title, detail,
-//! state, log}], skipped, error, result}`: `state` is `running`, `done`, `failed` or
-//! `cancelled`, a step's is `waiting`, `running`, `done`, `failed`, `skipped` or `yours` (for
-//! the sysop to do), and `skipped` lists the edits that could not be written, which stay among
-//! the changes.
+//! state, log, until?, cancel?}], skipped, error, result}`: `state` is `running`, `done`,
+//! `failed` or `cancelled`, a step's is `waiting`, `running`, `done`, `failed`, `skipped` or
+//! `yours` (for the sysop to do), `until` is when a countdown ends (seconds since 1970) and
+//! `cancel` says the step may be called off now; `skipped` lists the edits that could not be
+//! written, which stay among the changes. A job that wrote everything is `done` even when
+//! starting the game again failed: that step says so, and so does `result`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::State;
@@ -49,11 +56,24 @@ use daydream_types::records::layout::LayoutSet;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::control::{self, Admin, Live, Starter, Token};
 use crate::games::{Game, Source, running};
 use crate::{ApiError, AppState, blocking};
 
 /// How often a waiting step looks at the game again.
 const POLL: Duration = Duration::from_secs(2);
+
+/// How long silvermere has to stop once its countdown is over.
+const STOP_WITHIN: Duration = Duration::from_secs(120);
+
+/// How long silvermere has to answer once it was started again.
+const ANSWER_WITHIN: Duration = Duration::from_secs(120);
+
+/// The longest countdown a publish asks for.
+const MAX_WARN: u64 = 3600;
+
+/// Why silvermere closes, when the page gives no reason.
+pub const DEFAULT_MESSAGE: &str = "a world update, back in a minute or two";
 
 /// What the open world publishes into.
 #[derive(Debug, Clone)]
@@ -139,6 +159,12 @@ pub struct Step {
     /// `waiting`, `running`, `done`, `failed`, `skipped`, or `yours` (for the sysop to do).
     pub state: &'static str,
     pub log: Vec<String>,
+    /// When the countdown under way ends, in seconds since 1970.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
+    /// The step may be called off now.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub cancel: bool,
 }
 
 fn step(id: &'static str, title: impl Into<String>, detail: impl Into<String>) -> Step {
@@ -148,6 +174,8 @@ fn step(id: &'static str, title: impl Into<String>, detail: impl Into<String>) -
         detail: detail.into(),
         state: "waiting",
         log: Vec::new(),
+        until: None,
+        cancel: false,
     }
 }
 
@@ -156,8 +184,9 @@ fn has_update(realm: &Realm) -> bool {
     matches!(daydream_store::update::UpdateFile::find(realm), Ok(Some(_)))
 }
 
-/// The steps of publishing `way` into `engine`; `update`: the world has an update file.
-fn steps(engine: &Engine, way: Way, update: bool) -> Vec<Step> {
+/// The steps of publishing `way` into `engine`; `update`: the world has an update file;
+/// `live`: what Daydream knows of a silvermere now.
+fn steps(engine: &Engine, way: Way, update: bool, live: Option<&Live>) -> Vec<Step> {
     let name = engine.name();
     let upd = engine.update_file();
     let check = step(
@@ -228,15 +257,34 @@ fn steps(engine: &Engine, way: Way, update: bool) -> Vec<Step> {
                 "Start it the way you usually do.",
             ),
         ],
-        (Engine::Silvermere { url }, _) => vec![
-            check,
-            step(
-                "stop",
-                "Stop silvermere",
-                "Stop it with silvermere sysop shutdown, daydream-stack edit, or its service. \
-                 Daydream waits for its writer lock, and carries on once it is free.",
-            ),
-            step(
+        (Engine::Silvermere { url }, _) => {
+            let stopper = live.is_some_and(|l| l.stopper().is_some());
+            let mut out = vec![check];
+            if stopper {
+                out.push(step(
+                    "warn",
+                    "Warn the players",
+                    "silvermere tells everyone in the game when it closes, and again as the \
+                     time comes closer. With nobody in the game it stops at once.",
+                ));
+            }
+            out.push(if stopper {
+                step(
+                    "stop",
+                    "Shut down",
+                    "silvermere saves every character and stops. Daydream waits for its \
+                     writer lock to be let go.",
+                )
+            } else {
+                step(
+                    "stop",
+                    "Stop silvermere",
+                    "Stop it with silvermere sysop shutdown, daydream-stack edit, or its \
+                     service. Daydream waits for its writer lock, and carries on once it is \
+                     free.",
+                )
+            });
+            out.push(step(
                 "backup",
                 "Back up",
                 if daydream_silvermere::sqlite_path(url).is_some() {
@@ -244,41 +292,87 @@ fn steps(engine: &Engine, way: Way, update: bool) -> Vec<Step> {
                 } else {
                     "Back up PostgreSQL your usual way: Daydream copies only SQLite files."
                 },
-            ),
-            step(
+            ));
+            out.push(step(
                 "write",
                 "Write the world",
                 "The world's tables are written from the working copy. Players, what lies on \
                  the floors and the rest of what play changed stay as they are.",
-            ),
-            step(
+            ));
+            let starter = live.and_then(|l| l.starter.as_ref());
+            let auto = live.is_some_and(|l| l.autostart);
+            out.push(step(
                 "start",
                 "Start silvermere again",
-                "Start it with daydream-stack play, or its service.",
-            ),
-        ],
+                match starter {
+                    Some(Starter::Process { .. }) if auto => "Daydream runs the command line it \
+                                                              was started with again, in its \
+                                                              folder, then waits until it answers."
+                        .into(),
+                    Some(st) if auto => format!(
+                        "Daydream starts it with {}, then waits until it answers.",
+                        st.command()
+                    ),
+                    Some(st) => format!(
+                        "Start it with {}, or let Daydream do it: switch that on under Server.",
+                        st.command()
+                    ),
+                    None => "Start it the way you usually do.".into(),
+                },
+            ));
+            out
+        }
         (Engine::InPlace, _) => Vec::new(),
     }
 }
 
 // ---- the plan ------------------------------------------------------------------------------
 
-/// Whether a game is running, as the plan shows it.
-fn running_json(engine: &Engine) -> Value {
-    match engine {
-        Engine::Wcc { dir, .. } => {
+/// Whether a game is running, as the plan shows it; `live`: silvermere's, looked at already.
+fn running_json(engine: &Engine, live: Option<&Live>) -> Value {
+    match (engine, live) {
+        (Engine::Wcc { dir, .. }, _) => {
             let r = running::check(dir);
             json!({ "running": r.running(), "by": r.by, "elsewhere": r.elsewhere })
         }
-        Engine::Silvermere { url } => {
-            match daydream_silvermere::block_on(daydream_silvermere::info(url)) {
-                Ok(info) => {
-                    json!({ "running": info.running.is_some(), "by": info.running, "elsewhere": [] })
-                }
-                Err(e) => json!({ "running": null, "error": e.to_string(), "elsewhere": [] }),
+        (Engine::Silvermere { .. }, Some(live)) => match &live.error {
+            None => {
+                let by = live
+                    .running
+                    .as_deref()
+                    .map(|h| match control::holder_pid(h) {
+                        Some(pid) => format!("pid {pid}"),
+                        None => h.to_string(),
+                    });
+                json!({ "running": live.running.is_some(), "by": by, "elsewhere": [] })
             }
+            Some(e) => json!({ "running": null, "error": e, "elsewhere": [] }),
+        },
+        _ => json!({ "running": null, "elsewhere": [] }),
+    }
+}
+
+/// How the one way into silvermere goes, as its plan says.
+fn silvermere_summary(live: Option<&Live>) -> String {
+    let stopper = live.is_some_and(|l| l.stopper().is_some());
+    let auto = live.is_some_and(|l| l.autostart && l.starter.is_some());
+    match (stopper, auto) {
+        (true, true) => "Daydream has silvermere warn the players and stop, writes its world from \
+                         your working copy, and starts it again. A minute or two of downtime."
+            .into(),
+        (true, false) => {
+            "Daydream has silvermere warn the players and stop, then writes its world \
+                          from your working copy. You start it again."
+                .into()
         }
-        Engine::InPlace => json!({ "running": null, "elsewhere": [] }),
+        (false, true) => {
+            "You stop silvermere while Daydream waits. Then Daydream writes its world \
+                          from your working copy, and starts it again."
+                .into()
+        }
+        (false, false) => "silvermere is stopped while Daydream waits, then its world is written \
+                           from your working copy, and you start it again."
+            .into(),
     }
 }
 
@@ -327,8 +421,18 @@ fn update_blocked(
     Ok((why, not))
 }
 
-/// What the Publish page shows before anything is published.
-fn plan(s: &AppState) -> Result<Value, ApiError> {
+/// What the Publish page shows before anything is published, and what a publish starts
+/// from.
+struct Plan {
+    json: Value,
+    engine: Engine,
+    /// silvermere as it is now.
+    live: Option<Live>,
+    /// The world has an update file.
+    update: bool,
+}
+
+fn plan(s: &AppState) -> Result<Plan, ApiError> {
     let cur = s.current();
     let dir = s.realm_dir()?;
     let realm = Realm::open(&dir)?;
@@ -336,7 +440,14 @@ fn plan(s: &AppState) -> Result<Value, ApiError> {
     let changes = daydream_store::changes::list(&realm)?;
     let n = changes.changes.len();
     let empty = n == 0 && changes.since.is_some();
-    let running = running_json(&engine);
+    let live = match (&engine, cur.game.as_ref()) {
+        (Engine::Silvermere { url }, Some(game)) => Some(Live::look(
+            url,
+            &control::load(&s.games.workspace(), &game.source),
+        )),
+        _ => None,
+    };
+    let running = running_json(&engine, live.as_ref());
     let is_running = running["running"].as_bool() == Some(true);
 
     let mut checks: Vec<Value> = Vec::new();
@@ -365,15 +476,81 @@ fn plan(s: &AppState) -> Result<Value, ApiError> {
     if let Some(by) = running["by"].as_str().filter(|_| is_running) {
         check(
             "note",
-            match &engine {
-                Engine::Wcc { .. } => format!(
+            match (&engine, live.as_ref()) {
+                (Engine::Wcc { .. }, _) => format!(
                     "{} is running ({by}). Publishing at the next start needs no stop; \
                      publishing now waits for it to stop.",
                     engine.name()
                 ),
-                _ => format!("silvermere is running ({by}): publishing waits for it to stop."),
+                (_, Some(l)) if l.stopper().is_some() => match l.players.as_ref().map(Vec::len) {
+                    Some(0) => "silvermere is running, with nobody in the game: publishing \
+                                stops it at once."
+                        .into(),
+                    Some(k) => format!(
+                        "silvermere is running, with {k} player{} in the game: publishing \
+                         warns them, then stops it.",
+                        if k == 1 { "" } else { "s" }
+                    ),
+                    None => {
+                        "silvermere is running: publishing warns the players, then stops it.".into()
+                    }
+                },
+                _ => format!("silvermere is running ({by}): publishing waits for you to stop it."),
             },
         );
+    }
+    if let Some(l) = &live {
+        match l.token {
+            Token::Unknown => check(
+                "warn",
+                "silvermere does not know Daydream's admin token yet: it reads its tokens when \
+                 it starts. This publish waits while you stop silvermere, and the next one can \
+                 do it all."
+                    .into(),
+            ),
+            Token::None if is_running => check(
+                "note",
+                "Daydream has no admin token for silvermere, so you stop it yourself. Add one \
+                 under Server to let Daydream warn the players and stop it."
+                    .into(),
+            ),
+            _ => {}
+        }
+        if let Some(admin) = l.admin.as_ref().filter(|_| is_running && !l.answers) {
+            check(
+                "note",
+                format!(
+                    "silvermere's admin API does not answer at {}, so you stop silvermere yourself.",
+                    admin.base()
+                ),
+            );
+        }
+        if let Some(planned) = &l.planned {
+            let when = planned["at"]
+                .as_str()
+                .and_then(|at| at.parse::<jiff::Timestamp>().ok())
+                .map(|at| (at.as_second() - jiff::Timestamp::now().as_second()).max(0))
+                .map_or_else(
+                    || "soon".to_string(),
+                    // whole minutes are close enough this far off
+                    |secs| {
+                        let secs = secs as u64;
+                        let secs = if secs >= 120 {
+                            (secs + 30) / 60 * 60
+                        } else {
+                            secs
+                        };
+                        format!("in {}", how_long(secs))
+                    },
+                );
+            check(
+                "note",
+                format!(
+                    "silvermere plans to shut down already, {when}: publishing replaces that \
+                     with its own countdown."
+                ),
+            );
+        }
     }
     if let Some(e) = running["error"].as_str() {
         check("warn", format!("Daydream could not look at the game: {e}"));
@@ -412,9 +589,7 @@ fn plan(s: &AppState) -> Result<Value, ApiError> {
             Way::Now => (
                 format!("Now, with {} stopped", engine.name()),
                 match &engine {
-                    Engine::Silvermere { .. } => "silvermere is stopped, its world written, and \
-                                                  started again."
-                        .to_string(),
+                    Engine::Silvermere { .. } => silvermere_summary(live.as_ref()),
                     _ => format!(
                         "{} is stopped from its console while Daydream waits, then the \
                          changes go straight into its files. Deletions, renumbering and \
@@ -433,7 +608,7 @@ fn plan(s: &AppState) -> Result<Value, ApiError> {
             "ready": why.is_none() && !blocked,
             "why": why,
             "not_carried": not_carried,
-            "steps": steps(&engine, way, update),
+            "steps": steps(&engine, way, update, live.as_ref()),
         }));
     }
     let way = ways
@@ -443,7 +618,7 @@ fn plan(s: &AppState) -> Result<Value, ApiError> {
         .map(|w| w["id"].clone());
     let label = cur.game.as_ref().map(|g| g.label.clone());
     let location = cur.game.as_ref().map(|g| g.source.shown());
-    Ok(json!({
+    let json = json!({
         "engine": engine.id(),
         "name": engine.name(),
         "game": label,
@@ -454,8 +629,15 @@ fn plan(s: &AppState) -> Result<Value, ApiError> {
         "ways": ways,
         "way": way,
         "checks": checks,
+        "control": live.as_ref().map(|l| l.json(s.custom_allowed())),
         "job": s.publish.snapshot(),
-    }))
+    });
+    Ok(Plan {
+        json,
+        engine,
+        live,
+        update,
+    })
 }
 
 // ---- the job -----------------------------------------------------------------------------
@@ -498,6 +680,22 @@ impl Job {
 
     fn set(&self, id: &str, state: &'static str) {
         self.step(id, |s| s.state = state);
+    }
+
+    fn has(&self, id: &str) -> bool {
+        self.lock().steps.iter().any(|s| s.id == id)
+    }
+
+    fn state_of(&self, id: &str) -> Option<&'static str> {
+        self.lock()
+            .steps
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.state)
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
     }
 
     fn log(&self, id: &str, line: impl Into<String>) {
@@ -575,6 +773,12 @@ struct Ctx {
     realm_dir: PathBuf,
     engine: Engine,
     way: Way,
+    /// silvermere as it was when the publish began.
+    live: Option<Live>,
+    /// How the players are warned.
+    warn: Warn,
+    /// Where a game Daydream starts by its command line writes its output.
+    log: PathBuf,
 }
 
 fn backup_dir(dir: &Path) -> PathBuf {
@@ -624,6 +828,7 @@ fn wait_stopped(job: &Job, engine: &Engine) -> Result<(), Stop> {
             Engine::InPlace => None,
         };
         let Some(by) = by else {
+            job.step("stop", |s| s.cancel = false);
             job.log(
                 "stop",
                 if told {
@@ -639,12 +844,246 @@ fn wait_stopped(job: &Job, engine: &Engine) -> Result<(), Stop> {
                 "stop",
                 format!("Waiting for {by} to stop. Daydream carries on by itself once it has."),
             );
+            job.step("stop", |s| s.cancel = true);
             told = true;
         }
-        if job.cancel.load(Ordering::Relaxed) {
+        if job.cancelled() {
             return Err(Stop::Cancelled);
         }
         std::thread::sleep(POLL);
+    }
+}
+
+/// `5 minutes`, `1 minute 30 seconds`, `10 seconds`.
+fn how_long(secs: u64) -> String {
+    let unit = |n: u64, one: &str| format!("{n} {one}{}", if n == 1 { "" } else { "s" });
+    let (m, s) = (secs / 60, secs % 60);
+    match (m, s) {
+        (0, s) => unit(s, "second"),
+        (m, 0) => unit(m, "minute"),
+        (m, s) => format!("{} {}", unit(m, "minute"), unit(s, "second")),
+    }
+}
+
+/// silvermere stopped for a publish: with its admin API and a token it warns the players,
+/// counts down and stops by itself; else Daydream waits while the sysop stops it. Whether
+/// it was running.
+fn stop_silvermere(job: &Job, url: &str, live: &Live, warn: &Warn) -> Result<bool, Stop> {
+    let has_warn = job.has("warn");
+    let holder = daydream_silvermere::block_on(daydream_silvermere::info(url))?.running;
+    let Some(holder) = holder else {
+        if has_warn {
+            job.log("warn", "silvermere is not running: nobody to warn.");
+            job.set("warn", "skipped");
+        }
+        job.set("stop", "running");
+        job.log("stop", "silvermere is not running.");
+        job.set("stop", "done");
+        return Ok(false);
+    };
+    let pid = control::holder_pid(&holder);
+    let asked = match live.admin.as_ref().filter(|_| has_warn) {
+        Some(admin) => warn_players(job, admin, warn)?,
+        None => false,
+    };
+    job.set("stop", "running");
+    wait_released(job, url, pid, asked)?;
+    job.set("stop", "done");
+    Ok(true)
+}
+
+/// Has silvermere warn the players and stop: at once when nobody is in the game, else when
+/// the countdown is over, which Cancel calls off. Whether silvermere took it; when it did
+/// not, the sysop stops it.
+fn warn_players(job: &Job, admin: &Admin, warn: &Warn) -> Result<bool, Stop> {
+    job.set("warn", "running");
+    let players = admin.who().ok().map(|p| p.len());
+    let in_secs = if players == Some(0) { 0 } else { warn.in_secs };
+    if in_secs == 0 && players != Some(0) && !warn.message.is_empty() {
+        // no countdown, so silvermere warns nobody before its own notice: say why first
+        let _ = admin.broadcast(&format!("The server shuts down now: {}", warn.message));
+    }
+    if let Err(e) = admin.shutdown(in_secs, &warn.message) {
+        job.log(
+            "warn",
+            format!("silvermere did not take the shutdown: {e}. Stop it yourself: Daydream waits."),
+        );
+        job.set("warn", "skipped");
+        return Ok(false);
+    }
+    job.log(
+        "warn",
+        match (players, in_secs) {
+            (Some(0), _) => "Nobody is in the game: silvermere stops at once.".to_string(),
+            (_, 0) => "silvermere stops now, and has told the players why.".to_string(),
+            (Some(k), secs) => format!(
+                "silvermere has told the {k} player{} in the game, and stops in {}.",
+                if k == 1 { "" } else { "s" },
+                how_long(secs)
+            ),
+            (None, secs) => format!(
+                "silvermere has told the players, and stops in {}.",
+                how_long(secs)
+            ),
+        },
+    );
+    if in_secs > 0 {
+        let until = now_secs() + in_secs;
+        job.step("warn", |s| {
+            s.until = Some(until);
+            s.cancel = true;
+        });
+        let end = Instant::now() + Duration::from_secs(in_secs);
+        while Instant::now() < end {
+            if job.cancelled() {
+                job.step("warn", |s| {
+                    s.until = None;
+                    s.cancel = false;
+                });
+                match admin.cancel_shutdown() {
+                    Ok(_) => job.log("warn", "Called off: silvermere told the players."),
+                    Err(e) => job.log(
+                        "warn",
+                        format!(
+                            "Daydream could not call it off ({e}): silvermere still stops when \
+                             the time is up. Nothing is written."
+                        ),
+                    ),
+                }
+                return Err(Stop::Cancelled);
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        job.step("warn", |s| s.cancel = false);
+    }
+    job.set("warn", "done");
+    Ok(true)
+}
+
+/// Waits until silvermere lets its writer lock go. Asked to stop (`asked`), it has
+/// [`STOP_WITHIN`]; else the sysop stops it, however long that takes, and Cancel calls the
+/// wait off. silvermere started again meanwhile (another `pid` holds the lock) ends the
+/// publish: what runs it restarts it, so Daydream would never have its turn.
+fn wait_released(job: &Job, url: &str, pid: Option<u32>, asked: bool) -> Result<(), Stop> {
+    let started = Instant::now();
+    let mut told = false;
+    loop {
+        let holder = daydream_silvermere::block_on(daydream_silvermere::info(url))?.running;
+        let Some(holder) = holder else {
+            job.step("stop", |s| s.cancel = false);
+            job.log(
+                "stop",
+                if asked {
+                    "silvermere has stopped, every character saved."
+                } else {
+                    "silvermere has stopped."
+                },
+            );
+            return Ok(());
+        };
+        if let (Some(was), Some(now)) = (pid, control::holder_pid(&holder))
+            && was != now
+        {
+            return Err(Stop::Failed(format!(
+                "silvermere started again by itself (pid {was}, now {now}): what runs it starts \
+                 it again when it stops, as Docker's restart policy and NSSM do. Stop it there, \
+                 then publish again. Nothing was written"
+            )));
+        }
+        if asked {
+            if started.elapsed() > STOP_WITHIN {
+                return Err(Stop::Failed(
+                    "silvermere has not stopped two minutes after it was asked to: look at its \
+                     log. Nothing was written"
+                        .into(),
+                ));
+            }
+        } else {
+            if !told {
+                let pid = pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
+                job.log(
+                    "stop",
+                    format!(
+                        "Waiting for silvermere{pid} to stop. Daydream carries on by itself \
+                         once it has."
+                    ),
+                );
+                job.step("stop", |s| s.cancel = true);
+                told = true;
+            }
+            if job.cancelled() {
+                return Err(Stop::Cancelled);
+            }
+        }
+        std::thread::sleep(if asked {
+            Duration::from_millis(500)
+        } else {
+            POLL
+        });
+    }
+}
+
+/// Starts silvermere again after a publish, as what ran it does, and waits until it answers.
+/// What went wrong, to tell, when it did not start or answer.
+fn start_silvermere(job: &Job, live: &Live, ran: bool, log: &Path) -> Option<String> {
+    if !ran {
+        job.log(
+            "start",
+            "silvermere was not running when the publish began, so it stays stopped.",
+        );
+        job.set("start", "skipped");
+        return None;
+    }
+    let Some(starter) = live.starter.as_ref().filter(|_| live.autostart) else {
+        job.set("start", "yours");
+        return None;
+    };
+    job.set("start", "running");
+    job.log("start", starter.command());
+    if let Err(e) = starter.start(log) {
+        job.log("start", e);
+        job.set("start", "failed");
+        return Some(format!(
+            "Daydream could not start it again: start it with {}.",
+            starter.command()
+        ));
+    }
+    let Some(admin) = &live.admin else {
+        job.log(
+            "start",
+            "Started. Daydream knows no admin API to ask whether it answers.",
+        );
+        job.set("start", "done");
+        return None;
+    };
+    let t0 = Instant::now();
+    loop {
+        if admin.health().is_ok() {
+            job.log(
+                "start",
+                format!(
+                    "silvermere answers again, {:.1} s after it was started.",
+                    t0.elapsed().as_secs_f32()
+                ),
+            );
+            job.set("start", "done");
+            return None;
+        }
+        if t0.elapsed() > ANSWER_WITHIN {
+            job.log(
+                "start",
+                format!("No answer at {} for two minutes.", admin.base()),
+            );
+            job.set("start", "failed");
+            return Some(match starter {
+                Starter::Process { .. } => format!(
+                    "it has not answered since Daydream started it: its output is in {}.",
+                    log.display()
+                ),
+                _ => "it has not answered since Daydream started it: look at its log.".into(),
+            });
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -675,11 +1114,19 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
     );
     job.set("check", "done");
 
-    // stop: wait for the sysop
+    // stop: silvermere stops when asked to; the other games wait for the sysop
+    let mut ran = false;
     if ctx.way == Way::Now {
-        job.set("stop", "running");
-        wait_stopped(job, &ctx.engine)?;
-        job.set("stop", "done");
+        match (&ctx.engine, &ctx.live) {
+            (Engine::Silvermere { url }, Some(live)) => {
+                ran = stop_silvermere(job, url, live, &ctx.warn)?;
+            }
+            _ => {
+                job.set("stop", "running");
+                wait_stopped(job, &ctx.engine)?;
+                job.set("stop", "done");
+            }
+        }
     }
 
     // back up and write, with no save in between
@@ -757,46 +1204,27 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
             }
         }
         Engine::Silvermere { url } => {
-            job.set("backup", "running");
-            match daydream_silvermere::sqlite_path(url) {
-                Some(p) => {
-                    let p = PathBuf::from(p);
-                    let backup = backup_dir(p.parent().unwrap_or(Path::new(".")));
-                    for f in [p.clone(), PathBuf::from(format!("{}-wal", p.display()))] {
-                        if f.exists() {
-                            copy_into(&f, &backup)?;
-                        }
-                    }
-                    job.log("backup", format!("Copied to {}.", backup.display()));
-                    job.set("backup", "done");
-                }
+            let written = write_silvermere(job, ctx, url, &realm);
+            // started again even when the write failed: the game is back as it was
+            let trouble = match &ctx.live {
+                Some(live) => start_silvermere(job, live, ran, &ctx.log),
                 None => {
-                    job.log("backup", "PostgreSQL: not copied by Daydream.");
-                    job.set("backup", "skipped");
+                    job.set("start", "yours");
+                    None
                 }
-            }
-            job.set("write", "running");
-            let tables = daydream_silvermere::block_on(daydream_silvermere::export(
-                &realm,
-                url,
-                &daydream_silvermere::ExportOptions::default(),
-            ))?;
-            for t in &tables {
-                if t.inserted + t.deleted > 0 || t.updated > 0 {
-                    job.log(
-                        "write",
-                        format!(
-                            "{}: {} written, {} new, {} removed",
-                            t.table, t.updated, t.inserted, t.deleted
-                        ),
-                    );
+            };
+            written?;
+            match (trouble, job.state_of("start")) {
+                (Some(t), _) => format!("Your changes are in silvermere's world, but {t}"),
+                (None, Some("done")) => {
+                    "Your changes are in silvermere's world, and it is running again.".into()
                 }
+                (None, Some("skipped")) => "Your changes are in silvermere's world. It was not \
+                                            running, so it stays stopped."
+                    .into(),
+                _ => "Your changes are in silvermere's world. Start it again when you are ready."
+                    .into(),
             }
-            // silvermere now holds the working copy's world: its changes count from here
-            daydream_store::journal::establish(&ctx.realm_dir, &[])?;
-            job.set("write", "done");
-            job.set("start", "yours");
-            "Your changes are in silvermere's world. Start it again when you are ready.".into()
         }
         Engine::InPlace => return Err(Stop::Failed("this world has nothing to publish".into())),
     };
@@ -809,6 +1237,52 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
             if skipped == 1 { "" } else { "s" }
         )
     })
+}
+
+/// silvermere's database backed up, and its world written from the working copy.
+fn write_silvermere(job: &Job, ctx: &Ctx, url: &str, realm: &Realm) -> Result<(), Stop> {
+    job.set("backup", "running");
+    match daydream_silvermere::sqlite_path(url) {
+        Some(p) => {
+            let p = PathBuf::from(p);
+            let backup = backup_dir(p.parent().unwrap_or(Path::new(".")));
+            for f in [p.clone(), PathBuf::from(format!("{}-wal", p.display()))] {
+                if f.exists() {
+                    copy_into(&f, &backup)?;
+                }
+            }
+            job.log("backup", format!("Copied to {}.", backup.display()));
+            job.set("backup", "done");
+        }
+        None => {
+            job.log("backup", "PostgreSQL: not copied by Daydream.");
+            job.set("backup", "skipped");
+        }
+    }
+    job.set("write", "running");
+    let tables = daydream_silvermere::block_on(daydream_silvermere::export(
+        realm,
+        url,
+        &daydream_silvermere::ExportOptions::default(),
+    ))?;
+    let rows: usize = tables.iter().map(|t| t.updated + t.inserted).sum();
+    job.log(
+        "write",
+        format!(
+            "{} tables written from the working copy, {rows} rows.",
+            tables.len()
+        ),
+    );
+    for t in tables.iter().filter(|t| t.inserted + t.deleted > 0) {
+        job.log(
+            "write",
+            format!("{}: {} new, {} removed", t.table, t.inserted, t.deleted),
+        );
+    }
+    // silvermere now holds the working copy's world: its changes count from here
+    daydream_store::journal::establish(&ctx.realm_dir, &[])?;
+    job.set("write", "done");
+    Ok(())
 }
 
 fn run(s: Arc<AppState>, job: Arc<Job>, ctx: Ctx) {
@@ -853,17 +1327,47 @@ fn run(s: Arc<AppState>, job: Arc<Job>, ctx: Ctx) {
 // ---- routes ------------------------------------------------------------------------------
 
 pub(crate) async fn get(State(s): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
-    blocking(move || plan(&s).map(Json)).await
+    blocking(move || plan(&s).map(|p| Json(p.json))).await
 }
 
 pub(crate) async fn job(State(s): State<Arc<AppState>>) -> Json<Value> {
     Json(json!(s.publish.snapshot()))
 }
 
+/// How silvermere's players are warned before it stops for a publish.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Warn {
+    /// Seconds from the warning to the stop (at most an hour); at once with nobody in the
+    /// game.
+    #[serde(default = "Warn::default_in_secs")]
+    pub in_secs: u64,
+    /// Why it closes, as the players are told: `The server will shut down in 5 minutes:
+    /// <message>`.
+    #[serde(default)]
+    pub message: String,
+}
+
+impl Warn {
+    fn default_in_secs() -> u64 {
+        300
+    }
+}
+
+impl Default for Warn {
+    fn default() -> Self {
+        Self {
+            in_secs: Self::default_in_secs(),
+            message: DEFAULT_MESSAGE.into(),
+        }
+    }
+}
+
 /// The body of a publish.
 #[derive(Debug, Deserialize)]
 pub struct StartJson {
     way: Way,
+    #[serde(default)]
+    warn: Option<Warn>,
 }
 
 pub(crate) async fn start(
@@ -872,6 +1376,13 @@ pub(crate) async fn start(
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
         let conflict = |m: String| ApiError(StatusCode::CONFLICT, m);
+        let bad = |m: String| ApiError(StatusCode::BAD_REQUEST, m);
+        let mut warn = body.warn.unwrap_or_default();
+        warn.message = warn.message.trim().to_string();
+        if warn.in_secs > MAX_WARN {
+            return Err(bad("warn the players at most an hour ahead".into()));
+        }
+        control::check_line(&warn.message, control::MAX_MESSAGE, "message").map_err(bad)?;
         // the plan reads the job too: before the lock is taken
         let plan = plan(&s)?;
         let mut current = s.publish.current.lock().unwrap_or_else(|e| e.into_inner());
@@ -881,34 +1392,38 @@ pub(crate) async fn start(
         {
             return Err(conflict("a publish is under way already".into()));
         }
-        let way = plan["ways"]
+        let way = plan.json["ways"]
             .as_array()
             .and_then(|w| w.iter().find(|w| w["id"] == json!(body.way)))
             .ok_or_else(|| conflict(format!("this world does not publish {:?}", body.way)))?;
         if way["ready"] != true {
-            let block = plan["checks"]
+            let block = plan.json["checks"]
                 .as_array()
                 .and_then(|c| c.iter().find(|c| c["level"] == "block"))
                 .and_then(|c| c["text"].as_str());
             let why = match (way["why"].as_str(), block) {
                 (Some(why), _) | (None, Some(why)) => why.to_string(),
-                _ if plan["changes"] == 0 => "nothing is waiting to publish".into(),
+                _ if plan.json["changes"] == 0 => "nothing is waiting to publish".into(),
                 _ => "this way cannot be taken now".into(),
             };
             return Err(conflict(why));
         }
         let realm_dir = s.realm_dir()?;
-        let realm = Realm::open(&realm_dir)?;
-        let engine = Engine::of(s.current().game.as_ref(), realm.layout_set());
+        let Plan {
+            json: plan_json,
+            engine,
+            live,
+            update,
+        } = plan;
         let state = JobState {
             id: s.publish.next.fetch_add(1, Ordering::Relaxed) + 1,
             way: body.way,
             engine: engine.id(),
-            game: plan["game"].as_str().unwrap_or_default().to_string(),
+            game: plan_json["game"].as_str().unwrap_or_default().to_string(),
             state: "running",
             started: now_secs(),
             finished: None,
-            steps: steps(&engine, body.way, has_update(&realm)),
+            steps: steps(&engine, body.way, update, live.as_ref()),
             skipped: Vec::new(),
             error: None,
             result: None,
@@ -919,10 +1434,17 @@ pub(crate) async fn start(
         });
         *current = Some(job.clone());
         drop(current);
+        let log = match s.current().game.as_ref() {
+            Some(g) => control::process_log(&s, &g.source),
+            None => realm_dir.join(".daydream").join("game.log"),
+        };
         let ctx = Ctx {
             realm_dir,
             engine,
             way: body.way,
+            live,
+            warn,
+            log,
         };
         let s2 = s.clone();
         std::thread::Builder::new()
@@ -934,18 +1456,16 @@ pub(crate) async fn start(
     .await
 }
 
+/// Calls off a job while its step may be: silvermere's countdown (silvermere tells the
+/// players), or the wait for the sysop to stop the game.
 pub(crate) async fn cancel(State(s): State<Arc<AppState>>) -> Json<Value> {
     let job = s.publish.current();
-    let waiting = job.as_ref().is_some_and(|j| {
+    let may = job.as_ref().is_some_and(|j| {
         let st = j.lock();
-        st.state == "running"
-            && st
-                .steps
-                .iter()
-                .any(|s| s.id == "stop" && s.state == "running")
+        st.state == "running" && st.steps.iter().any(|s| s.state == "running" && s.cancel)
     });
-    if let Some(j) = job.filter(|_| waiting) {
+    if let Some(j) = job.filter(|_| may) {
         j.cancel.store(true, Ordering::Relaxed);
     }
-    Json(json!({ "cancelled": waiting }))
+    Json(json!({ "cancelled": may }))
 }
