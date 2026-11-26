@@ -5,7 +5,9 @@
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
 //! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the realm
 //! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the
-//! realm's unpublished changes in [`changes`], undo and redo in [`history`], the MCP server
+//! realm's unpublished changes in [`changes`], publishing them into the game in [`publish`],
+//! running the game (silvermere's admin API, starting it again) in [`control`], undo and
+//! redo in [`history`], the MCP server
 //! for AI agents at `/mcp`
 //! ([`mcp`]), and the
 //! routes below serve each file's records
@@ -40,6 +42,7 @@ use serde_json::{Value, json};
 
 pub mod auth;
 pub mod changes;
+pub mod control;
 pub mod games;
 pub mod history;
 pub mod mcp;
@@ -304,6 +307,8 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/publish", get(publish::get).post(publish::start))
         .route("/api/publish/job", get(publish::job))
         .route("/api/publish/cancel", post(publish::cancel))
+        .route("/api/control", get(control::get).put(control::put))
+        .route("/api/control/say", post(control::say))
         .route("/api/games", get(games::list))
         .route("/api/games/status", get(games::status))
         .route("/api/games/open", post(games::open))

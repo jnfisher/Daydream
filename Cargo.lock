@@ -540,6 +540,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "ureq",
 ]
 
 [[package]]

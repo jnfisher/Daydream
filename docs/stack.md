@@ -29,13 +29,20 @@ touches `~/silvermere` or a `daydream-funnel` install, and uses its own ports.
 ## Checking an edit in the game
 
 silvermere holds a single-writer lock on its database, and Daydream takes the same lock, so
-Daydream writes only while silvermere is stopped:
+Daydream writes only while silvermere is stopped. The stack gives Daydream an admin token for
+silvermere (made once, kept in `stack.env`, its hash in `silvermere.toml`), so Daydream's
+**Publish** does the stopping and starting:
 
 1. Play in SyncTERM and find what to change.
-2. `daydream-stack edit`: stops silvermere, which saves every character first, and opens the
-   silvermere game in Daydream.
-3. In Daydream (or through its MCP server), make the edit and write it back.
-4. `daydream-stack play`: starts silvermere and opens SyncTERM again, logged in.
+2. In Daydream (or through its MCP server), make the edit.
+3. **Publish**: pick how long the players get (**Now** suits a test), and hold the button.
+   silvermere warns the players, saves every character and stops; Daydream writes the world
+   and starts the silvermere service again.
+4. `daydream-stack connect` to log in again.
+
+`daydream-stack edit` and `play` still stop and start silvermere by hand. A stack made before
+Daydream could do this has no token yet: `daydream-stack update` makes one, and starts
+silvermere again once so it reads it.
 
 ## Commands
 
@@ -46,7 +53,7 @@ Daydream writes only while silvermere is stopped:
 | `connect` | Open SyncTERM on the `daydream-stack` entry (telnet in this terminal without SyncTERM). |
 | `edit`, `play` | Stop silvermere for an edit; start it again and reconnect. |
 | `seed` | Make the test character again from the settings (stops silvermere for it). |
-| `update [silvermere\|daydream\|syncterm] [--version V \| --rollback]` | The newest (or given) release, checked against its `SHA256SUMS`; silvermere's database is backed up first. SyncTERM through apt (on macOS, by hand). |
+| `update [silvermere\|daydream\|syncterm] [--version V \| --rollback]` | The newest (or given) release, checked against its `SHA256SUMS`; silvermere's database is backed up first. SyncTERM through apt (on macOS, by hand). Makes Daydream's admin token for silvermere when there is none. |
 | `reset` | Back up, then the stock world again and a fresh character. |
 | `status` | Versions, running state, addresses and the login. |
 | `logs silvermere\|daydream` | Follow a log. |
@@ -65,6 +72,7 @@ Put them in `stack.env` or the environment, then run `init` (or `seed` for the c
 | `STACK_CLIENT_CMD` | a command to run in place of SyncTERM |
 | `STACK_SILVERMERE_BIN` | a silvermere binary to use in place of the release (a build not yet released) |
 | `STACK_STOCK_ZIP` | a saved `WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip`, for when its download is blocked (see below) |
+| `STACK_ADMIN_TOKEN`, `STACK_ADMIN_SHA256` | made by `init` or `update`: Daydream's token for silvermere's admin API, and its hash |
 | `DAYDREAM_STACK_HOME` | `~/.local/share/daydream-stack` |
 
 ## When the stock download is blocked

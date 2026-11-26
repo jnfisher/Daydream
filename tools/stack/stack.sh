@@ -30,6 +30,8 @@
 #   STACK_SILVERMERE_REPO, STACK_DAYDREAM_REPO   GitHub owner/name of each release
 #   STACK_SILVERMERE_BIN      a silvermere binary to use in place of the release
 #   STACK_STOCK_ZIP           a saved WCCMMUD_1.11p_DOS_MBBSEmu_v2.zip, when the download is blocked
+#   STACK_ADMIN_TOKEN, STACK_ADMIN_SHA256   Daydream's silvermere admin token and its hash
+#                             (made by init or update; silvermere.toml holds only the hash)
 #
 # Runs as yourself, never root. It never touches ~/silvermere or a daydream-funnel install.
 set -euo pipefail
@@ -305,13 +307,78 @@ wait_port() {
 
 write_silvermere_config() {
     mkdir -p "$SM/data"
-    cat > "$SM/silvermere.toml" <<TOML
+    {
+        cat <<TOML
 # Written by daydream-stack: silvermere for in-game checks of Daydream edits.
 [server]
 telnet_bind = "127.0.0.1:$TELNET_PORT"
 admin_bind = "127.0.0.1:$ADMIN_PORT"
 web_bind = ""
 TOML
+        if [ -n "${STACK_ADMIN_SHA256:-}" ]; then
+            cat <<TOML
+
+# Daydream's admin token (the token itself is in stack.env): publishing warns the players,
+# stops silvermere and starts it again.
+[[admin.tokens]]
+name = "daydream"
+sha256 = "$STACK_ADMIN_SHA256"
+scopes = ["read", "write", "admin"]
+TOML
+        fi
+    } > "$SM/silvermere.toml"
+}
+
+# Makes Daydream's admin token for silvermere, once: the token goes in stack.env, its hash
+# in silvermere.toml (write_silvermere_config). A silvermere too old to make one is left as
+# it is: Daydream then waits for you to stop it when it publishes.
+ensure_admin_token() {
+    [ -n "${STACK_ADMIN_TOKEN:-}" ] && [ -n "${STACK_ADMIN_SHA256:-}" ] && return 0
+    local out token hash
+    if ! out=$(sm admin token new daydream --scopes read,write,admin 2>/dev/null); then
+        note "this silvermere makes no admin tokens: publishing waits for you to stop it (daydream-stack update silvermere)"
+        return 0
+    fi
+    token=$(printf '%s\n' "$out" | sed -n 's/^Token (shown once, store it now): *//p')
+    hash=$(printf '%s\n' "$out" | sed -n 's/^sha256 = "\([0-9a-f]*\)"$/\1/p')
+    if [ -z "$token" ] || [ -z "$hash" ]; then
+        note "could not read the admin token silvermere made: publishing waits for you to stop it"
+        return 0
+    fi
+    save_setting STACK_ADMIN_TOKEN "$token"
+    save_setting STACK_ADMIN_SHA256 "$hash"
+    note "made an admin token for Daydream"
+}
+
+# Gives Daydream the admin token, for the silvermere game it has open. The token goes on
+# stdin, never on a command line.
+give_token() {
+    [ -n "${STACK_ADMIN_TOKEN:-}" ] || return 0
+    local code
+    code=$(printf '{"token":"%s"}' "$STACK_ADMIN_TOKEN" |
+        curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' \
+            --data-binary @- "http://127.0.0.1:$DD_PORT/api/control" 2>/dev/null) || true
+    if [ "$code" = 200 ]; then
+        note "Daydream has silvermere's admin token: publishing warns the players, stops silvermere and starts it again"
+    else
+        note "Daydream did not take silvermere's admin token (HTTP ${code:-none}): run daydream-stack update daydream once the game is open"
+    fi
+}
+
+# A stack made before Daydream could stop silvermere itself: the token, its hash in
+# silvermere.toml (silvermere reads its tokens when it starts, so a running one starts
+# again), and Daydream given the token.
+admin_setup() {
+    local before
+    before=$(cat "$SM/silvermere.toml" 2>/dev/null || true)
+    ensure_admin_token
+    write_silvermere_config
+    if [ "$before" != "$(cat "$SM/silvermere.toml")" ] && svc_active silvermere; then
+        note "silvermere reads its admin tokens when it starts: starting it again"
+        down_silvermere
+        up_silvermere
+    fi
+    if svc_active daydream; then give_token; fi
 }
 
 silvermere_service() {
@@ -486,6 +553,7 @@ open_game() {
     code=${out##*$'\n'}
     if [ "$code" = 200 ]; then
         note "Daydream has the silvermere game open"
+        give_token
     else
         note "Daydream could not open the silvermere game (${out%$'\n'*}): choose it in the game picker"
     fi
@@ -615,6 +683,7 @@ init() {
 
     say "silvermere"
     fetch_silvermere "${VERSION:-}"
+    ensure_admin_token
     write_silvermere_config
     svc_active silvermere 2>/dev/null && down_silvermere
     # The account first: setup then has a sysop and asks nothing.
@@ -708,6 +777,7 @@ update() {
             [ "$up" = 1 ] && up_silvermere
         fi
         note "silvermere $after"
+        admin_setup
         ;;
     daydream)
         say "Daydream"
@@ -719,6 +789,7 @@ update() {
             wait_port "$DD_PORT" 60 || die "Daydream did not start; $(logs_cmd daydream)"
         fi
         note "daydream $(version_of "$DD")"
+        admin_setup
         ;;
     syncterm)
         say "SyncTERM"

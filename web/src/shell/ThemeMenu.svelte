@@ -41,14 +41,4 @@
 <style>
   :global(.theme-pop) { width: min(320px, calc(100vw - 16px)); }
   .head { padding: 8px 10px 6px; }
-  .switch {
-    appearance: none; width: 36px; height: 22px; border-radius: 999px; padding: 0; margin: 0; cursor: pointer;
-    background: var(--surface-3); border: 1.5px solid var(--line-2); position: relative; transition: background .15s;
-  }
-  .switch::after {
-    content: ''; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%;
-    background: var(--surface); box-shadow: 0 1px 2px var(--shadow); transition: transform .2s var(--pop);
-  }
-  .switch:checked { background: var(--mint); border-color: var(--outline); }
-  .switch:checked::after { transform: translateX(14px); }
 </style>

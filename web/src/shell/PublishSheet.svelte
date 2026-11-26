@@ -17,7 +17,21 @@
   const open = $derived(pub.sheet && job !== null);
   const game = $derived(job ? (GAME[job.engine] ?? 'the game') : '');
   const current = $derived(job?.steps.find((s) => s.state === 'running') ?? null);
-  const waiting = $derived(job?.state === 'running' && current?.id === 'stop');
+  /** The step under way may be called off: silvermere's countdown, or the wait for the game to stop. */
+  const cancellable = $derived(job?.state === 'running' && !!current?.cancel);
+  /** Something went wrong after the world was written (silvermere did not come back). */
+  const troubled = $derived(job?.state === 'done' && job.steps.some((s) => s.state === 'failed'));
+
+  // the clock a countdown is read against, ticking while there is one
+  let now = $state(Date.now() / 1000);
+  $effect(() => {
+    if (!open || !current?.until) return;
+    now = Date.now() / 1000;
+    const t = setInterval(() => (now = Date.now() / 1000), 250);
+    return () => clearInterval(t);
+  });
+  const left = $derived(current?.until ? Math.max(0, Math.ceil(current.until - now)) : null);
+  const mmss = (secs: number) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 
   /** How far along, out of 100: a step under way counts part done. */
   const pct = $derived.by(() => {
@@ -27,7 +41,7 @@
     return Math.round((100 * (done + (current ? 0.4 : 0))) / Math.max(1, job.steps.length));
   });
 
-  const mood = $derived(job?.state === 'done' ? 'joy' : job?.state === 'failed' ? 'worry' : job?.state === 'cancelled' ? 'happy' : 'dream');
+  const mood = $derived(troubled || job?.state === 'failed' ? 'worry' : job?.state === 'done' ? 'joy' : job?.state === 'cancelled' ? 'happy' : 'dream');
 
   const heading = $derived.by(() => {
     if (!job) return '';
@@ -42,6 +56,10 @@
     switch (current?.id) {
       case 'check':
         return 'Checking the changes';
+      case 'warn':
+        return left !== null ? `${game} closes in ${mmss(left)}` : 'Warning the players';
+      case 'start':
+        return `Starting ${game} again`;
       case 'stop':
         return `Waiting for ${game} to stop`;
       case 'backup':
@@ -109,9 +127,9 @@
         <Mascot {mood} size={72} />
         <div class="say" aria-live="polite">
           <div class="eyebrow">Publishing to {job.game}</div>
-          <h2 id="pub-sheet-h">{heading}{job.state === 'running' ? '…' : ''}</h2>
+          <h2 id="pub-sheet-h">{heading}{job.state === 'running' && left === null ? '…' : ''}</h2>
           {#if job.state === 'done' && job.result}
-            <p>{job.result}</p>
+            <p class:warned={troubled}>{job.result}</p>
           {:else if job.state === 'failed' && job.error}
             <p class="bad">{job.error}</p>
           {:else if job.state === 'cancelled'}
@@ -140,6 +158,9 @@
                 {#if st.state === 'skipped' && job.state !== 'done'}<span class="pill">not done</span>{/if}
               </h4>
               {#if st.state === 'running' || st.state === 'yours'}<p>{st.detail}</p>{/if}
+              {#if st.state === 'running' && st.until && left !== null}
+                <p class="count" role="timer" aria-live="off">Closing in <b>{mmss(left)}</b></p>
+              {/if}
               {#if st.log.length}
                 <div class="log">{#each st.log as line, i (i)}<div>{line}</div>{/each}</div>
               {/if}
@@ -161,8 +182,8 @@
 
       <div class="acts">
         {#if job.state === 'running'}
-          {#if waiting}
-            <button type="button" class="btn" onclick={() => void cancelPublish()}><X size={15} />Cancel</button>
+          {#if cancellable}
+            <button type="button" class="btn" onclick={() => void cancelPublish()}><X size={15} />{current?.id === 'warn' ? 'Call it off' : 'Cancel'}</button>
           {/if}
           <button type="button" class="btn sticker" onclick={close}>Keep it running in the background</button>
         {:else if job.state === 'done'}
@@ -192,6 +213,7 @@
   h2 { margin: 4px 0 0; font-size: 24px; line-height: 1.15; }
   .say p { margin: 4px 0 0; font-size: 13.5px; font-weight: 700; color: var(--ink-2); }
   .say p.bad { color: var(--bad); }
+  .say p.warned { color: var(--warn); }
   .bar { height: 12px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin: 16px 0 6px; }
   .bar span {
     display: block; height: 100%; background: var(--rainbow); background-size: 200% 100%; border-radius: 999px;
@@ -216,6 +238,8 @@
   @keyframes breathe { 50% { transform: scale(1.14); } }
   h4 { margin: 6px 0 2px; font: 600 15px/1.2 var(--font-display); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .body p { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--ink-2); line-height: 1.45; }
+  .body p.count { margin-top: 4px; color: var(--butter-ink); }
+  .count b { font: 700 18px/1 var(--font-mono); color: var(--ink); vertical-align: -1px; margin-left: 4px; }
   .log { margin-top: 4px; font: 600 12px/1.55 var(--font-mono); color: var(--ink-2); overflow-wrap: anywhere; }
   .skipped { margin-top: 12px; }
   .skipped ul { margin: 4px 0 0; padding-left: 18px; font-family: var(--font-mono); font-weight: 600; }

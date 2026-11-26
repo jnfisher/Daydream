@@ -9,6 +9,7 @@
   import CloudUpload from '@lucide/svelte/icons/cloud-upload';
   import Info from '@lucide/svelte/icons/info';
   import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+  import Megaphone from '@lucide/svelte/icons/megaphone';
   import Server from '@lucide/svelte/icons/server';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import TriangleAlert from '@lucide/svelte/icons/triangle-exclamation-point';
@@ -17,7 +18,9 @@
   import ChangeRow from './ChangeRow.svelte';
   import HoldButton from './HoldButton.svelte';
   import Mascot from './Mascot.svelte';
-  import { loadPlan, pub, publish, stepIcon } from './publishing.svelte';
+  import { read, write } from './prefs.svelte';
+  import { DEFAULT_MESSAGE, loadPlan, pub, publish, stepIcon, WARN_MINUTES, warning } from './publishing.svelte';
+  import ServerCard from './ServerCard.svelte';
   import Sky from './Sky.svelte';
   import { app, takeBack } from './state.svelte';
   import { ago } from './time';
@@ -71,10 +74,29 @@
         ? `${plan.name} has no remote control, so the gentle way hands MajorMUD an update file it merges by itself, and nobody has to stop the BBS.`
         : `Daydream writes your changes into the game's files while ${plan.name} is stopped. It waits while you stop it, and carries on by itself.`;
     }
+    if (warns) return 'silvermere warns its players and closes, Daydream writes its world from your working copy, and what play changed stays as it is.';
     return 'Daydream waits while silvermere stops, then writes its world from your working copy, keeping what play changed.';
   });
 
   const mood = $derived(pub.error && !plan ? 'worry' : busy ? 'dream' : n ? 'happy' : 'dream');
+
+  // silvermere's warning: how long the players get, and why, as this browser last had it
+  const control = $derived(plan?.control?.engine === 'silvermere' ? plan.control : null);
+  const players = $derived(control?.players ?? null);
+  const warns = $derived(way?.steps.some((st) => st.id === 'warn') ?? false);
+  const stored = Number(read('dd-warn-in', '5'));
+  let warnIn = $state(WARN_MINUTES.includes(stored) ? stored : 5);
+  let message = $state(read('dd-warn-why', DEFAULT_MESSAGE));
+  const why = $derived(message.trim() || DEFAULT_MESSAGE);
+  function setWarnIn(m: number) {
+    warnIn = m;
+    write('dd-warn-in', String(m));
+  }
+  function keepWhy() {
+    write('dd-warn-why', message.trim() || DEFAULT_MESSAGE);
+  }
+  const initials = (name: string) =>
+    name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('') || '?';
 
   const running = $derived.by(() => {
     const r = plan?.running;
@@ -112,6 +134,8 @@
     // a way that cannot be taken says why above it
     if (!way.ready) return blocks[0]?.text ?? (way.why ? '' : !n && since !== null ? 'Nothing is waiting to publish.' : '');
     if (nudge) return 'Keep holding until the button fills.';
+    if (warns && warnIn && players?.length !== 0)
+      return `Press and hold, or press Enter. silvermere closes ${warnIn} minute${s(warnIn)} later, and you can call it off until then.`;
     return 'Press and hold, or press Enter. Daydream backs up what it replaces first.';
   });
 
@@ -140,10 +164,22 @@
       </div>
       {#if plan && plan.engine !== 'files'}
         <div class="srv">
-          <span class="eng"><Server size={22} /></span>
+          <span class="eng" style:grid-row="span {players && plan.running.running ? 4 : 3}"><Server size={22} /></span>
           <b title={plan.game ?? plan.name}>{plan.game ?? plan.name}</b>
           <span class="sub"><span class="dot" class:pulse={running.pulse} style:color={running.color}></span>{running.text}</span>
           {#if plan.location}<span class="sub loc" title={plan.location}>{plan.location}</span>{/if}
+          {#if players && plan.running.running}
+            <span class="sub who">
+              {#if players.length}
+                <span class="faces" aria-hidden="true">
+                  {#each players.slice(0, 5) as p, i (i)}<i title={p.name}>{initials(p.name)}</i>{/each}
+                </span>
+                <span title={players.map((p) => p.name).join(', ')}>{players.length} in the game</span>
+              {:else}
+                nobody in the game
+              {/if}
+            </span>
+          {/if}
         </div>
       {/if}
     </div>
@@ -193,7 +229,30 @@
             {@const Icon = stepIcon(st, way.id)}
             <li class="st">
               <span class="bub"><Icon size={19} /></span>
-              <div><h4>{st.title}</h4><p>{st.detail}</p></div>
+              <div>
+                <h4>{st.title}</h4><p>{st.detail}</p>
+                {#if st.id === 'warn'}
+                  <div class="notice">
+                    <span class="seg" role="radiogroup" aria-label="When silvermere closes">
+                      {#each WARN_MINUTES as m (m)}
+                        <button type="button" role="radio" aria-checked={warnIn === m} class:on={warnIn === m} disabled={busy} onclick={() => setWarnIn(m)}>{m ? `${m} min` : 'Now'}</button>
+                      {/each}
+                    </span>
+                    <label class="why">
+                      <span>Why, in a few words</span>
+                      <input type="text" maxlength="200" bind:value={message} onchange={keepWhy} disabled={busy} placeholder={DEFAULT_MESSAGE} />
+                    </label>
+                    <p class="hear">
+                      <Megaphone size={14} />
+                      {#if players?.length === 0}
+                        <span>Nobody is in the game, so silvermere closes at once and nobody needs telling.</span>
+                      {:else}
+                        <span>The players read <q>{warning(warnIn, why)}</q>{warnIn ? ', and again as the time comes closer.' : '.'}</span>
+                      {/if}
+                    </p>
+                  </div>
+                {/if}
+              </div>
             </li>
           {/each}
         </ol>
@@ -202,7 +261,7 @@
             <button type="button" class="btn rainbow big busy" onclick={() => (pub.sheet = true)}><LoaderCircle size={19} />Publishing… show how it goes</button>
           {:else}
             {@const w = way}
-            <HoldButton onfire={() => void publish(w.id)} onshort={short} disabled={!w.ready} describedby={help ? 'pub-help' : undefined}>
+            <HoldButton onfire={() => void publish(w.id, warns ? { in_secs: warnIn * 60, message: why } : undefined)} onshort={short} disabled={!w.ready} describedby={help ? 'pub-help' : undefined}>
               <CloudUpload size={19} /><span>{button}</span>
             </HoldButton>
           {/if}
@@ -276,6 +335,10 @@
           </div>
         </section>
       {/if}
+
+      {#if control}
+        <ServerCard c={control} />
+      {/if}
     </div>
   </div>
 </div>
@@ -295,6 +358,14 @@
   .srv b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .srv .sub { font-size: 12px; color: var(--ink-2); font-weight: 700; display: flex; gap: 6px; align-items: center; min-width: 0; }
   .srv .loc { display: block; font: 600 11.5px var(--font-mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .faces { display: inline-flex; }
+  .faces i {
+    width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; margin-left: -6px;
+    font: 800 9.5px/1 var(--font-ui); font-style: normal; background: var(--lilac-2); color: var(--lilac-ink); border: 2px solid var(--surface);
+  }
+  .faces i:first-child { margin-left: 0; }
+  .faces i:nth-child(2n) { background: var(--peach-2); color: var(--peach-ink); }
+  .faces i:nth-child(3n) { background: var(--sky-2); color: var(--sky-ink); }
 
   .cols { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 16px; align-items: start; }
   .stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -320,6 +391,14 @@
   .bub { width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center; position: relative; z-index: 1; background: var(--surface); border: var(--stroke) solid var(--line-2); color: var(--ink-2); }
   h4 { margin: 2px 0 2px; font: 600 16.5px/1.2 var(--font-display); }
   .st p { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); line-height: 1.45; }
+  .notice { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+  .notice .seg { margin-left: 0; align-self: flex-start; background: var(--surface); }
+  .notice .seg button.on { background: var(--butter-2); color: var(--butter-ink); }
+  .why { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 800; color: var(--ink-2); }
+  .why input { width: 100%; min-height: 34px; font: 700 13px var(--font-ui); background: var(--surface); }
+  .notice .hear { display: flex; gap: 7px; align-items: flex-start; font-size: 12.5px; }
+  .hear > :global(svg) { flex: none; margin-top: 2px; color: var(--butter-ink); }
+  .hear q { font-weight: 800; color: var(--ink); quotes: '“' '”'; }
 
   .go { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
   .big { min-height: 52px; padding: 0 22px; border-radius: 16px; font-size: 15.5px; }
@@ -347,5 +426,6 @@
     .srv { flex-basis: 100%; }
     .seg { width: 100%; }
     .seg button { flex: 1 1 0; white-space: normal; line-height: 1.2; padding: 6px 8px; }
+    .notice .seg { align-self: stretch; }
   }
 </style>
