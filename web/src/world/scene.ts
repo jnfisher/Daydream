@@ -207,6 +207,10 @@ export class Scene {
   private layers: Layers = { labels: true, grid: true, symbols: true };
   /** How much of the canvas's right side the room card covers. */
   private cover = 0;
+  /** How much of its top the tools cover and of its bottom a panel (the walk's): rooms are
+   * brought into view between them. */
+  private over = 0;
+  private under = 0;
   /** Build mode: the ways the selected room can be dug or joined are drawn. */
   private building = false;
   /** The room being named: its name pill is left to the field over it. */
@@ -363,6 +367,13 @@ export class Scene {
     const wide = !matchMedia('(max-width: 760px)').matches;
     this.cover = open && wide ? Math.min(420, this.W - 24) + 12 : 0;
     return this.cover;
+  }
+
+  /** A panel is open along the bottom, `bottom` high, under tools `top` high (0 for none): a room
+   * brought into view goes between them. */
+  setBand(top: number, bottom: number): void {
+    this.under = Math.max(0, Math.min(bottom, this.H - 120));
+    this.over = bottom ? Math.max(0, Math.min(top, this.H - this.under - 80)) : 0;
   }
 
   /** The theme changed. */
@@ -617,11 +628,11 @@ export class Scene {
     this.draw();
   }
 
-  /** The camera to put a room in the middle of what the card leaves showing. */
+  /** The camera to put a room in the middle of what the card (and a panel along the bottom) leaves showing. */
   private aim(n: number, z: number): [number, number] | null {
     const p = this.layout?.at.get(n);
     if (!p) return null;
-    return [(p.x + 0.5) * S + this.cover / 2 / z, (p.y + 0.5) * S];
+    return [(p.x + 0.5) * S + this.cover / 2 / z, (p.y + 0.5) * S + (this.under - this.over) / 2 / z];
   }
 
   centreOn(n: number, opts: { zoom?: number; animate?: boolean } = {}): void {
@@ -637,9 +648,10 @@ export class Scene {
     const x = this.sx(p.x);
     const y = this.sy(p.y);
     const w = this.W - this.cover;
+    const [top, bottom] = [this.over, this.H - this.under];
     const mx = Math.min(140, w * 0.22);
-    const my = Math.min(120, this.H * 0.22);
-    if (x < mx || x > w - mx || y < my || y > this.H - my) this.centreOn(n);
+    const my = Math.min(120, (bottom - top) * 0.22);
+    if (x < mx || x > w - mx || y < top + my || y > bottom - my) this.centreOn(n);
     else this.draw();
   }
 

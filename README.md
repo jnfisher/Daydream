@@ -225,11 +225,26 @@ map it came from, its new rooms copy one of the rooms picked with the name most 
 (the way in, when it has it) unless it lands on a room, and its exits are plain (the server
 answers the same at `/api/map/stamps`).
 
+**Walk** (or `P`) playtests from the selected room. The arrow keys (or the ways under the
+panel's text, on a phone) walk a pretend player through the exits as the game's `move_user`
+does, and the panel shows what the game sends back in its colours: each room's name,
+description and obvious exits, and the game's own refusals for a shut or locked door, an item
+not carried, a toll not covered, a hidden way not yet found, a class, race, level or
+alignment kept out, a closed timed way, an arena the player is past, or an add-on's map the
+world lacks. A note says what the game does not (coins paid, the damage a trap rolled), and a
+refusal's button changes the player (opens the door, adds the coins, sets the level) and tries
+again. Typing works as in the game: a direction or LOOK first, then the room's text exits and
+commands. The map follows the player, onto other maps too; a click on a room puts the player
+there, `H` puts them in the start room, and the player's level, class, race, coins and items
+are under their name. Esc (or `P`) goes back to editing at the room reached, its card open.
+Nothing is written: a walk changes only the pretend player.
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
 | `U` `D` | Walk up or down |
 | `H` | The start room |
+| `P` | Walk: playtest from the room, the arrows and `U` `D` walking its exits; a click puts the player in a room, Esc goes back to editing at the room reached |
 | `+` `-` | Zoom in or out |
 | Shift+1, Shift+2 | Every room in view; close up on the room |
 | `F` | Full screen (Esc comes back) |

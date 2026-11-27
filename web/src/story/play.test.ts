@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fmtMsg, Play, PLAYER, type Pretend, type Shown } from './play.ts';
+import { fmtMsg, Play, PLAYER, walkWord, type Pretend, type Shown } from './play.ts';
 import { storyOf, type Cell, type Values } from './story.ts';
 
 const GREEN = '\x1b[0;32m';
@@ -315,4 +315,173 @@ test("every way a turn goes is one of the story's edges, by the row it leaves fr
     assert.ok(p.went.size);
     for (const w of p.went) assert.ok(ways.has(w), `${w} is no edge of the story`);
   }
+});
+
+// ---- walking ----------------------------------------------------------------------------------
+
+// a crossroads (1/100) with a way of each kind out of it, and the rooms they lead to
+const N = 0, S = 1, E = 2, W = 3, NE = 4, NW = 5, SE = 6, SW = 7, U = 8, D = 9;
+const WALKS: Record<string, Values> = {
+  'Rooms/1/100': {
+    Name: 'Crossroads',
+    'Desc 0': 'Roads meet here.',
+    ...exit(N, [101, 0]),
+    ...exit(S, [102, 7, 1]),
+    ...exit(E, [103, 4, 50]),
+    ...exit(W, [104, 15, 20, 0]),
+    ...exit(NE, [105, 6, 2]),
+    ...exit(NW, [106, 8, 2]),
+    ...exit(SE, [107, 3, 900, 0, 600]),
+    ...exit(SW, [108, 9, 10, 0, 601]),
+    ...exit(U, [109, 16, 602, 0, 1]),
+    ...exit(D, [110, 10, 603]),
+  },
+  'Rooms/1/101': { Name: 'North Road', ...exit(S, [100, 0]), ...exit(N, [111, 13, 4]), ...exit(E, [112, 20, 0, 50]), ...exit(W, [113, 2, 901, 2]), ...exit(U, [114, 0]) },
+  'Rooms/1/102': { Name: 'Gatehouse' },
+  'Rooms/1/103': { Name: 'Toll Bridge' },
+  'Rooms/1/104': { Name: 'Training Yard' },
+  'Rooms/1/105': { Name: 'Hidden Glade' },
+  'Rooms/1/107': { Name: 'Vault' },
+  'Rooms/1/108': { Name: 'Pit Bottom' },
+  'Rooms/1/109': { Name: 'Belfry' },
+  'Rooms/1/110': { Name: 'Cellar' },
+  'Rooms/1/111': { Name: 'Mage Tower' },
+  'Rooms/1/112': { Name: 'Saint Chapel' },
+  'Rooms/1/113': { Name: 'Strong Room' },
+  'Rooms/1/114': { Name: 'Arena', Type: 2, 'Max Index': 5 },
+  'Items/900': { Name: 'silver key' },
+  'Items/901': { Name: 'iron key' },
+  'Classes/4': { Name: 'Mage' },
+  'Messages/600': { 'Line 1': 'You unlock the vault and step in.', 'Line 2': '%s unlocks the vault and goes %s.', 'Line 3': '%s comes in from the %s.' },
+  'Messages/601': { 'Line 1': 'You fall into a pit for %d damage!', 'Line 2': '%s falls into a pit!', 'Line 3': '' },
+  'Messages/602': { 'Line 1': 'The bell tolls.', 'Line 2': '', 'Line 3': 'The stairs %s are roped off.' },
+  'Messages/603': { 'Line 1': 'open cellar', 'Line 2': '', 'Line 3': '' },
+};
+const walks = world(WALKS);
+/** The lines a walk showed, without their colours: a note as `(note)`, a failed one as `(!note)`. */
+const walked = (p: Play) => said(p.shown).map(plain);
+
+test('a plain way walks the player through and shows the room they reach', async () => {
+  const p = new Play(walks, player());
+  assert.equal(await p.go(1, 100, N), 'ok');
+  assert.deepEqual([p.me.map, p.me.room], [1, 101]);
+  const [screen] = walked(p);
+  assert.match(screen!, /^you: North Road\nObvious exits: north, south, east, closed door west, up$/);
+  // no exit that way, and a way the map has no room behind
+  const none = new Play(walks, player());
+  assert.equal(await none.go(1, 102, N), 'stop');
+  assert.deepEqual(walked(none), ['you: There is no exit in that direction!']);
+  assert.deepEqual([none.me.map, none.me.room], [1, 102]);
+  const lost = new Play(world({ 'Rooms/1/1': { Name: 'Edge', ...exit(E, [2, 0]) } }), player());
+  assert.equal(await lost.go(1, 1, E), 'stop');
+  assert.deepEqual(walked(lost), ['you: You are not permitted in that room!', '(!There is no room 2 on map 1 for the east exit to lead to.)']);
+});
+
+test('a shut door, a toll, a level and a hidden way refuse in the game’s words and say what would pass', async () => {
+  const door = new Play(walks, player());
+  assert.equal(await door.go(1, 100, S), 'stop');
+  assert.deepEqual(walked(door), ['you: The door is Closed!', '(!The south door is shut: OPEN south opens it.)']);
+  // what would pass it, and it does
+  const fix = door.shown.find((s) => s.to === 'note' && s.fix);
+  assert.equal(fix?.to === 'note' && fix.fix?.label, 'Open it');
+  const me = structuredClone(door.me);
+  if (fix?.to === 'note') fix.fix!.apply(me);
+  const again = new Play(walks, me);
+  assert.equal(await again.go(1, 100, S), 'ok');
+  assert.equal(again.me.room, 102);
+
+  const poor = new Play(walks, player({ copper: 120 }));
+  assert.equal(await poor.go(1, 100, E), 'stop');
+  assert.deepEqual(walked(poor), ['you: You do not have enough to cover the toll of 50 gold crowns.', '(!The toll is 50 gold and you have 1 gold, 2 silver.)']);
+  const rich = new Play(walks, player({ copper: 10_000 }));
+  assert.equal(await rich.go(1, 100, E), 'ok');
+  assert.equal(rich.me.copper, 5_000);
+  assert.deepEqual(walked(rich).slice(0, 2), ['you: You just paid 50 gold crowns in toll charges.', '(You pay 50 gold, which gives away a player sneaking.)']);
+
+  const young = new Play(walks, player({ level: 12 }));
+  assert.equal(await young.go(1, 100, W), 'stop');
+  assert.deepEqual(walked(young), ['you: You have not progressed far enough to go through this exit!', '(!It lets in level 20 and up; you are level 12.)']);
+
+  const hidden = new Play(walks, player());
+  assert.equal(await hidden.go(1, 100, NE), 'stop');
+  assert.deepEqual(walked(hidden), ['you: There is no exit in that direction!', '(!The northeast way is hidden until it is found, by searching or by what opens it.)']);
+  const found = new Play(walks, player({ exits: { '1/100/4': 2 | 4 } }));
+  assert.equal(await found.go(1, 100, NE), 'ok');
+});
+
+test('an add-on’s map, an item, a trap, a timed way and a text exit go as the game has them', async () => {
+  // map 2 is an add-on's, and this world has none of it
+  const addon = new Play(walks, player());
+  assert.equal(await addon.go(1, 100, NW), 'stop');
+  assert.deepEqual(walked(addon)[0], "you: Your sysop must purchase the Dragon's Teeth add-on before you may move through this exit.");
+
+  const keyless = new Play(walks, player());
+  assert.equal(await keyless.go(1, 100, SE), 'stop');
+  assert.deepEqual(walked(keyless), ['you: You do not have the appropriate item to go that direction!', '(!Only a player carrying silver key goes southeast.)']);
+  const keyed = new Play(walks, player({ items: [900] }));
+  assert.equal(await keyed.go(1, 100, SE), 'ok');
+  assert.deepEqual(walked(keyed).slice(0, 3), ['room: Ana unlocks the vault and goes southeast.', 'there, Vault: Ana comes in from the northwest.', 'you: You unlock the vault and step in.']);
+  assert.equal(walked(keyed).at(-1), '(Your silver key loses a use.)');
+
+  // an armed trap: from half its damage to one more
+  const trapped = new Play(walks, player(), { dice: () => 3 });
+  assert.equal(await trapped.go(1, 100, SW), 'ok');
+  assert.deepEqual(walked(trapped).slice(0, 3), ['room: Ana falls into a pit!', 'you: You fall into a pit for 8 damage!', '(!The trap springs: 8 damage, rolled from 5 to 10.)']);
+  assert.equal(trapped.me.room, 108);
+
+  const timed = new Play(walks, player());
+  assert.equal(await timed.go(1, 100, U), 'stop');
+  assert.deepEqual(walked(timed), ['you: The stairs up are roped off.', '(!The up way is closed until its time comes round again.)']);
+
+  const text = new Play(walks, player());
+  assert.equal(await text.go(1, 100, D), 'stop');
+  assert.deepEqual(walked(text), ['you: There is no exit in that direction!', '(!A Text exit is walked by its words, “open cellar”, not by a direction.)']);
+});
+
+test('a class, an alignment, a key and an arena keep out those they do not let in', async () => {
+  const fighter = new Play(walks, player({ cls: 1 }));
+  assert.equal(await fighter.go(1, 101, N), 'stop');
+  assert.deepEqual(walked(fighter), ['you: You may not go through this exit!', '(!Only a player of the class Mage may go north.)']);
+  assert.equal(await new Play(walks, player({ cls: 4 })).go(1, 101, N), 'ok');
+  // tournament play closes it to everyone
+  const tourney = new Play(walks, player({ cls: 4, tournament: true }));
+  assert.equal(await tourney.go(1, 101, N), 'stop');
+  assert.equal(walked(tourney)[0], 'you: You may not go through this exit during tournament play!');
+
+  const evil = new Play(walks, player({ evil: 80 }));
+  assert.equal(await evil.go(1, 101, E), 'stop');
+  assert.deepEqual(walked(evil), ['you: You are too evil to go through this exit!', '(!It lets in evil points 0 to 50; you have 80.)']);
+
+  const locked = new Play(walks, player());
+  assert.equal(await locked.go(1, 101, W), 'stop');
+  assert.deepEqual(walked(locked), ['you: There is a closed door in that direction!', '(!The west door is locked (iron key unlocks it); only bashing it gets a player through shut.)']);
+  assert.equal(await new Play(walks, player({ exits: { '1/101/3/2': 0 } })).go(1, 101, W), 'ok');
+
+  const veteran = new Play(walks, player({ level: 10 }));
+  assert.equal(await veteran.go(1, 101, U), 'stop');
+  assert.deepEqual(walked(veteran), ['you: You have progressed too far for this room.', 'you: You are not permitted in that room!', '(!Arena is an arena that lets in up to level 5; you are level 10.)']);
+  assert.equal(veteran.me.room, 101);
+});
+
+test('looking shows the room the player is in, its exits as play has left them', async () => {
+  const p = new Play(walks, player({ exits: { '1/101/3/2': 0 } }));
+  assert.equal(await p.look(1, 101), 'ok');
+  assert.deepEqual(walked(p), ['you: North Road\nObvious exits: north, south, east, open door west, up']);
+  assert.deepEqual([p.me.map, p.me.room], [1, 101]);
+  const nowhere = new Play(walks, player());
+  assert.equal(await nowhere.look(1, 999), 'nothing');
+  assert.deepEqual(walked(nowhere), ['(!There is no room 999 on map 1.)']);
+});
+
+test('the game takes a direction or LOOK typed before the room does, abbreviated as it allows', () => {
+  for (const [typed, want] of [
+    ['n', N], ['NORTH', N], ['s', S], ['south', S], ['e', E], ['eas', E], ['w', W], ['west', W],
+    ['ne', NE], ['northe', NE], ['nw', NW], ['northwest', NW], ['se', SE], ['southea', SE], ['sw', SW], ['southw', SW],
+    ['u', U], ['up', U], ['d', D], ['dow', D], ['down', D], ['  n  ', N], ['n quickly', N],
+    ['l', 'look'], ['loo', 'look'], ['look', 'look'], ['look sign', 'look at'],
+  ] as const)
+    assert.equal(walkWord(typed), want, typed);
+  // one letter too few, one too many, or another word
+  for (const typed of ['no', 'nort', 'nor', 'ea', 'we', 'wes', 'do', 'norths', 'looks', 'open cellar', ''])
+    assert.equal(walkWord(typed), null, typed);
 });

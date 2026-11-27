@@ -4,6 +4,10 @@
   game would send back, in its colours; notes say what the game does not (coins paid, an item
   given, a door unlocked, a test failed and why, with what would have passed it). The map
   lights up the way each turn went.
+
+  On the World's map it walks (`walking`): from a room, the arrow keys (`walk`) and the ways
+  under the game's words take the player through the exits, refused as the game refuses them,
+  and the map follows them (`onmove`). What they type is typed where they are.
 -->
 <svelte:options css="injected" />
 
@@ -11,6 +15,7 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import Coins from '@lucide/svelte/icons/coins';
   import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
+  import Footprints from '@lucide/svelte/icons/footprints';
   import Info from '@lucide/svelte/icons/info';
   import MapPin from '@lucide/svelte/icons/map-pin';
   import PlayIcon from '@lucide/svelte/icons/play';
@@ -22,24 +27,28 @@
   import { ABILITIES } from '../abilities';
   import { PEN, renderAnsi, runsOf, type Pen } from '../ansi';
   import { api, type Cell } from '../api';
-  import { exitsOf, REMOTE, TEXT } from '../library/exits';
+  import { DIRS, exitsOf, REMOTE, TEXT } from '../library/exits';
   import { readRecord, recordOf } from '../library/records.svelte';
   import { alternatives, coinsOf, patternLines, type Reading } from '../library/script';
-  import { Play, PLAYER, type Fix, type Pretend, type Shown } from './play';
+  import { Play, PLAYER, walkWord, type Fix, type Pretend, type Shown } from './play';
   import { nodeId } from './story';
 
   interface Props {
     /** The story's start, read as the story reads it. */
     start: { table: string; key: Cell[]; reading?: Reading; answer?: boolean };
     /** What the last turn lit: the records it reached and the ways between them (`from>to`). */
-    played: { nodes: Set<string>; went: Set<string> } | null;
+    played?: { nodes: Set<string>; went: Set<string> } | null;
     onclose: () => void;
     /** After each turn, the records it reached. */
     onturn?: (nodes: Set<string>) => void;
     /** How high the panel is. */
     high?: number;
+    /** Walking a map from the start room: the room played is the one the player is in. */
+    walking?: boolean;
+    /** Walking: where the player is after each turn. */
+    onmove?: (map: number, room: number) => void;
   }
-  let { start, played = $bindable(), onclose, onturn, high = $bindable(0) }: Props = $props();
+  let { start, played = $bindable(null), onclose, onturn, high = $bindable(0), walking = false, onmove }: Props = $props();
 
   const text = (v: Cell | undefined) => (v === null || v === undefined ? '' : String(v).split('\0')[0]!);
   const num = (v: Cell | undefined) => Number(v) || 0;
@@ -58,7 +67,9 @@
     if (start.reading === 'script' || start.reading === 'chances' || start.reading === 'text') return 'run';
     return null;
   });
-  const values = $derived(recordOf(start.table, start.key));
+  /** The record played: when walking, the room the player is in. */
+  const at = $derived.by((): Cell[] => (walking ? [me.map, me.room] : start.key));
+  const values = $derived(recordOf(start.table, at));
   const n0 = $derived(num(start.key[0]));
   /** The block the turns start from: the talk block, the room's commands, the block run. */
   const block = $derived(start.table === 'Monsters' ? num(values?.['Greet Txt']) : start.table === 'Rooms' ? num(values?.['Command Text']) : n0);
@@ -95,7 +106,18 @@
     return out.slice(0, 12);
   });
 
+  /** Walking: the ways out of the player's room that a direction takes, as stored (a Text or
+   * Remote Action exit's words are among the ways typed). */
+  const dirs = $derived.by(() => {
+    const v = values;
+    if (!walking || !v) return [];
+    return exitsOf((c) => v[c])
+      .filter((e) => e.to && e.type !== TEXT && e.type !== REMOTE)
+      .map((e) => e.dir);
+  });
+
   const TITLE: Record<Mode, string> = { talk: 'Try the conversation', room: 'Try typing here', run: 'Try it' };
+  const title = $derived(walking ? 'Walking' : mode ? TITLE[mode] : 'Play it');
   const runLabel = $derived(start.reading === 'chances' ? 'Roll it' : start.reading === 'text' ? 'Show it' : `Run block ${n0}`);
 
   // ---- the pretend player -------------------------------------------------------------------
@@ -123,6 +145,7 @@
       if (!me.race) me.race = num(races[0]?.[0][0]);
     });
     played = { nodes: new Set([nodeId(start.table, start.key)]), went: new Set() };
+    if (walking) void run({ kind: 'look' });
     return () => (played = null);
   });
 
@@ -132,10 +155,18 @@
 
   // ---- the turns ------------------------------------------------------------------------------
 
-  type Way = { kind: 'greet' } | { kind: 'ask' | 'type'; words: string } | { kind: 'run' };
+  /** A turn: what the player does. Walking, `go` a direction and `look` at the room (`at`
+   * something, which is not played; `put` there first, as a sysop puts a player). */
+  type Way =
+    | { kind: 'greet' }
+    | { kind: 'ask' | 'type'; words: string }
+    | { kind: 'run' }
+    | { kind: 'go'; dir: number; words?: string }
+    | { kind: 'look'; words?: string; at?: boolean; put?: [number, number] };
 
   interface Turn {
-    /** What the player typed, as the game's prompt would show it. */
+    /** What the player typed, as the game's prompt would show it (nothing when they were put
+     * somewhere). */
     said: string;
     way: Way;
     shown: Shown[];
@@ -150,6 +181,8 @@
   let term = $state<HTMLElement>();
 
   function saidOf(way: Way): string {
+    if (way.kind === 'go') return way.words ?? DIRS[way.dir]!;
+    if (way.kind === 'look') return way.put ? '' : (way.words ?? 'look');
     if (way.kind === 'greet') return `greet ${who}`;
     if (way.kind === 'ask') return `ask ${who} ${way.words}`;
     if (way.kind === 'type') return way.words;
@@ -157,7 +190,17 @@
   }
 
   async function turn(p: Play, way: Way) {
-    if (way.kind === 'run') {
+    if (way.kind === 'go') await p.go(p.me.map, p.me.room, way.dir);
+    else if (way.kind === 'look') {
+      if (way.at) p.shown.push({ to: 'note', text: 'LOOK at something is not played here: LOOK alone shows the room.' });
+      else if (way.put) {
+        const [m, r] = way.put;
+        const moved = m !== p.me.map || r !== p.me.room;
+        p.shown.push({ to: 'note', text: `Put in room ${m}/${r}.` });
+        // the room left keeps its monsters and what lies there
+        if ((await p.look(m, r)) === 'ok' && moved) Object.assign(p.me, { floor: [], monsters: [] });
+      } else await p.look(p.me.map, p.me.room);
+    } else if (way.kind === 'run') {
       if (start.reading === 'chances') await p.chances(n0);
       else if (start.reading === 'text') await p.show(n0, !!start.answer);
       else await p.runBlock(n0);
@@ -166,7 +209,8 @@
       if (start.table === 'Monsters') await p.ask(n0, q);
       else await p.askBlock(n0, who, q);
     } else if (way.kind === 'type') {
-      if (start.table === 'Rooms') await p.type(n0, num(start.key[1]), way.words);
+      if (walking) await p.type(p.me.map, p.me.room, way.words);
+      else if (start.table === 'Rooms') await p.type(n0, num(start.key[1]), way.words);
       else if ((await p.command(n0, way.words)) === 'nothing') p.shown.push({ to: 'note', text: 'None of the commands takes it.' });
     }
   }
@@ -181,6 +225,9 @@
       p.shown.push({ to: 'note', text: 'A record the turn needed could not be read, so it stopped here. Try it again.', bad: true });
     }
     me = p.me;
+    // a turn under way when the classes came keeps them
+    if (!me.cls) me.cls = num(classes[0]?.[0][0]);
+    if (!me.race) me.race = num(races[0]?.[0][0]);
     let pen = PEN;
     const pens = p.shown.map((s) => {
       if (s.to !== 'you' && s.to !== 'all') return PEN;
@@ -192,6 +239,7 @@
     played = { nodes: p.touched, went: p.went };
     busy = false;
     onturn?.(p.touched);
+    if (walking) onmove?.(me.map, me.room);
     await tick();
     term?.scrollTo({ top: term.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
@@ -208,14 +256,45 @@
     e.preventDefault();
     const words = typed.trimEnd();
     if (!words.trim()) return;
-    void run(mode === 'talk' ? { kind: 'ask', words } : { kind: 'type', words });
     typed = '';
+    // the game's own commands come before the room's
+    const w = walking ? walkWord(words) : null;
+    if (typeof w === 'number') void run({ kind: 'go', dir: w, words });
+    else if (w) void run({ kind: 'look', words, at: w === 'look at' });
+    else void run(mode === 'talk' ? { kind: 'ask', words } : { kind: 'type', words });
   }
 
   function again() {
     turns = [];
     me = fresh();
     played = { nodes: new Set([nodeId(start.table, start.key)]), went: new Set() };
+    if (walking) void run({ kind: 'look' });
+  }
+
+  /** Walking: the player goes `dir` from where they are, as an arrow key on the map does. */
+  export function walk(dir: number) {
+    void run({ kind: 'go', dir });
+  }
+
+  /** Walking: the player is put in a room, as a sysop puts a player, and reads it. */
+  export function put(map: number, room: number) {
+    void run({ kind: 'look', put: [map, room] });
+  }
+
+  /** Walking, with nothing typed: the arrow keys walk, and Esc goes back to the map. */
+  const ARROWS: Record<string, number> = { ArrowUp: 0, ArrowDown: 1, ArrowRight: 2, ArrowLeft: 3 };
+  function typing(e: KeyboardEvent) {
+    if (!walking || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (typed) typed = '';
+      else onclose();
+      return;
+    }
+    const d = ARROWS[e.key];
+    if (d === undefined || typed) return;
+    e.preventDefault();
+    walk(d);
   }
 
   function ansi(node: HTMLElement, [line, pen]: [string, Pen]) {
@@ -248,15 +327,15 @@
   </div>
 {/snippet}
 
-<section class="play" aria-label={mode ? TITLE[mode] : 'Play it'} bind:offsetHeight={high}>
+<section class="play" class:walk={walking} aria-label={title} bind:offsetHeight={high}>
   <header class="ph">
-    <span class="tile"><PlayIcon size={14} /></span>
-    <b class="title">{mode ? TITLE[mode] : 'Play it'}</b>
+    <span class="tile">{#if walking}<Footprints size={14} />{:else}<PlayIcon size={14} />{/if}</span>
+    <b class="title">{title}</b>
     <span class="purse" title="Coins: {me.copper.toLocaleString('en-US')} copper"><Coins size={14} />{coinsOf(me.copper)}</span>
     <span class="end">
       <button type="button" class="btn sm ghost" aria-expanded={drawer} onclick={() => (drawer = !drawer)}><UserRound size={14} />{me.name}, level {me.level}</button>
       <button type="button" class="btn sm icon ghost" title="Start over" aria-label="Start over" onclick={again}><RotateCcw size={14} /></button>
-      <button type="button" class="btn sm icon ghost" title="Close" aria-label="Close" onclick={onclose}><X size={15} /></button>
+      <button type="button" class="btn sm icon ghost" title={walking ? 'Back to editing (Esc)' : 'Close'} aria-label={walking ? 'Back to editing' : 'Close'} onclick={onclose}><X size={15} /></button>
     </span>
   </header>
 
@@ -298,12 +377,13 @@
   <div class="term" role="log" aria-label="What the player reads" bind:this={term}>
     {#if !turns.length}
       <p class="hint">
-        {#if mode === 'talk'}Greet {who} or ask about something, and read what the game would send back.{:else if mode === 'room'}Type what a player would here, an exit's words or a command, and read what the game would send back.{:else}Run it as the game would, and read what it sends back.{/if}
-        The map lights up the way it goes.
+        {#if walking}Walk the exits with the arrow keys or the ways below, and read what the game would send back. The map follows you.
+        {:else}{#if mode === 'talk'}Greet {who} or ask about something, and read what the game would send back.{:else if mode === 'room'}Type what a player would here, an exit's words or a command, and read what the game would send back.{:else}Run it as the game would, and read what it sends back.{/if}
+          The map lights up the way it goes.{/if}
       </p>
     {/if}
     {#each turns as t, ti (ti)}
-      <div class="said"><span class="prompt">&gt;</span> {t.said}</div>
+      {#if t.said}<div class="said"><span class="prompt">&gt;</span> {t.said}</div>{/if}
       {#each t.shown as s, si (si)}
         {#if s.to === 'note'}
           <div class="note" class:bad={s.bad}>
@@ -327,9 +407,12 @@
 
   <div class="pb">
     {#if mode === 'talk' || mode === 'room'}
-      {#if ways.length || mode === 'talk'}
-        <div class="ways" aria-label={mode === 'talk' ? 'Topics' : 'Commands'}>
+      {#if ways.length || dirs.length || mode === 'talk'}
+        <div class="ways" aria-label={mode === 'talk' ? 'Topics' : walking ? 'Ways out and commands' : 'Commands'}>
           {#if mode === 'talk'}<button type="button" class="btn sm" disabled={busy} onclick={() => run({ kind: 'greet' })}>Greet</button>{/if}
+          {#each dirs as d (d)}
+            <button type="button" class="btn sm dir" disabled={busy} title="Walk {DIRS[d]}" onclick={() => walk(d)}>{DIRS[d]}</button>
+          {/each}
           {#each ways as w (w)}
             <button type="button" class="btn sm way" disabled={busy} title={mode === 'talk' ? `ask ${who} ${w}` : w} onclick={() => run(mode === 'talk' ? { kind: 'ask', words: w } : { kind: 'type', words: w })}>{mode === 'talk' ? `about ${w}` : w}</button>
           {/each}
@@ -338,13 +421,17 @@
       <form class="type" onsubmit={send}>
         <input
           bind:value={typed}
-          placeholder={mode === 'talk' ? `Ask ${who} about anything` : 'Type what a player would'}
+          placeholder={mode === 'talk' ? `Ask ${who} about anything` : walking ? 'Type what a player would: a direction, LOOK, a command' : 'Type what a player would'}
           aria-label={mode === 'talk' ? `Ask ${who} about` : 'Type as a player'}
           autocomplete="off"
           spellcheck="false"
+          onkeydown={typing}
         />
         <button type="submit" class="btn sm primary sticker" disabled={busy || !typed.trim()}><CornerDownLeft size={14} />{mode === 'talk' ? 'Ask' : 'Type'}</button>
       </form>
+      {#if walking}
+        <p class="keys"><span class="kbd">←↑→↓</span> walk <span class="kbd">U</span><span class="kbd">D</span> up and down <span class="kbd">Esc</span> back to editing at the room you reach</p>
+      {/if}
     {:else if mode === 'run'}
       <button type="button" class="btn sm primary sticker" disabled={busy} onclick={() => run({ kind: 'run' })}><PlayIcon size={14} />{runLabel}</button>
     {/if}
@@ -380,9 +467,11 @@
   /* the game's text, 80 columns wide when the panel has room */
   .term {
     flex: 1; min-height: 140px; overflow: auto; padding: 10px 12px; background: var(--term-bg); color: var(--term-fg);
-    font: clamp(10px, calc((100cqw - 26px) / 48.5), 13px)/1.35 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere;
+    font: clamp(10px, calc((100cqw - 26px) / 48.5), 13px)/1.35 var(--font-mono); overflow-wrap: anywhere;
   }
   .hint { margin: 0; font: 700 12.5px/1.45 var(--font-ui); color: #a9a3cc; white-space: normal; }
+  /* the game's lines keep their spaces (the blanks between the blocks are not lines) */
+  .said, .line { white-space: pre-wrap; }
   .said { color: #ffffff; font-weight: 700; margin-top: 8px; }
   .said:first-child { margin-top: 0; }
   .prompt { color: #8a84b0; }
@@ -407,6 +496,18 @@
   .way { max-width: 220px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-weight: 700; }
   .type { display: flex; gap: 6px; }
   .type input { flex: 1; font: 700 13px var(--font-mono); }
+  .dir { font-weight: 800; background: var(--mint-2); color: var(--mint-ink); }
+  .keys { margin: -2px 0 0; font: 700 11.5px var(--font-ui); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .keys .kbd { height: 18px; font-size: 10.5px; margin-left: 6px; }
+  .keys .kbd:first-child { margin-left: 0; }
+  @media (pointer: coarse) { .keys { display: none; } }
+
+  /* walking a map: in its corner at a steady height, clear of its overview */
+  .play.walk {
+    left: var(--edge, 12px); bottom: var(--edge, 12px); max-height: none;
+    width: min(600px, calc(100% - var(--card, 0px) - 214px - 3 * var(--edge, 12px)));
+    height: min(calc(100% - 124px), max(330px, 46%));
+  }
 
   @media (max-width: 760px) {
     .play { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: min(72%, calc(100% - 72px)); }
@@ -414,5 +515,6 @@
     /* the topics in one row that scrolls, so the game's words keep the room */
     .ways { flex-wrap: nowrap; overflow-x: auto; max-height: none; padding-bottom: 2px; }
     .way, .ways .btn { flex: none; }
+    .play.walk { left: 8px; right: 8px; bottom: 8px; width: auto; height: min(50%, calc(100% - 124px)); }
   }
 </style>
