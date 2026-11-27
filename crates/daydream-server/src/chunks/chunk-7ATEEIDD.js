@@ -1,2 +1,0 @@
-// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
-import{Ca as t,Da as e,Ga as o}from"./chunk-LSYDCY65.js";var r={name:"rotate-ccw",size:24,node:[["path",{d:"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"}],["path",{d:"M3 3v5h5"}]]},_=r.node,c=new Set(["$$slots","$$events","$$legacy"]);function p(a,n){let s=t(n,c);o(a,e(()=>s,{get icon(){return r}}))}export{p as a};

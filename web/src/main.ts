@@ -1,6 +1,6 @@
 // Daydream's web UI: the frame (the top bar, the rail of places, the Ctrl+K palette, the
-// inspector and the toasts) around the places. Home, the World map, the Library, Story,
-// Worlds and Publish are the frame's own; Players' editor, Tools, Lists and the old map
+// inspector and the toasts) around the places. Home, the World map, the Library, Story, the
+// Workshop, Worlds and Publish are the frame's own; Players' editor and the old map
 // (#/map-classic) are today's pages, shown inside it until the redesign reaches each one.
 
 import './styles/tokens.css';
@@ -10,7 +10,6 @@ import { mount } from 'svelte';
 import { api } from './api';
 import * as editor from './editor';
 import { games } from './games';
-import { listsPage } from './lists';
 import { mapPage } from './map';
 import Home from './shell/Home.svelte';
 import Inspector from './shell/Inspector.svelte';
@@ -21,12 +20,11 @@ import { resumePublish } from './shell/publishing.svelte';
 import PublishSheet from './shell/PublishSheet.svelte';
 import Rail from './shell/Rail.svelte';
 import { parse, recordHref, type Place, type Route } from './shell/routes';
-import { app, closeInspector, loadRecent, realmChanged, redo, refreshNow, refreshStatus, undo } from './shell/state.svelte';
+import { app, closeInspector, loadRecent, redo, refreshNow, refreshStatus, undo } from './shell/state.svelte';
 import { messageOf, toast } from './shell/toasts.svelte';
 import ToastStack from './shell/ToastStack.svelte';
 import TopBar from './shell/TopBar.svelte';
 import Worlds from './shell/Worlds.svelte';
-import { toolsPage } from './tools';
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -49,22 +47,13 @@ let world: { show: (rest: string[], fresh: boolean) => Promise<void> } | null = 
 let library: { show: (r: Route) => Promise<boolean>; here: () => string; step: (by: number) => void } | null = null;
 let worlds: { load: (refresh?: boolean) => Promise<void> } | null = null;
 let story: { show: (rest: string[]) => void } | null = null;
+let workshop: { show: (rest: string[]) => void } | null = null;
 const made = new Set<string>();
 
 function once(id: string, make: () => void) {
   if (made.has(id)) return;
   made.add(id);
   make();
-}
-
-function showWorkshop(tab: 'tools' | 'lists') {
-  for (const a of document.querySelectorAll<HTMLAnchorElement>('#workshop .subnav a')) {
-    a.classList.toggle('active', a.dataset.tab === tab);
-  }
-  $('tools').hidden = tab !== 'tools';
-  $('lists').hidden = tab !== 'lists';
-  if (tab === 'tools') once('tools', () => $('tools').append(toolsPage(realmChanged)));
-  else once('lists', () => $('lists').append(listsPage()));
 }
 
 // ---- routing -------------------------------------------------------------------------
@@ -83,7 +72,7 @@ function canonical(r: Route): string {
       if (r.rest[0] === 'classic') return ['#/map-classic', ...r.rest.slice(1)].join('/');
       return r.rest.length ? `#/world/${r.rest.join('/')}` : '#/world';
     case 'workshop':
-      return r.rest[0] === 'lists' ? '#/workshop/lists' : '#/workshop';
+      return r.rest[0] ? `#/workshop/${encodeURIComponent(r.rest[0])}` : '#/workshop';
     case 'story':
       return ['#/story', ...r.rest.map(encodeURIComponent)].join('/');
     default:
@@ -146,7 +135,12 @@ async function route() {
       void world.show(r.rest, was?.place !== 'world' || was.rest[0] === 'classic');
       break;
     case 'workshop':
-      showWorkshop(r.rest[0] === 'lists' ? 'lists' : 'tools');
+      if (!workshop) {
+        // the Workshop's code loads the first time it is opened
+        const { default: Workshop } = await import('./workshop/Workshop.svelte');
+        workshop ??= mount(Workshop, { target: $('workshop') });
+      }
+      workshop.show(r.rest);
       break;
     case 'worlds':
       // what is found, open and running changes: asked afresh every time

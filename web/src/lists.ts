@@ -1,6 +1,6 @@
 // NMR's lists: the Limited Items List, Find an Item, the Control Room List, the Monster
 // Group / Index List and the NPC / Room List, over the server's /api/reports routes. Each
-// record they name links to its editor.
+// record they name links to its editor. The Workshop shows each in its tool's page.
 
 import { MONSTER_GROUP } from './layouts';
 import { recordHref } from './shell/routes';
@@ -110,7 +110,7 @@ function scanBoxes(): [HTMLElement[], () => string] {
   return [boxes.map(([l]) => l), () => boxes.map(([, i, n]) => `${n}=${i.checked}`).join('&')];
 }
 
-function limitedItems(): HTMLElement {
+export function limitedItems(): HTMLElement {
   const [boxes, query] = scanBoxes();
   return card(
     'Limited Items List',
@@ -138,7 +138,7 @@ function limitedItems(): HTMLElement {
   );
 }
 
-function findItem(): HTMLElement {
+export function findItem(): HTMLElement {
   const [boxes, query] = scanBoxes();
   const item = h('input', { type: 'text', inputmode: 'numeric', class: 'number' });
   return card('Find an Item', 'Every room, shop and user that has the item.', [h('label', {}, 'Item to Find: ', item), ...boxes], async () => {
@@ -153,7 +153,7 @@ function findItem(): HTMLElement {
   });
 }
 
-function controlRooms(): HTMLElement {
+export function controlRooms(): HTMLElement {
   return card('Control Room List', 'Each control room, and the rooms on its map that name it.', [], async () => {
     const res = await get('/api/reports/control-rooms');
     return grid(
@@ -167,7 +167,7 @@ function controlRooms(): HTMLElement {
   });
 }
 
-function monsterGroups(): HTMLElement {
+export function monsterGroups(): HTMLElement {
   return card('Monster Group / Index List', 'The monsters of each group and index (at most 15 each, as NMR lists).', [], async () => {
     const res = await get('/api/reports/monster-groups');
     return grid(
@@ -180,7 +180,7 @@ function monsterGroups(): HTMLElement {
   });
 }
 
-function npcRooms(): HTMLElement {
+export function npcRooms(): HTMLElement {
   return card('NPC / Room List', 'Each room with a permanent NPC, by the monster\'s name.', [], async () => {
     const res = await get('/api/reports/npc-rooms');
     return grid(
@@ -188,8 +188,4 @@ function npcRooms(): HTMLElement {
       res.rooms.map((r: any) => [roomLink(r.map, r.room), r.room_name, link('Monsters', [r.monster], `${r.monster_name} (${r.monster})`)]),
     );
   });
-}
-
-export function listsPage(): HTMLElement {
-  return h('div', { class: 'tools' }, limitedItems(), findItem(), controlRooms(), monsterGroups(), npcRooms());
 }

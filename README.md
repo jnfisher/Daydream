@@ -398,6 +398,17 @@ sure one (the game's own words for a blank message, the likely word for a typo, 
 own for a line written for another creature). The checks
 run again after each save.
 
+**The Workshop** has NMR's tools and lists as cards, grouped by what they are for: balance
+(scale a field such as experience or cost, drop rates, lifting limits), bulk edit (NMR's
+Universal Modifier), find and list, renumber, export and publish, resets, players, and the
+advanced ones (buffer rooms, text block endings, deleting a run of records). A search above
+them finds a tool by NMR's own names too ("Universal Modifier", "Reset Kill Times", "Compile
+Update File"), and so does Ctrl+K. Each tool has its own page and link (`#/workshop/scale`,
+`#/workshop/bulk`), and the ones that change the world preview first: how many records
+change, which values go from what to what, and what is already so or left out. Applying it is
+one step of the history, so Undo (the toast's, Ctrl+Z or Changes) takes it all back until you
+publish.
+
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
 sounds, which are off until you do. Licenses: `/notices.txt`.
@@ -427,7 +438,7 @@ MAP:FROM-TO` and `--no-rooms`.
 cargo run -p daydream -- mme-export ./realm data.mdb      # on Windows; or --plan as above
 ```
 
-In the browser the same export is the Tools page's **Export to MMUD Explorer** card, laid out
+In the browser the same export is the Workshop's **Export to MMUD Explorer** (`#/workshop/mme`), laid out
 as NMR's form (its config `.ini` files load and save there too). On Windows it downloads the
 `.mdb`; elsewhere it downloads the plan and `write-mdb.ps1` to run on a Windows machine.
 
@@ -460,7 +471,7 @@ cargo run -p daydream -- changes ./realm --revert WCCITEMS:12   # or --revert-al
 ```
 
 **Undo.** Every save is a step of the working copy's history, whoever made it: a save in an
-editor, a Tools page run, an agent's batch of edits, a command. `history` lists the steps,
+editor, a Workshop tool, an agent's batch of edits, a command. `history` lists the steps,
 `undo` takes the newest back as a whole (or `--step N`), and `redo` writes the step undone
 last again; the server answers the same at `GET /api/history`, `POST /api/undo` and
 `POST /api/redo`. A step whose records changed since is not undone (undo the later step
@@ -478,13 +489,13 @@ cargo run -p daydream -- write-dat ./realm /path/to/WGSERV --dry-run
 cargo run -p daydream -- write-dat ./realm /path/to/WGSERV           # or --out DIR for a copy
 ```
 
-In the browser it is the Tools page's **Write to WCC files** card.
+In the browser it is the Workshop's **Write to WCC files** (`#/workshop/wcc`).
 
 **The update file.** MajorMUD merges its update file (`WCCUPDAT`, or `WCCUPDA2` on Worldgroup
 3) into the world at every start, and MBBSEmu at its nightly cleanup too. The stock file holds
 a copy of every stock record, so an edit written only into the world files is changed back
 at the next start, and a deleted record comes back. Daydream therefore keeps the realm's
-update file in step with every save (the editors, the Tools page, the MCP server and the
+update file in step with every save (the editors, the Workshop, the MCP server and the
 commands that write): an edited record's copy becomes the record as saved, a new record gets
 one, and a deleted or renumbered record's old copy goes. `write-dat` writes the update file
 with the rest, so the next start applies the edits again rather than undoing them. Edits
@@ -516,8 +527,8 @@ cargo run -p daydream -- silvermere-export ./realm postgres://user@host/silverme
 cargo run -p daydream -- silvermere-import ./realm postgres://user@host/silvermere
 ```
 
-`serve` and `mcp` take `--silvermere DATABASE` to offer the same in the browser (the Tools
-page's **silvermere** card) and to agents (`silvermere_status`, `silvermere_export`,
+`serve` and `mcp` take `--silvermere DATABASE` to offer the same in the browser (the
+Workshop's **silvermere**, `#/workshop/silvermere`) and to agents (`silvermere_status`, `silvermere_export`,
 `silvermere_import`, which preview unless told otherwise).
 
 For AI agents, Daydream is an MCP (Model Context Protocol) server. An agent reads the realm

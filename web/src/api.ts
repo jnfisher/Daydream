@@ -52,6 +52,38 @@ export interface Report {
   errors: string[];
 }
 
+/** One value a Workshop run changes (`daydream_nmr::modify::Change`). */
+export interface PlanChange {
+  key: Cell[];
+  column: string;
+  before: Cell;
+  after: Cell;
+}
+
+/** What a Workshop run (a bulk edit, one of NMR's fixes) changes: previewed, or written. */
+export interface Plan {
+  dry_run: boolean;
+  table: string;
+  /** Values that change. */
+  changed: number;
+  /** Records they are in. */
+  records: number;
+  /** Records the run's conditions left out. */
+  skipped: number;
+  /** Records already as the run would make them. */
+  unchanged: number;
+  /** Records worth a look, left as they are. */
+  notes: string[];
+  /** The changes, the first 2,000 of them. */
+  changes: PlanChange[];
+  report: Report | null;
+  /** The step of the history a write made (none for a preview). */
+  step?: number | null;
+}
+
+/** A Workshop run's request: previewed (`dry_run`) first, then written. */
+export type RunBody = Record<string, unknown>;
+
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
@@ -409,6 +441,16 @@ export const api = {
   history: (limit = 20) => call<History>('GET', `/api/history?limit=${limit}`),
   undo: (step?: number) => call<Step>('POST', '/api/undo', step === undefined ? {} : { step }),
   redo: (step?: number) => call<Step>('POST', '/api/redo', step === undefined ? {} : { step }),
+  /** A Universal Modifier run (`daydream_nmr::modify::Modify`): previewed, or written as one
+   * step of the history, called `label` there (or what the server calls it). */
+  modify: (body: RunBody, dryRun: boolean, label?: string) =>
+    call<Plan>('POST', '/api/tools/modify', { ...body, dry_run: dryRun, label }, dryRun),
+  /** One of NMR's fixes (`daydream_nmr::presets::Preset`): previewed, or written as one step. */
+  fix: (body: RunBody, dryRun: boolean, label?: string) =>
+    call<Plan>('POST', '/api/tools/preset', { ...body, dry_run: dryRun, label }, dryRun),
+  /** Deletes a table's records: a range of them, or `all`. Previewed, or written as one step. */
+  deleteRecords: (body: { table: string; range: { map?: number; from: number; to: number } | null; all: boolean }, dryRun: boolean) =>
+    call<{ dry_run: boolean; report: Report; step?: number | null }>('POST', '/api/tools/delete', { ...body, dry_run: dryRun }, dryRun),
   /** One of NMR's fixes (`daydream_nmr::presets::Preset`), written straight away. */
   preset: (body: Record<string, unknown>) => call<{ changes?: unknown[] }>('POST', '/api/tools/preset', { ...body, dry_run: false }),
 };
