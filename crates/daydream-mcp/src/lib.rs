@@ -16,7 +16,7 @@
 //! | `get_row` | one row, every column |
 //! | `free_numbers` | record numbers not in use (rooms: within a map) |
 //! | `get_map` | one map's rooms and exits, and the realm's maps |
-//! | `preview_edits` | what a list of edits (insert, update, delete) would change; a token |
+//! | `preview_edits` | what a list of edits (insert, update, delete) would change, and what it would leave pointing at nothing; a token |
 //! | `apply_edits` | makes previewed edits, if the realm still gives the same preview |
 //! | `undo` | puts back the records an applied token changed, byte for byte |
 //! | `history` | the applied edits that can be undone, by changeset |
@@ -47,6 +47,7 @@ use daydream_nmr::schema::NmrTable;
 use daydream_store::Realm;
 
 mod batch;
+mod checks;
 mod describe;
 mod filter;
 mod prompts;
@@ -358,7 +359,7 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "preview_edits",
-            "description": "Checks a list of edits against the realm without writing: every value each would change, after the import has accepted the row. Edits must touch different rows. Returns a token for apply_edits. For many edits, write them to a JSON file in the realm's batch folder (game_status gives it) and pass edits_file instead of retyping them. An insert's preview leaves out the columns it leaves blank; a large preview comes back as a summary unless detail asks for more.",
+            "description": "Checks a list of edits against the realm without writing: every value each would change, after the import has accepted the row. Edits must touch different rows. Returns a token for apply_edits. For many edits, write them to a JSON file in the realm's batch folder (game_status gives it) and pass edits_file instead of retyping them. An insert's preview leaves out the columns it leaves blank; a large preview comes back as a summary unless detail asks for more. warnings lists values the edits set that name a record the realm does not have (counting the batch's own inserts and deletes), and rows that would still name a record the batch deletes: fix them in the same batch, or add the records next.",
             "inputSchema": { "type": "object", "properties": {
                 "edits": { "type": "array", "items": edit, "minItems": 1 },
                 "edits_file": { "type": "string", "description": "A .json file of edits (a list, or {\"edits\": [...], \"changeset\": \"...\"}) in the realm's batch folder or another folder the server allows; a relative path is taken from the batch folder" },
@@ -665,10 +666,14 @@ impl Server {
                 RowError::NotFound(format!("{} {}", t.name, rows::key_display(&key))).into(),
             );
         }
-        let tables: Vec<&'static NmrTable> = rows::record_tables()
+        describe::find_references(&realm, &self.searched(), t, &key)
+    }
+
+    /// The tables searched for rows that name a record: those the agent may use.
+    fn searched(&self) -> Vec<&'static NmrTable> {
+        rows::record_tables()
             .filter(|s| self.table(s.name).is_ok())
-            .collect();
-        describe::find_references(&realm, &tables, t, &key)
+            .collect()
     }
 
     fn list_rows(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -945,9 +950,13 @@ impl Server {
             changeset = changeset_arg(&Map::from_iter([("changeset".to_string(), c)]))?;
         }
         let previews = self.preview_all(&realm, &edits)?;
+        let warnings = checks::warnings(&realm, &edits, &previews, &self.searched())?;
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
         let token = format!("e{}-{n}", now());
         let mut shown = batch::shown(&edits, &previews, detail);
+        if !warnings.is_empty() {
+            shown["warnings"] = json!(warnings);
+        }
         self.pending
             .lock()
             .map_err(|e| ToolError::Io(e.to_string()))?

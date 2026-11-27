@@ -306,6 +306,72 @@ pub fn find_row<'a>(rows: &'a NmrRows, index: &[&str], key: &[Value]) -> Option<
         .find(|r| same_key(&key_of_row(rows, r, index), key))
 }
 
+/// What a row was when the realm was last read from its game or written back into it (its
+/// last publish).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Published {
+    /// As it is now; also when the realm's changes are not known (a realm edited before
+    /// Daydream journaled its edits).
+    Same,
+    /// It is new since.
+    Added,
+    /// It changed since: the row as it was.
+    Was(Vec<Value>),
+}
+
+/// What the row of `t` keyed `key` was at the realm's last publish: found among the records
+/// its base journal holds ([`daydream_store::journal::BASE`]), by the key they have now, so
+/// a renumbered record's was is its old number.
+pub fn published(realm: &Realm, t: &NmrTable, key: &[Value]) -> Result<Published, RowError> {
+    use daydream_store::journal;
+    let Some(table) = t.table else {
+        return Ok(Published::Same);
+    };
+    if journal::established(realm.dir())?.is_none() {
+        return Ok(Published::Same);
+    }
+    let layout = schema::layout_of(table, realm.layout_set());
+    let index = index_columns(t);
+    let positions: Vec<Option<usize>> = index
+        .iter()
+        .map(|c| t.columns.iter().position(|col| col.name == *c))
+        .collect();
+    let row = |bytes: &[u8]| {
+        let mut full = bytes.to_vec();
+        // a variable-length record (a text block) is short of its layout
+        if full.len() < layout.len {
+            full.resize(layout.len, 0);
+        }
+        crate::export::row_of(t, layout, &full)
+    };
+    for file in realm.files_of(table) {
+        let entries = journal::entries_of(realm.dir(), journal::BASE, &file.stem)?;
+        if entries.is_empty() {
+            continue;
+        }
+        let db = WbtrvDb::open_read_only(&file.path)?;
+        for e in entries {
+            let Some(now) = db.get(e.id)? else {
+                continue;
+            };
+            let now_row = row(&now);
+            let now_key: Vec<Value> = positions
+                .iter()
+                .map(|p| p.map_or(Value::Null, |i| now_row[i].clone()))
+                .collect();
+            if !same_key(&now_key, key) {
+                continue;
+            }
+            return Ok(match e.before {
+                None => Published::Added,
+                Some(b) if b == now => Published::Same,
+                Some(b) => Published::Was(row(&b)),
+            });
+        }
+    }
+    Ok(Published::Same)
+}
+
 /// A row as `{column: value}`, as the editors show it.
 pub fn row_json(rows: &NmrRows, row: &[Value]) -> Map<String, Json> {
     rows.columns

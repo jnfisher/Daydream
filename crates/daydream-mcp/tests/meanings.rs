@@ -137,3 +137,102 @@ fn references_find_what_names_a_record() {
     );
     assert_eq!(groups["free"], json!([7, 8, 9]));
 }
+
+#[test]
+fn previews_warn_of_what_would_point_at_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    empty_realm(tmp.path());
+    let server = Server::new(tmp.path(), Options::default());
+    let mut c = Client::new(&server);
+    let p = c.call("preview_edits", json!({ "edits": [
+        { "op": "insert", "table": "Messages", "values": { "Number": 9, "Line 3": "The newt dies." } },
+        { "op": "insert", "table": "Items", "values": { "Number": 1, "Name": "iron key" } },
+        { "op": "insert", "table": "Monsters", "values": { "Number": 1, "Name": "cave newt", "Death Msg": 9, "Weapon Number": 1 } },
+        { "op": "insert", "table": "Monsters", "values": { "Number": 2, "Name": "bat", "Weapon Number": 1 } },
+        { "op": "insert", "table": "Rooms", "values": { "Map Number": 1, "Room Number": 1, "Name": "Grotto", "Exit 0": 2 } },
+        { "op": "insert", "table": "Rooms", "values": { "Map Number": 1, "Room Number": 2, "Name": "Ledge", "Exit 1": 1 } }
+    ] }));
+    assert!(p.get("warnings").is_none(), "{p}");
+    c.call("apply_edits", json!({ "token": p["token"] }));
+    let warnings = |c: &mut Client, edits: Value| -> Vec<String> {
+        let p = c.call("preview_edits", json!({ "edits": edits }));
+        p["warnings"]
+            .as_array()
+            .map(|w| w.iter().map(|s| s.as_str().unwrap().to_string()).collect())
+            .unwrap_or_default()
+    };
+
+    // values that name nothing, counting what the batch itself adds
+    let w = warnings(
+        &mut c,
+        json!([
+            { "op": "update", "table": "Monsters", "key": [1], "values": { "Death Msg": 99 } },
+            { "op": "insert", "table": "Items", "values": { "Number": 2, "Name": "net", "Hit Msg": 10, "Miss Msg": 11 } },
+            { "op": "insert", "table": "Messages", "values": { "Number": 10, "Line 1": "Caught!" } },
+            { "op": "update", "table": "Rooms", "key": [1, 1], "values": {
+                "Exit 1": 7,
+                "Exit 2": 1, "Type 2": 8, "Para1 2": 2,
+                "Exit 3": 2, "Type 3": 2, "Para1 3": 50 } }
+        ]),
+    );
+    assert_eq!(
+        w,
+        [
+            "Monsters [1]: Death Msg names Messages 99, which the realm does not have",
+            "Items [2]: Miss Msg names Messages 11, which the realm does not have",
+            "Rooms [1,1]: Exit 1 names room 1/7, which the realm does not have",
+            "Rooms [1,1]: Exit 2 names room 2/1, which the realm does not have",
+            "Rooms [1,1]: Para1 3 (Key: the key item) names Items 50, which the realm does not have",
+        ],
+        "{w:?}"
+    );
+
+    // a value the edit leaves alone is not the edit's to warn of
+    let p = c.call(
+        "preview_edits",
+        json!({ "edits": [
+        { "op": "update", "table": "Monsters", "key": [1], "values": { "Death Msg": 99 } }
+    ] }),
+    );
+    c.call("apply_edits", json!({ "token": p["token"] }));
+    assert!(
+        warnings(
+            &mut c,
+            json!([
+                { "op": "update", "table": "Monsters", "key": [1], "values": { "Name": "newt" } }
+            ])
+        )
+        .is_empty()
+    );
+
+    // deleting what rows still name; a row the batch points elsewhere, or deletes, does not
+    let w = warnings(
+        &mut c,
+        json!([{ "op": "delete", "table": "Items", "key": [1] }]),
+    );
+    assert_eq!(
+        w,
+        [
+            "deleting Items [1] leaves 2 rows naming it: Monsters [1] Weapon Number, Monsters [2] Weapon Number"
+        ],
+        "{w:?}"
+    );
+    let w = warnings(
+        &mut c,
+        json!([
+            { "op": "delete", "table": "Items", "key": [1] },
+            { "op": "update", "table": "Monsters", "key": [1], "values": { "Weapon Number": 0 } },
+            { "op": "delete", "table": "Monsters", "key": [2] }
+        ]),
+    );
+    assert!(w.is_empty(), "{w:?}");
+    let w = warnings(
+        &mut c,
+        json!([{ "op": "delete", "table": "Rooms", "key": [1, 2] }]),
+    );
+    assert_eq!(
+        w,
+        ["deleting Rooms [1,2] leaves 1 row naming it: Rooms [1,1] Exit 0"],
+        "{w:?}"
+    );
+}
