@@ -32,7 +32,9 @@ pub mod renumber;
 pub mod reports;
 pub mod rows;
 pub mod schema;
+pub mod script;
 pub mod text;
+pub mod wiring;
 
 pub use data::{NmrData, NmrRows};
 pub use export::{ExportOptions, export, export_table, layout_of_realm};

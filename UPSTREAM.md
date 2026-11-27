@@ -1,6 +1,6 @@
 # Code copied from other projects
 
-Daydream reuses code from two MIT-licensed projects. It is copied rather than shared as a
+Daydream reuses code from two MIT-licensed projects, and word lists from a third project. It is copied rather than shared as a
 dependency, so neither project has to change for Daydream, and fixes are carried across by
 hand. When you fix a bug in copied code, check whether the upstream copy has it too.
 
@@ -18,6 +18,7 @@ hand. When you fix a bug in copied code, check whether the upstream copy has it 
 | `crates/daydream-silvermere/src/db/{dialect,guard,world_import}.rs`, `db/repo/` (rooms, items, monsters, spells, classes, races, shops, messages, text_blocks) | same names in `crates/silvermere-db/src/` | `silvermere_types` became `daydream_types` and `crate::` became `crate::db::`. Test modules left out. A new `DbError` stands in for silvermere-db's error type. |
 | `crates/daydream-silvermere/src/db/pool.rs` | `crates/silvermere-db/src/pool.rs` | Trimmed to `Db`: no `TestDb`, no accessors for the player tables. |
 | `web/src/library/script.ts` | `crates/silvermere-engine/src/scripts/{mod,actions,special}.rs` | Ported to TypeScript for the text block card: the clause parser (`skip_word`, `leading_int32`, `Clause::parse`, the keyword, teleport and skill tables) and how each runner cuts a block into lines. What a clause does is said in words, not run; `script.test.ts` carries the upstream parser tests. |
+| `crates/daydream-nmr/src/script.rs` | the same, through `web/src/library/script.ts` | The parser and the line cutting again, in Rust, for the checks across the world (`wiring.rs`). Keep it in step with `script.ts`; its tests are `script.test.ts`'s. |
 | `.github/scripts/zigbuild-prep.sh` | `.github/scripts/zigbuild-prep.sh` (1.0.1) | Its own cache folder (`daydream-tools`); the basement-runner notes left out. The zig and cargo-zigbuild pins are silvermere's. |
 
 Not copied: the importer, the `WCCUPDAT.DAT` patch merge, asset unpacking and the checks,
@@ -47,6 +48,14 @@ left out.
 differential tests (`crates/daydream-store/tests/oracle.rs`) check that Daydream writes the
 same `.db` it does, byte for byte in every table. When you move to a newer wbtrv32, bump the
 commit there and here, and port any change to the key columns.
+
+## SCOWL (http://wordlist.aspell.net/), as the npm package wordlist-english 1.2.1 ships it
+
+`crates/daydream-nmr/src/words/words.deflate`, the spelling check's dictionary, is SCOWL's
+word lists of sizes 10 to 60 in every dialect (79,785 words, lower case), raw-deflated;
+`tools/words/build.mjs` makes it, and copies SCOWL's notice to `words/COPYRIGHT.txt`. The
+notice ships in the server's `/notices.txt` (`web/build.mjs` appends it). To change the
+lists' size, change `LARGEST` there and run it again.
 
 ## Nightmare Redux 1.8.3 (https://github.com/jnfisher/Nightmare-Redux)
 

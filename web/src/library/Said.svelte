@@ -10,9 +10,10 @@
   import { kindOf } from '../shell/kinds';
   import { refKey } from './problems';
   import RefChip from './RefChip.svelte';
-  import { coinsOf, type Bit } from './script';
+  import { coinsOf, type Bit, type Ref } from './script';
 
-  let { bits, map }: { bits: Bit[]; map?: number } = $props();
+  // a record named with no role in a clause (a check's finding) is a chip all the same
+  let { bits, map }: { bits: (Bit | { ref: Ref })[]; map?: number } = $props();
 </script>
 
 <!-- one line, so no space comes between a word and a chip that the words do not have -->

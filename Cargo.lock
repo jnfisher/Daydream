@@ -513,6 +513,7 @@ dependencies = [
  "daydream-store",
  "daydream-types",
  "daydream-wcc",
+ "miniz_oxide",
  "serde",
  "serde_json",
  "tempfile",

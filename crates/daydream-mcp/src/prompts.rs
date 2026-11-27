@@ -19,6 +19,10 @@ Changing: preview_edits, show the user what will change, then apply_edits with i
 piece of work the same changeset label, so undo with that changeset takes the whole piece back. Each applied batch \
 keeps its edits in the realm's undo journal.
 
+Checking: check_world reads the wiring across the world, as the editors' Home does: prices that are not what the \
+words say, likely typos, placeholders left in, rooms that spawn nothing and monsters nothing brings. After a batch, \
+run it on what you made (table and key) and tell the user what it finds.
+
 How to work well:
 - Before copying an existing row as a template, get_row it in full: stock rows hold junk in unused columns and \
 placeholder numbers (a monster with messages 1, 1, 1).
@@ -41,7 +45,8 @@ inferred rather than checked. Wait for the user's go ahead.
 3. Make one of each kind first under a changeset label, preview it, show the user, apply it, and ask the user to \
 try it in the game.
 4. Only then make the rest, in batches under the same changeset, previewing each.
-5. Finish with what was built, its numbers, the changeset to undo it with, and what the user should test.";
+5. Run check_world on the records you made, and fix or explain what it finds.
+6. Finish with what was built, its numbers, the changeset to undo it with, and what the user should test.";
 
 struct Prompt {
     name: &'static str,

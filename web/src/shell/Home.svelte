@@ -1,6 +1,7 @@
 <!--
   Home: the open world at a glance. A greeting with what needs doing, the changes waiting to
-  publish, the saves that can be undone, the records opened lately, and what is in the world.
+  publish, the saves that can be undone, the checks that read the wiring, the records opened
+  lately, and what is in the world.
 -->
 <script lang="ts">
   import CloudUpload from '@lucide/svelte/icons/cloud-upload';
@@ -56,6 +57,12 @@
     ['Esc', 'closes the record open beside the page. Its Open full page button goes to its editor.'],
   ];
   let tip = $state(Math.floor(Math.random() * TIPS.length));
+
+  // the checks across the world: their code loads once a world is open
+  let Checks = $state<typeof import('./Checks.svelte').default | null>(null);
+  $effect(() => {
+    if (c && !Checks) void import('./Checks.svelte').then((m) => (Checks = m.default));
+  });
 </script>
 
 <div class="home">
@@ -116,6 +123,8 @@
           <p class="quiet">No saves yet in this world.</p>
         {/if}
       </section>
+
+      {#if Checks}<Checks />{/if}
 
       <section class="card span-7">
         <h3>In this world</h3>

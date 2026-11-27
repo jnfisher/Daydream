@@ -13,17 +13,21 @@
   import WandSparkles from '@lucide/svelte/icons/wand-sparkles';
   import { Popover } from 'bits-ui';
   import { allFixes, type Problem } from './problems';
+  import Said from './Said.svelte';
 
   let {
     problems,
     onfix,
     onshow,
+    onaccept,
   }: {
     problems: Problem[];
     /** Types a fix's values into the card. */
     onfix: (set: Record<string, string>) => void;
     /** Brings a column's field into view, answering whether the card shows it. */
     onshow: (col: string) => boolean;
+    /** Tells spelling to leave a word alone. */
+    onaccept?: (word: string) => void;
   } = $props();
 
   let open = $state(false);
@@ -57,11 +61,15 @@
             {@const PIcon = ICON[p.level]}
             <li class={p.level}>
               <span class="ic"><PIcon size={15} /></span>
-              <span class="t">{p.text}</span>
+              <span class="t">{#if p.bits}<Said bits={p.bits} />{:else}{p.text}{/if}</span>
               <span class="go">
                 {#if p.fix}
                   {@const set = p.fix.set}
                   <button type="button" class="btn sm" onclick={() => fix(set)}><WandSparkles size={13} /> {p.fix.label}</button>
+                {/if}
+                {#if p.accept && onaccept}
+                  {@const w = p.accept}
+                  <button type="button" class="btn sm ghost" onclick={() => onaccept(w)} title="The world means it: spelling leaves it alone">Not a typo</button>
                 {/if}
                 {#if p.level !== 'tidy' && p.cols[0]}
                   {@const col = p.cols[0]}

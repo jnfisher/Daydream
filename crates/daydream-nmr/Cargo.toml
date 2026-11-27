@@ -17,6 +17,7 @@ datacraft-jet.workspace = true
 daydream-store.workspace = true
 daydream-types.workspace = true
 daydream-wcc.workspace = true
+miniz_oxide.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

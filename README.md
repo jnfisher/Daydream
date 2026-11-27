@@ -246,6 +246,22 @@ the player so it passes and tries again. The
 player's level, class, race, alignment, stats, purse and what they carry can be set; the map
 lights up the way each turn went.
 
+**Checks that read the wiring**, on Home, read across the whole world and name the records
+each finding rests on. **Prices** puts what each script line charges (its `price` clauses
+added up, as the game takes them) against the amounts its own words and its conversation
+quote, the lines beside it that do the same for another price, and the Cost of the item it
+gives: the stock smith charges 200 gold to make a hide tunic his words price at 2,000.
+**Spelling** finds the words of players' text that the dictionary (SCOWL's word lists) lacks,
+used once or twice, a letter from a word the world uses ("exhange" for "exchange"); **Not a
+typo** leaves one alone from then on. **Placeholders** finds blank messages where the game
+would tell a blow in its own words (a monster's attack, a weapon's verbs) and names left as
+placeholders. **Spawns** finds rooms whose spawn range holds no monster of their group, and
+monsters no room spawns, with what brings them instead: a room that keeps one as its NPC, a
+spell that summons it and what casts the spell, a script. Warnings come first, and what was
+checked and holds is folded away. A record's card lists the findings about it among its
+problems, with a fix where there is a sure one (the game's own words for a blank message, the
+likely word for a typo). The checks run again after each save.
+
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
 sounds, which are off until you do. Licenses: `/notices.txt`.
@@ -389,7 +405,8 @@ of a room's items), and `get_map` takes a range of rooms and extra columns.
 `describe_table` explains each column: its choice list, the table it refers to, and notes on
 what the game does with it (an arena's Max Index is also its level cap), with the source in
 silvermere's engine; for Rooms it gives what each exit type's parameters mean.
-`find_references` lists every row that names a record, and `preview_edits` warns of what a
+`find_references` lists every row that names a record, and `check_world` runs Home's checks
+that read the wiring, for the whole world or one record. `preview_edits` warns of what a
 batch would leave pointing at nothing: a value that names a record the realm does not have
 (the batch's own inserts and deletes counted), or rows still naming a record it deletes. These
 come from `crates/daydream-nmr/src/fields.json`, which the web editors' choice lists use too.
@@ -462,9 +479,10 @@ same files.
 | `crates/daydream-types` | Record types, enums, ids and byte layouts |
 | `tools/nmr` | Generates the `.mdb` column table from NMR's source; `write-mdb.ps1` writes the file through Jet |
 | `tools/wbtrv32` | Builds wbtrv32's own converter, the oracle for the store's tests |
+| `tools/words` | Builds the spelling check's dictionary from SCOWL's word lists |
 
-Some of this code comes from silvermere and wbtrv32; [UPSTREAM.md](UPSTREAM.md) says what and
-from which version.
+Some of this code comes from silvermere and wbtrv32, and the dictionary from SCOWL;
+[UPSTREAM.md](UPSTREAM.md) says what and from which version.
 
 ## Tests
 

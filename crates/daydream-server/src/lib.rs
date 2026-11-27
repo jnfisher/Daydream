@@ -3,7 +3,8 @@
 //! It runs on the sysop's own machine and opens in the browser. `/` is the web UI (built
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
-//! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the realm
+//! in [`tools`], its lists in [`reports`], the checks that read the wiring across the world in
+//! [`checks`], its Export to MMUD Explorer in [`mme`], the realm
 //! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the
 //! realm's unpublished changes in [`changes`], publishing them into the game in [`publish`],
 //! where the World map draws rooms moved by hand in [`pins`],
@@ -43,6 +44,7 @@ use serde_json::{Value, json};
 
 pub mod auth;
 pub mod changes;
+pub mod checks;
 mod chunks;
 pub mod control;
 pub mod games;
@@ -334,6 +336,9 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/reports/npc-rooms", get(reports::npc_rooms))
         .route("/api/reports/room-indexes", get(reports::room_indexes))
         .route("/api/map", get(reports::map))
+        .route("/api/checks", get(checks::list))
+        .route("/api/checks/record", get(checks::record))
+        .route("/api/checks/words", post(checks::words))
         .route("/api/map/dig", post(tools::dig))
         .route("/api/map/pins", get(pins::get).post(pins::set))
         .route("/api/map/pins/import", post(pins::import))

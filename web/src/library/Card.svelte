@@ -17,7 +17,7 @@
   import { Popover } from 'bits-ui';
   import { tick } from 'svelte';
   import { titleOf } from '../ansi';
-  import type { Cell, TableInfo } from '../api';
+  import { api, type Cell, type Finding, type TableInfo } from '../api';
   import { exitParam, layoutFor, targetOf } from '../layouts';
   import { kindOf } from '../shell/kinds';
   import { read, write } from '../shell/prefs.svelte';
@@ -30,7 +30,7 @@
   import { keyLabel, nextKey, type ListRow } from './list';
   import { nameOf } from './names.svelte';
   import NewRecord from './NewRecord.svelte';
-  import { byLevel, clampTo, labelsOf, leftoverProblem, refOf, storable, trailingSpaces, TWO_SPACES, type Problem, type Targets } from './problems';
+  import { byLevel, clampTo, foundProblems, labelsOf, leftoverProblem, refOf, storable, trailingSpaces, TWO_SPACES, type Problem, type Targets } from './problems';
   import Problems from './Problems.svelte';
   import { linesOf } from './records.svelte';
   import { complete, fromLayout, type Section } from './sections';
@@ -127,6 +127,37 @@
   const labelOf = (col: string) => labels.get(col) ?? col;
   const fmt = (n: number) => n.toLocaleString('en-US');
 
+  // what the checks across the world find about it, or resting on it: read when it opens and
+  // after every save (the server reads the world again only when its files change)
+  let found: Finding[] = $state([]);
+  let foundFor = '';
+  $effect(() => {
+    const k = key;
+    void version;
+    const of = `${table.name}:${keyLabel(k)}`;
+    // another record's findings go at once; this one's stay until the new ones come
+    if (of !== foundFor) found = [];
+    foundFor = of;
+    if (!k.length || !numeric.every(Boolean)) return;
+    let live = true;
+    api
+      .checksOf(table.name, k)
+      .then((r) => {
+        if (live) found = r.findings;
+      })
+      .catch(() => {
+        // the checks are extra: a card without them is still the card
+      });
+    return () => {
+      live = false;
+    };
+  });
+
+  async function accept(word: string) {
+    await api.acceptWord(word);
+    found = found.filter((f) => f.word !== word);
+  }
+
   const problems = $derived.by((): Problem[] => {
     if (!draft.row) return [];
     const out: Problem[] = [];
@@ -170,6 +201,7 @@
       const p = trailingSpaces('Data', 'The text', draft.typed('Data'));
       if (p) out.push(p);
     }
+    out.push(...foundProblems(found, table.name, key, (c) => draft.typed(c)));
     return byLevel(out);
   });
 
@@ -227,7 +259,7 @@
               </Popover.Portal>
             </Popover.Root>
           {/if}
-          <Problems {problems} onfix={fix} onshow={show} />
+          <Problems {problems} onfix={fix} onshow={show} onaccept={(w) => void accept(w)} />
         </div>
         <h1>{name || `${k.one} ${label}`}</h1>
       </div>
