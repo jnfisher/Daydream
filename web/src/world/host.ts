@@ -4,7 +4,7 @@
 
 import type { Spot } from './layout';
 import type { ColourBy } from './look';
-import type { MapRoom } from './model';
+import type { MapRoom, PinCell } from './model';
 import type { Scene } from './scene';
 
 export interface Host {
@@ -17,7 +17,7 @@ export interface Host {
   readonly selected: MapRoom | null;
   /** How much of the map's right side the room card covers, in pixels. */
   readonly card: number;
-  /** Where this map's rooms moved by hand are drawn. */
+  /** Where this map's rooms moved by hand are drawn (as it is drawn now: flat, or in levels). */
   readonly pins: ReadonlyMap<number, Spot>;
   /** The longest name a room takes. */
   readonly nameMax: number;
@@ -37,10 +37,10 @@ export interface Host {
    * what was shown, and the map is read again.
    */
   send<T>(work: () => Promise<T>, done: string | ((out: T) => string), failed?: () => void): void;
-  /** Draws map `m`'s rooms in these places, if it is the map shown. */
+  /** Draws map `m`'s rooms in these places, if it is the map shown (in levels if they name their levels). */
   showPins(m: number, next: ReadonlyMap<number, Spot>): void;
   /** Saves places of map `m`'s rooms (all of them, if `replace`), after those sent before; answers the realm history's newest step. */
-  savePins(m: number, body: Record<string, [number, number] | null>, replace: boolean): Promise<number>;
+  savePins(m: number, body: Record<string, PinCell | null>, replace: boolean): Promise<number>;
   /** Takes the last edit's toast away: its Undo would undo something else now. */
   quiet(): void;
   /** Colours the map's rooms by this (Paint shows what it puts on rooms this way). */

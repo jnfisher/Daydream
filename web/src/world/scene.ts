@@ -13,9 +13,13 @@
 // over (build.ts); with Shift, a click digs a line to the cell. A tool (a stamp held, the Select
 // tool) has the pointer first while it is on, and draws over the map; the tools' code loads with
 // their panels, the first time each is used.
+//
+// A map drawn in levels (layout.ts) shows one level at a time, with the level below faint under
+// it: selecting a room on another level shows that level, and an exit or wire to one ends in a
+// chip saying which way.
 
 import { alongWay, lineTo, reachJoin, reachLine, type Reach } from './build';
-import { cellKey, OPPOSITE, STEP, type Layout, layOut, type Spot } from './layout';
+import { cellKey, OPPOSITE, STEP, type Layout, layOut, layOutLevels, type Levels, type Spot } from './layout';
 import { biomeOf, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type Palette, type Tint } from './look';
 import type { MapExit, MapRoom } from './model';
 import type { Wire, WireKind } from './wires';
@@ -73,6 +77,8 @@ export interface Stub {
   sort: 'here' | 'map' | 'missing';
   label: string;
   look: ExitLook;
+  /** In levels, a room on another level: how many levels up (or, below 0, down). */
+  rise?: number;
 }
 
 export interface Hit {
@@ -121,6 +127,8 @@ export interface SceneEvents {
   reach(r: Reach): void;
   /** Build mode: what a reach being dragged out (or a Shift line) would make, as it changes (null: none). */
   reaching(r: Reach | null): void;
+  /** In levels, the level shown changed, or the levels the map has. */
+  levelled?(): void;
 }
 
 /** How a tool draws on the map: the canvas, its colours, and how big things are at this zoom. */
@@ -249,7 +257,12 @@ export class Scene {
   readonly cam: Camera = { x: 0, y: 0, z: 1 };
   rooms: MapRoom[] = [];
   by = new Map<number, MapRoom>();
+  /** What is drawn: the map's layout, or in levels the level shown's. */
   layout: Layout | null = null;
+  /** The map drawn in levels (null: flat): each level's layout, and where each room is. */
+  stack: Levels | null = null;
+  /** In levels, the level shown: 0 is the start room's. */
+  level = 0;
   /** The start of the layout: room 1, or the lowest room. */
   start = 1;
   selected: number | null = null;
@@ -272,8 +285,10 @@ export class Scene {
   private building = false;
   /** The room being named: its name pill is left to the field over it. */
   private naming: number | null = null;
-  /** Where rooms moved by hand are drawn. */
+  /** Where rooms moved by hand are drawn (with their levels, in levels). */
   private pins: ReadonlyMap<number, Spot> = new Map();
+  /** Whether the map is drawn in levels. */
+  private levelsOn = false;
   /** The room being carried to another cell. */
   private carry: Carry | null = null;
   /** The way of a free cell or join mark being dragged out of the selected room, and what it would make. */
@@ -339,28 +354,48 @@ export class Scene {
 
   // ---- what is drawn ---------------------------------------------------------------
 
-  /** A map's rooms, and where those moved by hand are drawn (kept when not given). The camera stays where it is. */
-  setRooms(rooms: MapRoom[], pins?: ReadonlyMap<number, Spot>): void {
+  /**
+   * A map's rooms, where those moved by hand are drawn and whether it is drawn in levels (each
+   * kept when not given). The camera stays where it is, and in levels so does the level shown,
+   * unless `fresh` (another map): then it is the start room's.
+   */
+  setRooms(rooms: MapRoom[], pins?: ReadonlyMap<number, Spot>, levels?: boolean, fresh = false): void {
     this.rooms = rooms;
     this.by = new Map(rooms.map((r) => [r.room, r]));
     this.start = this.by.has(1) ? 1 : (rooms[0]?.room ?? 1);
     if (pins) this.pins = pins;
+    if (levels !== undefined) this.levelsOn = levels;
+    if (fresh) this.level = 0;
     this.biomes = new Map(rooms.map((r) => [r.room, biomeOf(r)]));
     if (this.selected !== null && !this.by.has(this.selected)) this.selected = null;
     this.relayout();
     this.retint();
   }
 
-  /** Where rooms moved by hand are drawn. */
-  setPins(pins: ReadonlyMap<number, Spot>): void {
+  /** Where rooms moved by hand are drawn, and whether the map is drawn in levels (kept when not given). */
+  setPins(pins: ReadonlyMap<number, Spot>, levels?: boolean): void {
     this.pins = pins;
+    if (levels !== undefined) this.levelsOn = levels;
     this.relayout();
     this.miniCache = null;
     this.draw();
   }
 
   private relayout() {
-    this.layout = this.rooms.length ? layOut(this.rooms, this.start, this.pins) : null;
+    if (this.levelsOn && this.rooms.length) {
+      const st = layOutLevels(this.rooms, this.start, this.pins);
+      this.stack = st;
+      // the level shown stays, unless no room is on it now: then the selected room's, or the nearest
+      if (!st.of.has(this.level)) {
+        const sel = this.selected === null ? undefined : st.at.get(this.selected)?.z;
+        this.level = sel ?? [...st.of.keys()].reduce((a, b) => (Math.abs(b - this.level) < Math.abs(a - this.level) ? b : a));
+      }
+      this.layout = st.of.get(this.level)!;
+    } else {
+      this.stack = null;
+      this.level = 0;
+      this.layout = this.rooms.length ? layOut(this.rooms, this.start, this.pins) : null;
+    }
     this.hovered = null;
     this.carry = null;
     this.canvas.classList.remove('carrying');
@@ -368,6 +403,56 @@ export class Scene {
     // a reach being dragged out goes on from the rooms as they are now
     if (this.reaching !== null && this.pointer) this.reachTo(...this.pointer);
     this.shiftLine();
+    this.on.levelled?.();
+  }
+
+  /** In levels, the level a room is on (undefined: drawn flat, or no such room). */
+  levelOf(n: number): number | undefined {
+    return this.stack?.at.get(n)?.z;
+  }
+
+  /** In levels, shows level `z`, if the map has rooms on it. The camera stays where it is, as the
+   * rooms up and down lead to are in the same place; with `fit`, unless none of the level's rooms
+   * are in view: then all of them are. Answers whether it is shown now. */
+  setLevel(z: number, fit = false): boolean {
+    const l = this.stack?.of.get(z);
+    if (!l) return false;
+    if (z === this.level) return true;
+    this.level = z;
+    this.layout = l;
+    this.hovered = null;
+    this.carry = null;
+    this.canvas.classList.remove('carrying');
+    this.dropReach();
+    this.sortExits();
+    this.shiftLine();
+    this.miniCache = null;
+    if (fit && !this.someInView()) this.fit();
+    this.draw();
+    this.on.levelled?.();
+    return true;
+  }
+
+  /** Whether any room drawn is in view, beside the card. */
+  private someInView(): boolean {
+    const [x0, y0] = this.toWorld(0, 0);
+    const [x1, y1] = this.toWorld(this.W - this.cover, this.H);
+    for (const p of this.layout?.at.values() ?? []) {
+      const [x, y] = [(p.x + 0.5) * S, (p.y + 0.5) * S];
+      if (x >= x0 && x <= x1 && y >= y0 && y <= y1) return true;
+    }
+    return false;
+  }
+
+  /** Every room's place, as pins keep it: with its level, in levels. */
+  places(): Map<number, Spot> {
+    if (this.stack) return new Map([...this.stack.at].map(([n, s]) => [n, { ...s }]));
+    return new Map([...(this.layout?.at ?? [])].map(([n, s]) => [n, { ...s }]));
+  }
+
+  /** A cell of the level shown, as a pin keeps it. */
+  pinAt(x: number, y: number): Spot {
+    return this.stack ? { x, y, z: this.level } : { x, y };
   }
 
   /** Whether a room is being carried. */
@@ -456,6 +541,9 @@ export class Scene {
 
   select(n: number | null): void {
     this.selected = n !== null && this.by.has(n) ? n : null;
+    // in levels, the room's level
+    const z = this.selected === null ? undefined : this.levelOf(this.selected);
+    if (z !== undefined) this.setLevel(z);
     if (this.reaching !== null && this.selected === null) this.dropReach();
     this.shiftLine();
     this.draw();
@@ -597,15 +685,17 @@ export class Scene {
     this.stubsOf = new Map();
     const at = this.layout?.at;
     if (!at) return;
-    const stub = (room: MapRoom, exit: MapExit, sort: Stub['sort'], label: string) => {
-      const s: Stub = { room, exit, sort, label, look: exitLook(exit) };
+    const stub = (room: MapRoom, exit: MapExit, sort: Stub['sort'], label: string, rise?: number) => {
+      const s: Stub = { room, exit, sort, label, look: exitLook(exit), rise };
       this.stubs.push(s);
       let list = this.stubsOf.get(room.room);
       if (!list) this.stubsOf.set(room.room, (list = []));
       list.push(s);
     };
     for (const r of this.rooms) {
-      const p = at.get(r.room)!;
+      // in levels, the level shown's rooms
+      const p = at.get(r.room);
+      if (!p) continue;
       for (const e of r.exits) {
         if (e.dir > 9) continue;
         if (e.kind === 8) {
@@ -617,11 +707,12 @@ export class Scene {
           stub(r, e, 'missing', String(e.to));
           continue;
         }
-        const q = at.get(t.room)!;
+        const q = at.get(t.room);
         const step = STEP[e.dir];
         // a remote action is no way through, whatever room it works
-        if (!step || q.x !== p.x + step[0] || q.y !== p.y + step[1] || e.kind === 12) {
-          stub(r, e, 'here', String(e.to));
+        if (!q || !step || q.x !== p.x + step[0] || q.y !== p.y + step[1] || e.kind === 12) {
+          const rise = q ? undefined : (this.levelOf(t.room) ?? this.level) - this.level;
+          stub(r, e, 'here', rise && e.dir < 8 ? `${rise > 0 ? '▲' : '▼'}${e.to}` : String(e.to), rise || undefined);
           continue;
         }
         const back = t.exits.find((b) => b.to === r.room && b.dir === OPPOSITE[e.dir] && b.kind !== 8);
@@ -1283,6 +1374,10 @@ export class Scene {
       }
     }
 
+    // in levels, the level below, faint: what lies under this one, and where the ways down lead
+    const below = this.stack?.of.get(this.level - 1);
+    if (below && z >= 0.2) this.drawBelow(below, gx0, gy0, gx1, gy1, half, rad, lw);
+
     // the islands' caption: rooms no walk from the start room reaches
     if (l.islands > 1 && !l.pinned.size && z >= 0.3) {
       let top = Infinity;
@@ -1661,6 +1756,49 @@ export class Scene {
     this.drawMini();
   }
 
+  /** The level below the one shown, faint and flat: its rooms in view and the exits between them. */
+  private drawBelow(b: Layout, gx0: number, gy0: number, gx1: number, gy1: number, half: number, rad: number, lw: number) {
+    const { ctx } = this;
+    const P = this.pal;
+    const near = (x: number, y: number) => x >= gx0 - 1 && x <= gx1 + 1 && y >= gy0 - 1 && y <= gy1 + 1;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = P.path;
+    ctx.globalAlpha = 0.16;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    const rooms: [number, number][] = [];
+    for (const [n, p] of b.at) {
+      if (!near(p.x, p.y)) continue;
+      rooms.push([this.sx(p.x), this.sy(p.y)]);
+      // (a pair of exits each way draws one line: one path, stroked once)
+      for (const e of this.by.get(n)?.exits ?? []) {
+        const step = STEP[e.dir];
+        if (!step || e.kind === 8 || e.kind === 12) continue;
+        const [qx, qy] = [p.x + step[0], p.y + step[1]];
+        if (b.cell.get(cellKey(qx, qy)) !== e.to) continue;
+        ctx.moveTo(this.sx(p.x), this.sy(p.y));
+        ctx.lineTo(this.sx(qx), this.sy(qy));
+      }
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    for (const [x, y] of rooms) {
+      if (half < 2) ctx.rect(x - half, y - half, half * 2, half * 2);
+      else ctx.roundRect(x - half, y - half, half * 2, half * 2, rad);
+    }
+    ctx.fillStyle = P.path;
+    ctx.globalAlpha = 0.1;
+    ctx.fill();
+    if (this.cam.z >= 0.3) {
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   /** A corridor or join reached out of the selected room: its new rooms dashed with their numbers, the rooms it joins lit, and where it stops short. */
   private drawReach(r: Reach, half: number, rad: number) {
     const { ctx } = this;
@@ -1832,11 +1970,17 @@ export class Scene {
     const out: WirePath[] = [];
     /** The paths to chips, by the room, the kind and the other map. */
     const shared = new Map<string, WirePath>();
+    /** Where the far end of a wire is, on its chip: its map, in levels how many levels up or down, or ✕ for a room the map does not have. */
+    const away = (e: { map: number; room: number }): string => {
+      if (e.map !== this.wireMap) return String(e.map);
+      const rise = (this.levelOf(e.room) ?? this.level) - this.level;
+      return !this.by.has(e.room) ? '✕' : rise > 0 ? `▲${rise}` : `▼${-rise}`;
+    };
     for (const w of this.wires) {
       const pa = w.from.map === this.wireMap ? l.at.get(w.from.room) : undefined;
       const pb = w.to.map === this.wireMap ? l.at.get(w.to.room) : undefined;
       if (!pa && !pb) continue;
-      const key = pa && pb ? '' : pa ? `${w.kind}>${w.from.room}>${w.to.map === this.wireMap ? 'x' : w.to.map}` : `${w.kind}<${w.to.room}<${w.from.map}`;
+      const key = pa && pb ? '' : pa ? `${w.kind}>${w.from.room}>${away(w.to)}` : `${w.kind}<${w.to.room}<${away(w.from)}`;
       const was = key ? shared.get(key) : undefined;
       if (was) {
         was.n++;
@@ -1858,12 +2002,12 @@ export class Scene {
       }
       if (!pa) {
         [ax, ay] = chipBy(w.to.room, pb!);
-        chip = { x: ax, y: ay, r: cr, label: String(w.from.map), missing: false };
+        chip = { x: ax, y: ay, r: cr, label: away(w.from), missing: false };
         ra = cr + 1;
       } else if (!pb) {
         [bx, by] = chipBy(w.from.room, pa);
-        const missing = w.to.map === this.wireMap;
-        chip = { x: bx, y: by, r: cr, label: missing ? '✕' : String(w.to.map), missing };
+        const label = away(w.to);
+        chip = { x: bx, y: by, r: cr, label, missing: label === '✕' };
         rb = cr + 2;
       }
       const len = Math.hypot(bx - ax, by - ay);
@@ -2192,7 +2336,9 @@ export class Scene {
       g.fillRect(0, 0, mw, mh);
       const d = Math.max(1.2 * this.dpr, s * 0.8);
       for (const r of this.rooms) {
-        const p = l.at.get(r.room)!;
+        // in levels, the level shown's
+        const p = l.at.get(r.room);
+        if (!p) continue;
         const t = this.tints.get(r.room)!;
         g.globalAlpha = this.faded(r.room) ? 0.25 : 1;
         g.fillStyle = t.colour === P.plain ? P.path : t.colour;

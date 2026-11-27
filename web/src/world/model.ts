@@ -47,6 +47,10 @@ export interface MapAnswer {
   scripts?: Scripts;
   /** Where its rooms moved by hand are drawn. */
   pins?: PinCells;
+  /** Drawn in levels: Up and Down lead a level up and down. */
+  levels?: boolean;
+  /** Where its rooms moved by hand are drawn in levels, with their levels: `[x, y, level]`. */
+  level_pins?: PinCells;
 }
 
 /** How a room sets a source off: a line of its commands typed, its spell on whoever is in it, a
@@ -119,14 +123,24 @@ export function mapName(names: ReadonlyMap<number, MapName>, map: number, rooms:
   return n && n.rooms * 20 >= rooms ? n.name : null;
 }
 
-/** Cells by room number, as the map's side file keeps them. */
-export type PinCells = Record<string, [number, number]>;
+/** A room's place as the map's side file keeps it: its cell, and in levels its level too. */
+export type PinCell = [number, number] | [number, number, number];
+
+/** Places by room number, as the map's side file keeps them. */
+export type PinCells = Record<string, PinCell>;
+
+/** One map's part of the side file: its rooms moved by hand, flat and in levels, and whether it is drawn in levels. */
+export interface MapPart {
+  pins: PinCells;
+  levels?: boolean;
+  level_pins?: PinCells;
+}
 
 /** The map's side file (`.daydream/map.json`, crates/daydream-server/src/pins.rs), as exported. */
 export interface MapFile {
   daydream: 'map';
   version: 1;
-  maps: Record<string, { pins: PinCells }>;
+  maps: Record<string, MapPart>;
 }
 
 /** A stamp saved from the map (`.daydream/stamps.json`, crates/daydream-server/src/stamps.rs): a shape, as the drawer's own. */

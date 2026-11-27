@@ -2,7 +2,7 @@
 
 import type { Ref } from './library/script';
 import type { References } from './library/where';
-import type { Dig, MapAnswer, MapFile, SavedStamp, StampsFile } from './world/model';
+import type { Dig, MapAnswer, MapFile, PinCell, SavedStamp, StampsFile } from './world/model';
 import type { StampRequest } from './world/stamps';
 
 export type Cell = number | string | null;
@@ -380,8 +380,9 @@ export const api = {
    * puts the map's others back too). Kept beside the working copy, not in the realm. Answers the
    * realm history's newest step.
    */
-  pins: (map: number, pins: Record<string, [number, number] | null>, replace = false) =>
-    call<{ pins: number; step: number }>('POST', '/api/map/pins', { map, pins, replace }, true),
+  /** Places of a map's rooms moved by hand: flat, or with `levels` in levels (and the map is drawn so from then on). */
+  pins: (map: number, pins: Record<string, PinCell | null>, replace = false, levels = false) =>
+    call<{ pins: number; step: number }>('POST', '/api/map/pins', { map, pins, replace, levels }, true),
   /** Every map's rooms moved by hand: the file to export. */
   mapFile: () => call<MapFile>('GET', '/api/map/pins'),
   /** An exported file: each map it has takes its places. */
