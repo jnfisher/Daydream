@@ -162,6 +162,14 @@ does the last move again, and Enter names the room in place. Free cells and join
 around the room for the mouse too. Each edit shows at once and is written in turn, and its
 toast (or Ctrl+Z) undoes it.
 
+In Build mode a room can also be dragged to a free cell, or moved a cell at a time with
+Shift and an arrow. The first move on a map keeps every room where it is drawn, so the map
+holds still from then on, and rooms dug later join it by their exits. MajorMUD keeps no
+places for its rooms, so the layout is kept beside the working copy (`.daydream/map.json`),
+never in the game's files: it is not published, and Ctrl+Z takes a move back like an edit.
+**Show** exports every map's layout to a file another builder can import, and lays a map
+out by its exits again.
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
@@ -171,6 +179,7 @@ toast (or Ctrl+Z) undoes it.
 | Shift+1, Shift+2 | Every room in view; close up on the room |
 | `F` | Full screen (Esc comes back) |
 | `B` | Build mode: the arrows and `U` `D` dig, join or walk; digits first for a line, `.` again, Enter to name the room, Esc when done |
+| Shift+arrows | In Build mode, move the room a cell (or drag it) |
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little

@@ -5,9 +5,10 @@
 // short stub in its direction ending in a chip; up and down exits are triangles on the room.
 // Names are drawn once per run of rooms that share one, more of them as you zoom in.
 //
-// The camera holds still: new rooms from the server keep the view where it was.
+// The camera holds still: new rooms from the server keep the view where it was. In Build mode
+// a room can be carried to a free cell; the page pins it there.
 
-import { cellKey, OPPOSITE, STEP, type Layout, layOut } from './layout';
+import { cellKey, OPPOSITE, STEP, type Layout, layOut, type Spot } from './layout';
 import { biomeOf, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type Palette, type Tint } from './look';
 import type { MapExit, MapRoom } from './model';
 
@@ -94,6 +95,20 @@ export interface SceneEvents {
   moved(cam: Camera): void;
   /** Build mode: a free cell or a join mark clicked. */
   build(ghost: Ghost): void;
+  /** Build mode: a room carried to a free cell. */
+  move(room: number, x: number, y: number): void;
+}
+
+/** A room being carried, in Build mode: where it is held, and the cell under it. */
+interface Carry {
+  room: number;
+  /** The pointer, on the canvas. */
+  px: number;
+  py: number;
+  /** The cell under the pointer, and whether the room can be put down there. */
+  x: number;
+  y: number;
+  free: boolean;
 }
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -119,6 +134,10 @@ export class Scene {
   private building = false;
   /** The room being named: its name pill is left to the field over it. */
   private naming: number | null = null;
+  /** Where rooms moved by hand are drawn. */
+  private pins: ReadonlyMap<number, Spot> = new Map();
+  /** The room being carried to another cell. */
+  private carry: Carry | null = null;
 
   private readonly ctx: CanvasRenderingContext2D;
   private readonly mctx: CanvasRenderingContext2D;
@@ -163,17 +182,45 @@ export class Scene {
 
   // ---- what is drawn ---------------------------------------------------------------
 
-  /** A map's rooms. The camera stays where it is. */
-  setRooms(rooms: MapRoom[]): void {
+  /** A map's rooms, and where those moved by hand are drawn (kept when not given). The camera stays where it is. */
+  setRooms(rooms: MapRoom[], pins?: ReadonlyMap<number, Spot>): void {
     this.rooms = rooms;
     this.by = new Map(rooms.map((r) => [r.room, r]));
     this.start = this.by.has(1) ? 1 : (rooms[0]?.room ?? 1);
-    this.layout = rooms.length ? layOut(rooms, this.start) : null;
+    if (pins) this.pins = pins;
     this.biomes = new Map(rooms.map((r) => [r.room, biomeOf(r)]));
     if (this.selected !== null && !this.by.has(this.selected)) this.selected = null;
-    this.hovered = null;
-    this.sortExits();
+    this.relayout();
     this.retint();
+  }
+
+  /** Where rooms moved by hand are drawn. */
+  setPins(pins: ReadonlyMap<number, Spot>): void {
+    this.pins = pins;
+    this.relayout();
+    this.miniCache = null;
+    this.draw();
+  }
+
+  private relayout() {
+    this.layout = this.rooms.length ? layOut(this.rooms, this.start, this.pins) : null;
+    this.hovered = null;
+    this.carry = null;
+    this.canvas.classList.remove('carrying');
+    this.sortExits();
+  }
+
+  /** Whether a room is being carried. */
+  get carrying(): boolean {
+    return !!this.carry;
+  }
+
+  /** Puts the room being carried back where it was. */
+  dropCarry(): void {
+    if (!this.carry) return;
+    this.carry = null;
+    this.canvas.classList.remove('carrying');
+    this.draw();
   }
 
   setColour(by: ColourBy): void {
@@ -546,7 +593,7 @@ export class Scene {
   private listen() {
     const cv = this.canvas;
     const pointers = new Map<number, [number, number]>();
-    let drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
+    let drag: { x: number; y: number; cx: number; cy: number; moved: boolean; room: number | null; touch: boolean; at: number } | null = null;
     let pinch: { d: number; z: number } | null = null;
     const pos = (e: PointerEvent | MouseEvent | WheelEvent): [number, number] => {
       const b = cv.getBoundingClientRect();
@@ -570,7 +617,10 @@ export class Scene {
       }
       const [x, y] = pos(e);
       this.land();
-      drag = { x, y, cx: this.cam.x, cy: this.cam.y, moved: false };
+      // Build mode: a room pressed on is carried, not the map (a finger holds it a moment first)
+      const hit = this.building ? this.hitAt(x, y) : null;
+      const room = hit?.room && !hit.stub && !hit.ghost && e.button === 0 ? hit.room.room : null;
+      drag = { x, y, cx: this.cam.x, cy: this.cam.y, moved: false, room, touch: e.pointerType === 'touch', at: performance.now() };
     });
     add(cv, 'pointermove', (e) => {
       const [x, y] = pos(e);
@@ -580,11 +630,22 @@ export class Scene {
         this.zoomNow((pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1])) / pinch.d, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
         return;
       }
+      if (this.carry) {
+        this.carryTo(x, y);
+        return;
+      }
       if (drag) {
         const dx = x - drag.x;
         const dy = y - drag.y;
         if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 4) {
           drag.moved = true;
+          if (drag.room !== null && (!drag.touch || performance.now() - drag.at > 350)) {
+            this.carry = { room: drag.room, px: x, py: y, x: 0, y: 0, free: false };
+            cv.classList.add('carrying');
+            this.setHover(null, x, y);
+            this.carryTo(x, y);
+            return;
+          }
           cv.classList.add('panning');
           this.setHover(null, x, y);
         }
@@ -606,6 +667,18 @@ export class Scene {
       const d = drag;
       drag = null;
       cv.classList.remove('panning');
+      const c = this.carry;
+      if (c) {
+        this.carry = null;
+        cv.classList.remove('carrying');
+        this.draw();
+        if (cancelled) return;
+        const home = this.layout?.at.get(c.room);
+        if (c.free) this.on.move(c.room, c.x, c.y);
+        // put down where it was: a click that wandered
+        else if (home && home.x === c.x && home.y === c.y) this.on.pick(this.by.get(c.room) ?? null);
+        return;
+      }
       if (!d || d.moved || cancelled) return;
       const [x, y] = pos(e);
       const hit = this.hitAt(x, y);
@@ -671,8 +744,22 @@ export class Scene {
     const was = this.hovered;
     this.hovered = hit;
     if (was?.room !== hit?.room || was?.stub !== hit?.stub || was?.ghost?.dir !== hit?.ghost?.dir) this.draw();
-    this.canvas.style.cursor = hit ? 'pointer' : '';
+    // in Build mode a room can be picked up and carried
+    this.canvas.style.cursor = !hit ? '' : this.building && hit.room && !hit.stub && !hit.ghost ? 'grab' : 'pointer';
     this.on.hover(hit, x, y);
+  }
+
+  /** The room being carried is held over (px, py): the cell under it, and whether it is free. */
+  private carryTo(px: number, py: number) {
+    const c = this.carry;
+    const l = this.layout;
+    if (!c || !l) return;
+    const [wx, wy] = this.toWorld(px, py);
+    const x = Math.floor(wx / S);
+    const y = Math.floor(wy / S);
+    const there = l.cell.get(cellKey(x, y));
+    Object.assign(c, { px, py, x, y, free: there === undefined });
+    this.draw();
   }
 
   private resize() {
@@ -742,7 +829,7 @@ export class Scene {
     }
 
     // the islands' caption: rooms no walk from the start room reaches
-    if (l.islands > 1 && z >= 0.3) {
+    if (l.islands > 1 && !l.pinned.size && z >= 0.3) {
       let top = Infinity;
       let left = Infinity;
       for (const [n, p] of l.at) {
@@ -822,8 +909,9 @@ export class Scene {
       ctx.globalAlpha = 1;
     }
 
-    // rooms, one fill per colour
-    const vis = this.rooms.filter((r) => inView(r.room));
+    // rooms, one fill per colour (a room being carried is drawn where it is held, below)
+    const carry = this.carry;
+    const vis = this.rooms.filter((r) => inView(r.room) && r.room !== carry?.room);
     const groups = new Map<string, MapRoom[]>();
     for (const r of vis) {
       const t = this.tints.get(r.room)!;
@@ -856,7 +944,7 @@ export class Scene {
 
     // Build mode: free cells to dig into around the selected room, and marks to join the rooms
     // drawn next to it
-    if (this.building && z >= GHOSTS) {
+    if (this.building && z >= GHOSTS && !carry) {
       for (const g of this.ghosts()) {
         const hot = this.hovered?.ghost?.dir === g.dir;
         if (g.to === null) {
@@ -956,6 +1044,8 @@ export class Scene {
       }
     }
 
+    if (carry) this.drawCarry(carry, half, rad);
+
     // room numbers, close up (once the gaps between rooms have room for them)
     if (z >= 2.2) {
       ctx.font = `700 ${Math.min(11, 6.5 * z)}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
@@ -1018,7 +1108,7 @@ export class Scene {
 
     // the selected room: a ring and its name
     let pill: [number, number, number, number] | null = null;
-    const sel = this.selected !== null ? this.by.get(this.selected) : undefined;
+    const sel = this.selected !== null && this.selected !== carry?.room ? this.by.get(this.selected) : undefined;
     if (sel && inView(sel.room)) {
       const p = l.at.get(sel.room)!;
       const x = this.sx(p.x);
@@ -1101,6 +1191,51 @@ export class Scene {
     }
 
     this.drawMini();
+  }
+
+  /** A room being carried: its cell left as an outline, the cell under it, and the room itself. */
+  private drawCarry(c: Carry, half: number, rad: number) {
+    const { ctx } = this;
+    const P = this.pal;
+    const from = this.layout?.at.get(c.room);
+    const r = this.by.get(c.room);
+    if (!from || !r) return;
+    const box = (x: number, y: number, grow = 0) => {
+      ctx.beginPath();
+      ctx.roundRect(x - half - grow, y - half - grow, (half + grow) * 2, (half + grow) * 2, rad + grow);
+    };
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = P.line;
+    ctx.globalAlpha = 0.6;
+    box(this.sx(from.x), this.sy(from.y));
+    ctx.stroke();
+    // where it would go: free, or taken by another room
+    const tx = this.sx(c.x);
+    const ty = this.sy(c.y);
+    const home = c.x === from.x && c.y === from.y;
+    if (!home) {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = c.free ? P.sel : P.missing;
+      ctx.lineWidth = 2.4;
+      box(tx, ty, 3);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // the room, lifted, under the pointer
+    const grow = Math.max(2, half * 0.15);
+    ctx.shadowColor = 'rgba(40, 20, 70, 0.3)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 5;
+    ctx.fillStyle = this.tints.get(c.room)?.colour ?? P.bg;
+    box(c.px, c.py, grow);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = P.sel;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    const icon: IconName | null = r.room_type === 1 || r.shop ? 'store' : r.room_type === 2 || r.room_type === 5 ? 'swords' : r.room_type === 3 ? 'crown' : null;
+    if (icon && half >= 5) this.icon(icon, c.px, c.py, (half + grow) * 1.1, P.line, 2.2);
   }
 
   private drawStub(s: Stub, c: { x: number; y: number; r: number }, hot: boolean) {

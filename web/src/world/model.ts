@@ -36,6 +36,18 @@ export interface MapAnswer {
   /** Every map with rooms, and how many. */
   maps: [number, number][];
   rooms: MapRoom[];
+  /** Where its rooms moved by hand are drawn. */
+  pins?: PinCells;
+}
+
+/** Cells by room number, as the map's side file keeps them. */
+export type PinCells = Record<string, [number, number]>;
+
+/** The map's side file (`.daydream/map.json`, crates/daydream-server/src/pins.rs), as exported. */
+export interface MapFile {
+  daydream: 'map';
+  version: 1;
+  maps: Record<string, { pins: PinCells }>;
 }
 
 /** A dig (`POST /api/map/dig`, crates/daydream-nmr/src/map.rs's `Dig`). */

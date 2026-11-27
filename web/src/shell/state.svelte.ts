@@ -106,10 +106,70 @@ let guard: () => boolean = () => true;
 export const setGuard = (g: () => boolean) => (guard = g);
 export const mayLeave = () => guard();
 
+// ---- undo and redo -------------------------------------------------------------------
+
+/**
+ * An edit kept outside the realm (where the map draws a room moved by hand): Ctrl+Z takes it
+ * back when nothing in the realm's history is newer, and Ctrl+Shift+Z puts it back.
+ */
+export interface LocalStep {
+  label: string;
+  /** The realm history's newest step when it was made (Infinity until the server says). */
+  after: number;
+  undo(): Promise<void>;
+  redo(): Promise<void>;
+}
+
+interface Kept extends LocalStep {
+  /** The world it was made in: another world's steps are let go. */
+  realm: string;
+}
+
+const localDone: Kept[] = [];
+const localUndone: Kept[] = [];
+/** What each undo took back, latest last, so redo puts them back in turn. */
+const undid: ('local' | 'realm')[] = [];
+const here = (s: Kept) => s.realm === (app.current?.realm_dir ?? '');
+
+/** Keeps an edit made outside the realm, for Ctrl+Z. */
+export function localStep(step: LocalStep): void {
+  localDone.push(Object.assign(step, { realm: app.current?.realm_dir ?? '' }));
+  if (localDone.length > 100) localDone.shift();
+  localUndone.length = 0;
+  undid.length = 0;
+}
+
+/** Forgets a step that did not happen after all (its save failed). */
+export function dropLocalStep(step: LocalStep): void {
+  const i = localDone.indexOf(step as Kept);
+  if (i >= 0) localDone.splice(i, 1);
+}
+
+/** The local step Ctrl+Z takes back, if the realm's history has nothing newer. */
+async function localFirst(): Promise<Kept | null> {
+  while (localDone.length && !here(localDone.at(-1)!)) localDone.pop();
+  const top = localDone.at(-1);
+  if (!top) return null;
+  if (top.after === Infinity) return top;
+  const h = await api.history(1);
+  return !h.undo || h.undo.step <= top.after ? top : null;
+}
+
 export async function undo(step?: number): Promise<void> {
   if (!mayLeave()) return;
   try {
+    const local = step === undefined ? await localFirst() : null;
+    if (local) {
+      localDone.pop();
+      await local.undo();
+      localUndone.push(local);
+      undid.push('local');
+      sfx('undo');
+      toast(`Undone: ${local.label}`, { action: 'Redo', onAction: () => void redo() });
+      return;
+    }
     const s = await api.undo(step);
+    if (step === undefined) undid.push('realm');
     sfx('undo');
     toast(`Undone: ${s.label}`, { action: 'Redo', onAction: () => void redo() });
     realmChanged();
@@ -122,6 +182,17 @@ export async function undo(step?: number): Promise<void> {
 export async function redo(step?: number): Promise<void> {
   if (!mayLeave()) return;
   try {
+    const local = step === undefined && undid.at(-1) === 'local' ? localUndone.at(-1) : undefined;
+    if (local && here(local)) {
+      undid.pop();
+      localUndone.pop();
+      await local.redo();
+      localDone.push(local);
+      sfx('undo');
+      toast(`Redone: ${local.label}`, { action: 'Undo', onAction: () => void undo() });
+      return;
+    }
+    if (step === undefined) undid.pop();
     const s = await api.redo(step);
     sfx('undo');
     toast(`Redone: ${s.label}`, { action: 'Undo', onAction: () => void undo() });

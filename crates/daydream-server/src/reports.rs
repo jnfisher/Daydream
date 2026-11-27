@@ -9,7 +9,7 @@
 //! | `GET /api/reports/npc-rooms` | each room's permanent NPC |
 //! | `GET /api/quests?file=default\|custom` | the realm folder's `NMR-Quests.txt` or `NMR-QuestsCustom.txt`, as text |
 //! | `GET /api/reports/room-indexes` | the monster index runs rooms' ranges cover, by group |
-//! | `GET /api/map?map=` | one map's rooms and exits, and the realm's maps (map 1 when none is given) |
+//! | `GET /api/map?map=` | one map's rooms and exits, the realm's maps (map 1 when none is given), and where rooms moved by hand are drawn ([`crate::pins`]) |
 //!
 //! `rooms`, `shops` and `users` default to true.
 
@@ -143,7 +143,8 @@ pub(crate) async fn map(
     let map = q.map.unwrap_or(1);
     read(s, move |realm, layout| {
         let view = daydream_nmr::map::map_view(realm, layout, map).map_err(failed)?;
-        Ok(json!({ "map": map, "maps": view.maps, "rooms": view.rooms }))
+        let pins = crate::pins::of_map(realm.dir(), map);
+        Ok(json!({ "map": map, "maps": view.maps, "rooms": view.rooms, "pins": pins }))
     })
     .await
 }

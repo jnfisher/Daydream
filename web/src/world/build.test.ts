@@ -140,3 +140,17 @@ test('down digs too, and a rename changes only the name', () => {
   assert.equal(named.find((r) => r.room === 7)!.name, 'Cellar');
   assert.equal(named.find((r) => r.room === 1), after.find((r) => r.room === 1));
 });
+
+test('on a map laid out by hand, rooms dug from a moved room land beside it', () => {
+  const { rooms, by, layout } = map();
+  const pins = new Map([...layout.at].map(([n, s]) => [n, { ...s }]));
+  pins.set(3, { x: 4, y: 0 });
+  const moved = layOut(rooms, 1, pins);
+  assert.deepEqual(moveFrom(by, moved, 3, S, 2), { kind: 'dig', rooms: [7, 8] });
+  const l = layOut(dug(rooms, 3, S, [7, 8]), 1, pins);
+  assert.deepEqual([l.at.get(7), l.at.get(8)], [
+    { x: 4, y: 1 },
+    { x: 4, y: 2 },
+  ]);
+  assert.deepEqual(l.at.get(5), layout.at.get(5));
+});

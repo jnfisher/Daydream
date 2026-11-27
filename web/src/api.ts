@@ -1,6 +1,6 @@
 // The server's editor API (crates/daydream-server/src/tables.rs).
 
-import type { Dig, MapAnswer } from './world/model';
+import type { Dig, MapAnswer, MapFile } from './world/model';
 
 export type Cell = number | string | null;
 
@@ -48,7 +48,8 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+/** `quiet`: a write that leaves the realm be (the map's side file), so nothing need be read again. */
+async function call<T>(method: string, url: string, body?: unknown, quiet = false): Promise<T> {
   const res = await fetch(url, {
     method,
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
@@ -70,7 +71,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     throw new ApiError(res.status, msg);
   }
   // the frame keeps its changes list and history current
-  if (method !== 'GET') window.dispatchEvent(new CustomEvent('dd:wrote'));
+  if (method !== 'GET' && !quiet) window.dispatchEvent(new CustomEvent('dd:wrote'));
   return json as T;
 }
 
@@ -248,6 +249,17 @@ export const api = {
   map: (map: number) => call<MapAnswer>('GET', `/api/map?map=${map}`),
   /** NMR's map editor's dig: a new room (or a line of them), or a room joined, an exit each way. */
   dig: (dig: Dig) => call<{ notes: string[] }>('POST', '/api/map/dig', dig),
+  /**
+   * Where rooms of one map moved by hand are drawn (`null`: where the layout puts them; `replace`
+   * puts the map's others back too). Kept beside the working copy, not in the realm. Answers the
+   * realm history's newest step.
+   */
+  pins: (map: number, pins: Record<string, [number, number] | null>, replace = false) =>
+    call<{ pins: number; step: number }>('POST', '/api/map/pins', { map, pins, replace }, true),
+  /** Every map's rooms moved by hand: the file to export. */
+  mapFile: () => call<MapFile>('GET', '/api/map/pins'),
+  /** An exported file: each map it has takes its places. */
+  importMapFile: (file: MapFile) => call<{ maps: number; pins: number; step: number }>('POST', '/api/map/pins/import', file, true),
   publishPlan: () => call<PublishPlan>('GET', '/api/publish'),
   publish: (way: PublishWayId, warn?: PublishWarn) => call<PublishJob>('POST', '/api/publish', { way, warn }),
   publishJob: () => call<PublishJob | null>('GET', '/api/publish/job'),
