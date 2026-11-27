@@ -1,14 +1,13 @@
 // Today's forms for the Workshop's tools not rebuilt yet: the Database Importer, Merge Users,
 // the Export to MMUD Explorer (mme.ts), writing back to the WCC files, to and from a silvermere
-// database, the Record Number Changer, the Monster Group/Index Changer, the Mass Room Editor and
-// NMR's lists, over the server's /api/tools, /api/mme and /api/reports routes. The Workshop
-// shows each in its tool's page (workshop/Legacy.svelte); each goes as its tool is rebuilt.
+// database, the Record Number Changer, the Monster Group/Index Changer and the Mass Room Editor,
+// over the server's /api/tools, /api/mme and /api/reports routes. The Workshop shows each in its
+// tool's page (workshop/Legacy.svelte); each goes as its tool is rebuilt.
 
 import { toShown } from './ansi';
 import { type Report, type TableInfo } from './api';
 import { games } from './games';
 import { indexChanger } from './indexchanger';
-import { controlRooms, findItem, limitedItems, monsterGroups, npcRooms } from './lists';
 import { massRoomEditor } from './massroom';
 import { mmeExport } from './mme';
 import { recordNumberChanger } from './renumber';
@@ -503,19 +502,11 @@ export function legacyTool(id: string, tables: TableInfo[], changed: () => void)
     case 'renumber':
       return [recordNumberChanger(json, modifyResult, failure, changed)];
     case 'spawns':
-      return [monsterGroups(), indexChanger(json, modifyResult, failure, changed)];
+      return [indexChanger(json, modifyResult, failure, changed)];
     case 'rooms': {
       const rooms = tables.find((t) => t.name === 'Rooms');
       return rooms ? [massRoomEditor(rooms, json, modifyResult, changed)] : [];
     }
-    case 'where':
-      return [findItem()];
-    case 'limited':
-      return [limitedItems()];
-    case 'areas':
-      return [controlRooms()];
-    case 'npcs':
-      return [npcRooms()];
     default:
       return [];
   }

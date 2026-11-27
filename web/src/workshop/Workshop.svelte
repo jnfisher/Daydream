@@ -47,12 +47,7 @@
   import Health from '../shell/Health.svelte';
   import Sky from '../shell/Sky.svelte';
   import { GROUPS, search, toolById, toolHref, type Group, type Tool } from './catalogue';
-  import BulkEdit from './BulkEdit.svelte';
-  import Delete from './Delete.svelte';
-  import Fixes from './Fixes.svelte';
-  import Glossary from './Glossary.svelte';
-  import Legacy from './Legacy.svelte';
-  import Scale from './Scale.svelte';
+  import { isList } from './reports';
 
   const ICONS: Record<string, Component<{ size?: number }>> = {
     wand: WandSparkles, pulse: HeartPulse, sliders: SlidersHorizontal, percent: Percent, combine: Combine, crown: Crown,
@@ -64,6 +59,11 @@
 
   /** How each tool's page is made: rebuilt, or today's form (Legacy). */
   const FIXES = new Set(['uses', 'dropuses', 'fold', 'limits', 'kills', 'restock', 'floors', 'buffer', 'strip', 'drops']);
+
+  // the tools' pages load together when the first one opens, so the Workshop's own code stays small
+  type Pages = typeof import('./pages');
+  let pages: Promise<Pages> | null = null;
+  const loadPages = () => (pages ??= import('./pages'));
 
   let open = $state<{ group: Group; tool: Tool } | null>(null);
   let q = $state('');
@@ -96,6 +96,15 @@
   <I {size} />
 {/snippet}
 
+{#snippet lazy(name: keyof Pages, props: Record<string, unknown> = {})}
+  {#await loadPages() then p}
+    {@const C = p[name] as Component<any>}
+    <C {...props} />
+  {:catch}
+    <p class="bad">This tool did not load. Reload the page to try again.</p>
+  {/await}
+{/snippet}
+
 <div class="ws" bind:this={page}>
   {#if open}
     {@const t = open.tool}
@@ -118,15 +127,21 @@
     <section class="card body">
       {#key t.id}
         {#if FIXES.has(t.id)}
-          <Fixes id={t.id} />
+          {@render lazy('Fixes', { id: t.id })}
         {:else if t.id === 'scale'}
-          <Scale />
+          {@render lazy('Scale')}
         {:else if t.id === 'bulk'}
-          <BulkEdit />
+          {@render lazy('BulkEdit')}
         {:else if t.id === 'delete'}
-          <Delete />
+          {@render lazy('Delete')}
         {:else if t.id === 'abilities'}
-          <Glossary />
+          {@render lazy('Glossary')}
+        {:else if isList(t.id)}
+          {@render lazy('Lists', { id: t.id })}
+          {#if t.id === 'spawns'}
+            <h3 class="sub">Move a group or index</h3>
+            {@render lazy('Legacy', { id: 'spawns' })}
+          {/if}
         {:else if t.id === 'rooms'}
           <div class="callout info">
             <Lasso size={16} />
@@ -137,9 +152,9 @@
           </div>
           <div><a class="btn sticker" href="#/world"><MapIcon size={16} />Open the map</a></div>
           <h3 class="sub">Or a run of rooms by number</h3>
-          <Legacy id="rooms" />
+          {@render lazy('Legacy', { id: 'rooms' })}
         {:else}
-          <Legacy id={t.id} />
+          {@render lazy('Legacy', { id: t.id })}
         {/if}
       {/key}
     </section>
@@ -216,6 +231,7 @@
   .grp { margin-top: 26px; scroll-margin-top: 14px; border-radius: 22px; }
   .grp.glow { animation: glow 1.6s ease-out; }
   .hpanel { margin-bottom: 12px; padding: 8px 16px; }
+  .bad { color: var(--bad); font-weight: 700; }
   @keyframes glow { from { box-shadow: 0 0 0 6px var(--focus); } }
   @media (prefers-reduced-motion: reduce) { .grp.glow { animation: none; } }
   .grp-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
