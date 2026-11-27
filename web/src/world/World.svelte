@@ -8,6 +8,10 @@
   is joined, and free cells get new rooms; digits first make a line ("3" then an arrow), "."
   does the last move again, and Enter names the room. The map shows each edit at once and the
   server writes them in turn; each one's toast can undo it.
+
+  In Build mode a room can be carried to a free cell (or moved a cell with Shift and an arrow).
+  The first move on a map keeps every room where it is drawn, so the map holds still from then
+  on; the places are kept beside the working copy, never in the game, and can be exported.
 -->
 <!-- loaded when the World is first opened, so its styles travel with its code -->
 <svelte:options css="injected" />
@@ -18,6 +22,7 @@
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import Download from '@lucide/svelte/icons/download';
   import LayersIcon from '@lucide/svelte/icons/layers';
   import LocateFixed from '@lucide/svelte/icons/locate-fixed';
   import MapIcon from '@lucide/svelte/icons/map';
@@ -26,16 +31,19 @@
   import Minus from '@lucide/svelte/icons/minus';
   import Pickaxe from '@lucide/svelte/icons/pickaxe';
   import Plus from '@lucide/svelte/icons/plus';
+  import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Scan from '@lucide/svelte/icons/scan';
+  import Upload from '@lucide/svelte/icons/upload';
   import X from '@lucide/svelte/icons/x';
   import { api } from '../api';
   import { read, sfx, write } from '../shell/prefs.svelte';
-  import { app, closeInspector, inspect, undo } from '../shell/state.svelte';
+  import { app, closeInspector, dropLocalStep, inspect, localStep, undo, type LocalStep } from '../shell/state.svelte';
   import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
   import { dug, joined, moveFrom, renamed } from './build';
   import { ICONS } from './icons';
   import { COLOUR_BY, EXIT_LEGEND, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName } from './look';
-  import { DIR_WORDS, kindName, type MapRoom } from './model';
+  import { cellKey, STEP, type Spot } from './layout';
+  import { DIR_WORDS, kindName, type MapFile, type MapRoom, type PinCells } from './model';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
 
   let canvas: HTMLCanvasElement;
@@ -156,7 +164,13 @@
       count = a.rooms.length;
       write(lastKey(), String(map));
       scene.setEdited(edited);
-      scene.setRooms(a.rooms);
+      // moves being saved are newer than this read's
+      if (moved || !pinsPending) {
+        pins = pinsFrom(a.pins);
+        pinCount = pins.size;
+      }
+      scene.setRooms(a.rooms, pins);
+      startRoom = scene.start;
       stale = false;
       failed = '';
       if (moved || !keep) {
@@ -194,7 +208,7 @@
     if (!r) return;
     if (building && visited.at(-1) !== r.room) visited = [...visited, r.room].slice(-50);
     if (withCard && pending) cardFollows = 'open';
-    else if (withCard) {
+    else if (withCard || (cardOnMap() && !pending)) {
       card = scene.setCover(true);
       inspect({ table: 'Rooms', key: [map, r.room], name: r.name }, true);
     } else if (cardOnMap()) cardFollows = 'follow';
@@ -311,7 +325,7 @@
       return { title: `${way} to ${t?.name || `room ${e.to}`}`, sub: `${kind} to room ${map}/${e.to}, drawn elsewhere. Click to go there.` };
     }
     const r = h.room!;
-    return { title: r.name || `Room ${r.room}`, sub: `Room ${map}/${r.room}` };
+    return { title: r.name || `Room ${r.room}`, sub: building ? `Room ${map}/${r.room}. Drag to move it.` : `Room ${map}/${r.room}` };
   }
 
   // ---- Build mode ----------------------------------------------------------------------
@@ -396,6 +410,14 @@
     patch(dug(scene.rooms, from, dir, rooms));
     const m = map;
     send(() => api.dig({ map: m, room: from, dir, to_map: m, to_room: rooms[0]!, count: rooms.length }), what);
+    // a new room is drawn beside the room it is dug from, not where an old room of its number was
+    const old = rooms.filter((n) => pins.has(n));
+    if (old.length) {
+      const next = new Map(pins);
+      for (const n of old) next.delete(n);
+      showPins(m, next);
+      void savePins(m, Object.fromEntries(old.map((n) => [String(n), null])), false).catch(() => {});
+    }
   }
 
   function joinRooms(from: number, dir: number, to: number) {
@@ -491,6 +513,176 @@
 
   /** The longest name a room takes. */
   const nameMax = $derived(app.tables.find((t) => t.name === 'Rooms')?.columns.find((c) => c.name === 'Name')?.size ?? 53);
+
+  // ---- rooms moved by hand ---------------------------------------------------------------
+
+  /** Where this map's rooms moved by hand are drawn (kept beside the working copy). */
+  let pins: ReadonlyMap<number, Spot> = new Map();
+  let pinCount = $state(0);
+  /** The room the layout starts from. */
+  let startRoom = $state(1);
+  /** Saves of them sent and not yet answered: a read of the map meanwhile keeps these. */
+  let pinsPending = 0;
+  let pinChain: Promise<unknown> = Promise.resolve();
+  let importer = $state<HTMLInputElement | undefined>();
+
+  const pinsFrom = (c: PinCells | undefined) => new Map(Object.entries(c ?? {}).map(([k, [x, y]]) => [Number(k), { x, y }]));
+  const cellsOf = (p: ReadonlyMap<number, Spot>): Record<string, [number, number]> => Object.fromEntries([...p].map(([n, s]) => [String(n), [s.x, s.y]]));
+
+  /** Draws map `m`'s rooms with these places, if it is the map shown. */
+  function showPins(m: number, next: ReadonlyMap<number, Spot>) {
+    if (m !== map || !scene) return;
+    pins = next;
+    pinCount = next.size;
+    scene.setPins(next);
+  }
+
+  /** Saves places of map `m`'s rooms, after those sent before; answers the realm history's newest step. */
+  function savePins(m: number, body: Record<string, [number, number] | null>, replace: boolean): Promise<number> {
+    pinsPending++;
+    const done = pinChain.then(async () => {
+      try {
+        return (await api.pins(m, body, replace)).step;
+      } finally {
+        pinsPending--;
+      }
+    });
+    pinChain = done.catch(() => {});
+    return done;
+  }
+
+  /** A change of places, shown at once: Ctrl+Z or its toast takes it back. */
+  function placesChanged(m: number, before: ReadonlyMap<number, Spot>, next: ReadonlyMap<number, Spot>, label: string, said: string, body: Record<string, [number, number] | null>, replace: boolean) {
+    showPins(m, next);
+    const step: LocalStep = {
+      label,
+      after: Infinity,
+      // the move's own toast would undo something else now
+      undo: async () => {
+        dismiss(buildToast);
+        showPins(m, before);
+        await savePins(m, cellsOf(before), true);
+      },
+      redo: async () => {
+        dismiss(buildToast);
+        showPins(m, next);
+        await savePins(m, cellsOf(next), true);
+      },
+    };
+    localStep(step);
+    dismiss(buildToast);
+    buildToast = toast(said, { action: 'Undo', onAction: () => void undo() });
+    savePins(m, body, replace).then(
+      (newest) => (step.after = newest),
+      (e) => {
+        dropLocalStep(step);
+        showPins(m, before);
+        sfx('nope');
+        dismiss(buildToast);
+        toast(messageOf(e), { kind: 'error' });
+      },
+    );
+  }
+
+  /** Build mode: a room carried or nudged to a free cell. The first move on a map keeps every room where it is drawn. */
+  function moveRoom(n: number, x: number, y: number) {
+    const l = scene?.layout;
+    if (!scene || !l || !l.at.has(n) || l.cell.has(cellKey(x, y))) return;
+    const first = pins.size === 0;
+    const next = new Map(first ? [...l.at].map(([k, s]) => [k, { ...s }]) : pins);
+    next.set(n, { x, y });
+    const said = first ? `Moved ${called(n)}. The map keeps this layout now: rooms stay where they are drawn.` : `Moved ${called(n)}.`;
+    placesChanged(map, pins, next, `Move ${called(n)}`, said, first ? cellsOf(next) : { [String(n)]: [x, y] }, first);
+    sfx('pop');
+    if (selected?.room !== n) choose(n, 'keep', false);
+    else scene.keepInView(n);
+  }
+
+  /** Build mode, Shift and a direction: the selected room a cell that way. */
+  function nudge(dir: number) {
+    const l = scene?.layout;
+    const r = selected;
+    const step = STEP[dir];
+    const p = r ? l?.at.get(r.room) : undefined;
+    if (!l || !r || !p || !step) return;
+    const [x, y] = [p.x + step[0], p.y + step[1]];
+    const there = l.cell.get(cellKey(x, y));
+    if (there !== undefined) {
+      sfx('nope');
+      say(`${cap(called(there))} is in the way.`);
+      return;
+    }
+    moveRoom(r.room, x, y);
+  }
+
+  /** Back to the layout the exits make. */
+  function layOutAfresh() {
+    if (!pins.size) return;
+    placesChanged(map, pins, new Map(), `Lay out map ${map} afresh`, `Map ${map} is laid out by its exits again.`, {}, true);
+    sfx('toggle');
+  }
+
+  /** The export's name: the world's, as a file name. */
+  const fileStem = () => (app.current?.label ?? 'world').split('(')[0]!.trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'world';
+
+  async function exportLayouts() {
+    try {
+      const f = await api.mapFile();
+      const rooms = Object.values(f.maps).reduce((a, p) => a + Object.keys(p.pins).length, 0);
+      if (!rooms) {
+        toast('No map has been laid out by hand yet, so there is nothing to export.');
+        return;
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(f, null, 1)], { type: 'application/json' }));
+      a.download = `${fileStem()}-map-layouts.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      const maps = Object.keys(f.maps).length;
+      toast(`Exported the layouts of ${maps === 1 ? 'one map' : `${maps} maps`} (${rooms.toLocaleString()} rooms).`);
+    } catch (e) {
+      sfx('nope');
+      toast(messageOf(e), { kind: 'error' });
+    }
+  }
+
+  async function importLayouts(file: File) {
+    try {
+      let f: MapFile | null = null;
+      try {
+        f = JSON.parse(await file.text()) as MapFile;
+      } catch {
+        // said below
+      }
+      if (!f || f.daydream !== 'map' || !f.maps || typeof f.maps !== 'object') throw new Error(`${file.name} is not a map layout Daydream exported.`);
+      const given = f;
+      const before = await api.mapFile();
+      const back: MapFile = { daydream: 'map', version: 1, maps: Object.fromEntries(Object.keys(given.maps).map((k) => [k, before.maps[k] ?? { pins: {} }])) };
+      const r = await api.importMapFile(given);
+      const reread = () => (map ? load(map, true) : Promise.resolve(false));
+      localStep({
+        label: `Import ${file.name}`,
+        after: r.step,
+        undo: async () => {
+          dismiss(buildToast);
+          await api.importMapFile(back);
+          await reread();
+        },
+        redo: async () => {
+          dismiss(buildToast);
+          await api.importMapFile(given);
+          await reread();
+        },
+      });
+      await reread();
+      sfx('pop');
+      dismiss(buildToast);
+      buildToast = toast(`Imported the layouts of ${r.maps === 1 ? 'one map' : `${r.maps} maps`} (${r.pins.toLocaleString()} rooms).`, { action: 'Undo', onAction: () => void undo() });
+    } catch (e) {
+      sfx('nope');
+      toast(messageOf(e), { kind: 'error' });
+    }
+  }
 
   // ---- what the map shows --------------------------------------------------------------
 
@@ -599,7 +791,8 @@
       if (t.closest('#dd-inspector, #dd-top, #dd-rail, .pop')) return;
     }
     if (e.key === 'Escape') {
-      if (countText) countText = '';
+      if (scene?.carrying) scene.dropCarry();
+      else if (countText) countText = '';
       else if (building) setBuilding(false);
       else if (focus) setFocus(false);
       return;
@@ -610,7 +803,15 @@
       countText = (countText + e.key).slice(-2);
       return;
     }
-    const d = e.shiftKey ? undefined : (KEY_DIR[e.code] ?? KEY_DIR[e.key]);
+    const d = KEY_DIR[e.code] ?? KEY_DIR[e.key];
+    if (d !== undefined && e.shiftKey) {
+      // Build mode: Shift moves the room a cell instead
+      if (!building) return;
+      e.preventDefault();
+      countText = '';
+      nudge(d);
+      return;
+    }
     if (d !== undefined) {
       e.preventDefault();
       if (building) build(d, takeCount());
@@ -674,6 +875,7 @@
         if (naming) placeNaming();
       },
       build: (g: Ghost) => build(g.dir),
+      move: (n, x, y) => moveRoom(n, x, y),
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
@@ -817,6 +1019,33 @@
             </label>
           {/each}
           <div class="menu-sep"></div>
+          <div class="eyebrow head">Layout</div>
+          <p class="lay">
+            {#if pinCount}
+              Map {map} is laid out by hand: rooms stay where they are drawn, and new rooms join them by their exits.
+            {:else}
+              Laid out by the exits, from room {startRoom}. In Build mode, drag a room (or press Shift and an arrow) to move it; the map then keeps its layout.
+            {/if}
+          </p>
+          <div class="lay-acts">
+            {#if pinCount}
+              <button type="button" class="btn sm" onclick={layOutAfresh}><RotateCcw size={13} />Lay out by exits</button>
+            {/if}
+            <button type="button" class="btn sm" onclick={exportLayouts} title="Every map's layout, as a file another builder can import"><Download size={13} />Export</button>
+            <button type="button" class="btn sm" onclick={() => importer?.click()} title="Layouts exported from Daydream: each map in the file takes its layout"><Upload size={13} />Import</button>
+            <input
+              bind:this={importer}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onchange={(e) => {
+                const f = e.currentTarget.files?.[0];
+                e.currentTarget.value = '';
+                if (f) void importLayouts(f);
+              }}
+            />
+          </div>
+          <div class="menu-sep"></div>
           <div class="eyebrow head">What the marks mean</div>
           <ul class="key">
             {#each ROOM_LEGEND as m (m.label)}
@@ -939,7 +1168,7 @@
     --edge: 12px;
   }
   .map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
-  .map:global(.panning) { cursor: grabbing; }
+  .map:global(.panning), .map:global(.carrying) { cursor: grabbing; }
   .map:focus-visible { box-shadow: inset 0 0 0 3px var(--focus); }
 
   .float { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; }
@@ -967,6 +1196,9 @@
     font: 800 13px var(--font-body, Nunito, sans-serif); text-align: center; box-shadow: 0 3px 0 var(--shadow);
   }
   .name-field:focus { outline: 3px solid var(--focus); outline-offset: 1px; }
+  .lay { margin: 0 10px 8px; font-size: 12.5px; line-height: 1.4; color: var(--ink-2); max-width: 290px; }
+  .lay-acts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 10px 8px; }
+  .lay-acts .btn { gap: 5px; }
 
   .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; }
   .seg button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; font-size: 12.5px; color: var(--ink-2); box-shadow: none; }

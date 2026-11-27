@@ -766,6 +766,111 @@ async fn a_dig_from_a_missing_room_or_of_too_long_a_line_is_refused() {
 }
 
 #[tokio::test]
+async fn rooms_moved_by_hand_are_kept_beside_the_working_copy() {
+    use serde_json::json;
+    let dir = realm();
+    let d = dir.path();
+    let (status, body) = get(d, "/api/map/pins").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"daydream": "map", "version": 1, "maps": {}}));
+
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/pins",
+        json!({"map": 1, "pins": {"12": [3, -4], "13": [4, -4]}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"pins": 2, "step": 0}));
+    let (_, body) = send(
+        d,
+        "POST",
+        "/api/map/pins",
+        json!({"map": 1, "pins": {"13": null, "14": [0, 0]}}),
+    )
+    .await;
+    assert_eq!(body["pins"], 2);
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(
+        body["maps"],
+        json!({"1": {"pins": {"12": [3, -4], "14": [0, 0]}}})
+    );
+    // beside the realm, and no save to it: no step of the history, no change to publish
+    assert!(d.join(".daydream").join("map.json").is_file());
+    let (_, history) = get(d, "/api/history").await;
+    assert_eq!(history["steps"], json!([]), "{history}");
+    let (_, changes) = get(d, "/api/changes").await;
+    assert_eq!(changes["changes"], json!([]), "{changes}");
+
+    // the newest step comes back, so the page knows whether a move or a save came last
+    let (status, _) = send(
+        d,
+        "PUT",
+        &format!("/api/tables/Races/row?key={}", key(json!([1]))),
+        json!({"values": {"Name": "Elf"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = send(
+        d,
+        "POST",
+        "/api/map/pins",
+        json!({"map": 1, "pins": {"15": [1, 0]}}),
+    )
+    .await;
+    assert_eq!(body["step"], 1, "{body}");
+
+    for bad in [
+        json!({"map": 0, "pins": {"1": [0, 0]}}),
+        json!({"map": 1, "pins": {"0": [0, 0]}}),
+        json!({"map": 1, "pins": {"1": [200000, 0]}}),
+    ] {
+        let (status, body) = send(d, "POST", "/api/map/pins", bad.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
+
+    // an import takes each map it has, whole, and leaves the others
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/pins/import",
+        json!({"daydream": "map", "version": 1, "maps": {"1": {"pins": {"5": [1, 1]}}, "2": {"pins": {"7": [2, 2]}}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (body["maps"].clone(), body["pins"].clone()),
+        (json!(2), json!(2))
+    );
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(
+        body["maps"],
+        json!({"1": {"pins": {"5": [1, 1]}}, "2": {"pins": {"7": [2, 2]}}})
+    );
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/pins/import",
+        json!({"daydream": "notes", "version": 1, "maps": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    // a map with no rooms moved leaves the file
+    let (_, body) = send(
+        d,
+        "POST",
+        "/api/map/pins",
+        json!({"map": 2, "pins": {}, "replace": true}),
+    )
+    .await;
+    assert_eq!(body["pins"], 0);
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(body["maps"], json!({"1": {"pins": {"5": [1, 1]}}}));
+}
+
+#[tokio::test]
 async fn users_are_edited_and_revived() {
     let dir = realm();
     let meta = Metadata {

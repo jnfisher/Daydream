@@ -6,6 +6,7 @@
 //! in [`tools`], its lists in [`reports`], its Export to MMUD Explorer in [`mme`], the realm
 //! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the
 //! realm's unpublished changes in [`changes`], publishing them into the game in [`publish`],
+//! where the World map draws rooms moved by hand in [`pins`],
 //! running the game (silvermere's admin API, starting it again) in [`control`], undo and
 //! redo in [`history`], the MCP server
 //! for AI agents at `/mcp`
@@ -48,6 +49,7 @@ pub mod games;
 pub mod history;
 pub mod mcp;
 pub mod mme;
+pub mod pins;
 pub mod publish;
 pub mod reports;
 pub mod silvermere;
@@ -64,6 +66,8 @@ pub struct AppState {
     current: RwLock<Arc<Current>>,
     /// Held by every write, so two saves never interleave (and no game is opened mid-save).
     write: Mutex<()>,
+    /// Held while the map's side file is written ([`pins`]).
+    side: Mutex<()>,
     /// The access token, when the server takes requests from other machines ([`auth`]).
     token: Option<String>,
     /// The silvermere database the server was given ([`silvermere`]), as a URL.
@@ -256,6 +260,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
             mcp: None,
         })),
         write: Mutex::new(()),
+        side: Mutex::new(()),
         token: options.token,
         silvermere: options
             .silvermere
@@ -328,6 +333,8 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/reports/room-indexes", get(reports::room_indexes))
         .route("/api/map", get(reports::map))
         .route("/api/map/dig", post(tools::dig))
+        .route("/api/map/pins", get(pins::get).post(pins::set))
+        .route("/api/map/pins/import", post(pins::import))
         .route("/api/quests", get(reports::quests))
         .route("/api/mme", get(mme::info))
         .route("/api/mme/export", post(mme::export))

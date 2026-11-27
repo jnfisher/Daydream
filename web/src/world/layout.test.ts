@@ -88,3 +88,42 @@ test('a start room the map does not have starts from its lowest room', () => {
   assert.deepEqual(spot(l, 3), [0, 0]);
   assert.equal(l.islands, 1);
 });
+
+/** Every room's cell, as pins. */
+const pinsOf = (l: ReturnType<typeof layOut>) => new Map([...l.at].map(([n, s]) => [n, { ...s }]));
+
+test('pinned rooms are drawn in their cells, and the rest hold still', () => {
+  const list = rooms([1, 'A', [E, 2], [N, 5]], [2, 'B', [N, 3]], [3, 'C', [W, 4]], [4, 'D'], [5, 'E'], [7, 'Far', [E, 8]], [8, 'Far']);
+  const auto = layOut(list, 1);
+  const pins = pinsOf(auto);
+  pins.set(3, { x: 6, y: -6 });
+  const l = layOut(list, 1, pins);
+  assert.deepEqual(spot(l, 3), [6, -6]);
+  for (const n of [1, 2, 4, 5, 7, 8]) assert.deepEqual(spot(l, n), spot(auto, n), `room ${n}`);
+  assert.equal(l.pinned.size, 7);
+  assert.equal(l.islands, 1, 'one walk, from the pins');
+  assert.equal(l.displaced.size, 0);
+});
+
+test('a room joined to a pinned room is placed beside it, as one dug from it is', () => {
+  const l = layOut(rooms([1, 'A', [E, 2]], [2, 'B', [W, 1], [S, 3]], [3, 'C', [N, 2]]), 1, new Map([[1, { x: 10, y: 10 }]]));
+  assert.deepEqual(spot(l, 1), [10, 10]);
+  assert.deepEqual(spot(l, 2), [11, 10]);
+  assert.deepEqual(spot(l, 3), [11, 11]);
+  assert.deepEqual([...l.pinned], [1]);
+});
+
+test('two pins in one cell: the lower room keeps it, and the walk places the other', () => {
+  const l = layOut(rooms([1, 'A', [E, 2]], [2, 'B', [W, 1]]), 1, new Map([[1, { x: 0, y: 0 }], [2, { x: 0, y: 0 }]]));
+  assert.deepEqual(spot(l, 1), [0, 0]);
+  assert.deepEqual(spot(l, 2), [1, 0]);
+  assert.deepEqual([...l.pinned], [1]);
+});
+
+test('rooms no pinned room reaches are islands below, and pins of rooms not on the map are let be', () => {
+  const l = layOut(rooms([1, 'A', [E, 2]], [2, 'B'], [7, 'Far', [E, 8]], [8, 'Far']), 1, new Map([[1, { x: 0, y: -20 }], [99, { x: 5, y: 5 }]]));
+  assert.deepEqual(spot(l, 1), [0, -20]);
+  assert.equal(l.island.get(7), 1);
+  assert.ok(spot(l, 7)![1] > -20, 'below');
+  assert.equal(l.at.has(99), false);
+});

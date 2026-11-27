@@ -7,6 +7,11 @@
 // turn as islands of their own, laid out below the start room's. The same rooms always give
 // the same layout, so the map holds still between visits and edits.
 //
+// Rooms moved by hand are pinned: each is drawn in its own cell (the lowest room number keeps a
+// cell two pins name), and the walk starts from them instead of the start room, so the rooms
+// they lead to are placed around them as before, and a room dug from one lands beside it.
+// Rooms no pinned room reaches are islands below them.
+//
 // Pure: no DOM, so `node --test` runs its tests (layout.test.ts).
 
 /** A room as the layout needs it. */
@@ -53,6 +58,8 @@ export interface Label {
 export interface Layout {
   /** Where each room is. */
   at: Map<number, Spot>;
+  /** The rooms drawn where they were pinned. */
+  pinned: Set<number>;
   /** The room in each cell, by `cellKey`. */
   cell: Map<number, number>;
   /** Rooms put away from where an exit wanted them, their cell being taken. */
@@ -84,7 +91,7 @@ interface Grown {
   y1: number;
 }
 
-export function layOut(given: readonly LRoom[], start: number): Layout {
+export function layOut(given: readonly LRoom[], start: number, pins?: ReadonlyMap<number, Spot>): Layout {
   // in room order, whatever order they came in, so the same rooms give the same layout
   const rooms = [...given].sort((a, b) => a.room - b.room);
   const by = new Map(rooms.map((r) => [r.room, r]));
@@ -99,8 +106,10 @@ export function layOut(given: readonly LRoom[], start: number): Layout {
     }
   }
   const taken = new Set<number>();
+  const pinned = new Set<number>();
 
-  function grow(seed: number): Grown {
+  /** Walks from rooms placed first: the start room, or the pinned rooms in their cells. */
+  function grow(seeds: readonly (readonly [number, number, number])[], pin: boolean): Grown {
     const at = new Map<number, Spot>();
     const occupied = new Set<number>();
     const displaced = new Set<number>();
@@ -117,7 +126,12 @@ export function layOut(given: readonly LRoom[], start: number): Layout {
       if (occupied.has(cellKey(x, y))) deferred.push([n, x, y]);
       else place(n, x, y);
     };
-    place(seed, 0, 0);
+    for (const [n, x, y] of seeds) {
+      // two pins in one cell: the lower room number keeps it, and the walk places the other
+      if (occupied.has(cellKey(x, y))) continue;
+      place(n, x, y);
+      if (pin) pinned.add(n);
+    }
     let next = 0;
     for (;;) {
       while (next < queue.length) {
@@ -152,12 +166,20 @@ export function layOut(given: readonly LRoom[], start: number): Layout {
       x1 = Math.max(x1, x);
       y1 = Math.max(y1, y);
     }
-    return { seed, at, displaced, x0, y0, x1, y1 };
+    return { seed: seeds[0]![0], at, displaced, x0, y0, x1, y1 };
   }
 
   const grown: Grown[] = [];
-  if (by.has(start)) grown.push(grow(start));
-  for (const r of rooms) if (!taken.has(r.room)) grown.push(grow(r.room));
+  const pinsGiven: [number, number, number][] = [];
+  if (pins?.size) {
+    for (const r of rooms) {
+      const p = pins.get(r.room);
+      if (p && Number.isInteger(p.x) && Number.isInteger(p.y)) pinsGiven.push([r.room, p.x, p.y]);
+    }
+  }
+  if (pinsGiven.length) grown.push(grow(pinsGiven, true));
+  else if (by.has(start)) grown.push(grow([[start, 0, 0]], false));
+  for (const r of rooms) if (!taken.has(r.room)) grown.push(grow([[r.room, 0, 0]], false));
 
   // the start room's island where it is, the others in rows below it, biggest first
   const offsets: Spot[] = [];
@@ -202,7 +224,7 @@ export function layOut(given: readonly LRoom[], start: number): Layout {
     }
     for (const n of g.displaced) displaced.add(n);
   });
-  return { at, cell, displaced, island, islands: grown.length, bounds, labels: labels(rooms, by, island, at) };
+  return { at, pinned, cell, displaced, island, islands: grown.length, bounds, labels: labels(rooms, by, island, at) };
 }
 
 /** The free cell nearest (x, y), ring by ring, in a fixed order. */
