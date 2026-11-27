@@ -219,6 +219,37 @@ pub enum AdminError {
     Refused(u16, String),
 }
 
+impl AdminError {
+    /// Whether it may pass in a moment: nothing answered, or silvermere was too busy to.
+    pub fn passing(&self) -> bool {
+        matches!(self, Self::Unreachable(_) | Self::Refused(500..=599, _))
+    }
+}
+
+/// How long a quick failure may take and still be tried [`again`], and the pause before it.
+const AGAIN_WITHIN: Duration = Duration::from_secs(2);
+const AGAIN_AFTER: Duration = Duration::from_millis(300);
+
+/// `f`, tried twice more a moment apart when it failed quickly with what may pass
+/// (`passing`): silvermere busy for a moment, or its database, should not change what a
+/// publish does. A slow failure is not waited for again.
+pub(crate) fn again<T, E>(
+    mut f: impl FnMut() -> Result<T, E>,
+    passing: impl Fn(&E) -> bool,
+) -> Result<T, E> {
+    let t0 = Instant::now();
+    let mut tries = 1;
+    loop {
+        match f() {
+            Err(e) if tries < 3 && passing(&e) && t0.elapsed() < AGAIN_WITHIN => {
+                tries += 1;
+                std::thread::sleep(AGAIN_AFTER);
+            }
+            done => return done,
+        }
+    }
+}
+
 impl std::fmt::Display for AdminError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -957,7 +988,10 @@ pub struct Live {
 impl Live {
     /// Looks at silvermere on `url`, with `settings`.
     pub fn look(url: &str, settings: &Settings) -> Self {
-        let (running, error) = match daydream_silvermere::block_on(daydream_silvermere::info(url)) {
+        let (running, error) = match again(
+            || daydream_silvermere::block_on(daydream_silvermere::info(url)),
+            |e| matches!(e, daydream_silvermere::Error::Db(_)),
+        ) {
             Ok(i) => (i.running, None),
             Err(e) => (None, Some(e.to_string())),
         };
@@ -980,9 +1014,9 @@ impl Live {
             autostart: false,
         };
         if let (Some(_), Some(admin)) = (&live.running, &live.admin) {
-            live.answers = admin.health().is_ok();
+            live.answers = again(|| admin.health(), AdminError::passing).is_ok();
             if live.answers && admin.has_token() {
-                match admin.who() {
+                match again(|| admin.who(), AdminError::passing) {
                     Ok(players) => {
                         live.token = Token::Ok;
                         live.players = Some(players);
@@ -1008,6 +1042,31 @@ impl Live {
         self.admin
             .as_ref()
             .filter(|_| self.running.is_some() && self.answers && self.token.usable())
+    }
+
+    /// Why Daydream cannot warn the players and stop silvermere now, while it may be
+    /// running: `None` when it can, or when silvermere is stopped.
+    pub fn why_no_stopper(&self) -> Option<String> {
+        if self.stopper().is_some() || (self.running.is_none() && self.error.is_none()) {
+            return None;
+        }
+        Some(match (&self.error, &self.admin) {
+            (Some(e), _) => {
+                format!("Daydream could not look at silvermere's database just now ({e})")
+            }
+            (None, None) => "Daydream does not know where silvermere's admin API is".into(),
+            (None, Some(admin)) if !self.answers => {
+                format!(
+                    "silvermere's admin API did not answer at {} just now",
+                    admin.base()
+                )
+            }
+            (None, Some(_)) => match self.token {
+                Token::None => "Daydream has no admin token for silvermere".into(),
+                Token::Unknown => "silvermere does not know Daydream's admin token yet".into(),
+                _ => "silvermere did not say who is in the game just now".into(),
+            },
+        })
     }
 
     /// What the token's state means, for the Server card.
@@ -1218,6 +1277,89 @@ pub(crate) async fn say(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// An admin API on this machine answering `statuses` in turn, a connection each, with
+    /// no players; how many times it was asked.
+    fn admin_answering(statuses: &'static [u16]) -> (Admin, Arc<AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked = Arc::new(AtomicUsize::new(0));
+        let n = asked.clone();
+        std::thread::spawn(move || {
+            for (stream, status) in listener.incoming().zip(statuses) {
+                let mut stream = stream.unwrap();
+                n.fetch_add(1, Ordering::SeqCst);
+                let (mut head, mut buf) = (Vec::new(), [0u8; 1024]);
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(k) => head.extend_from_slice(&buf[..k]),
+                    }
+                }
+                let body = r#"{"players":[]}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (Admin::new(&base, Some("t")), asked)
+    }
+
+    #[test]
+    fn a_quick_failure_is_asked_again() {
+        // busy a moment, then well
+        let (admin, asked) = admin_answering(&[503, 200]);
+        assert_eq!(again(|| admin.who(), AdminError::passing), Ok(Vec::new()));
+        assert_eq!(asked.load(Ordering::SeqCst), 2);
+        // three times at most
+        let (admin, asked) = admin_answering(&[504, 504, 504, 200]);
+        let busy = again(|| admin.who(), AdminError::passing);
+        assert!(matches!(busy, Err(AdminError::Refused(504, _))), "{busy:?}");
+        assert_eq!(asked.load(Ordering::SeqCst), 3);
+        // a token silvermere does not know is not asked again
+        let (admin, asked) = admin_answering(&[401, 200]);
+        assert_eq!(
+            again(|| admin.who(), AdminError::passing),
+            Err(AdminError::Unauthorized)
+        );
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_publish_is_told_why_daydream_cannot_stop_silvermere() {
+        let live = |running: bool, answers: bool, token: Token| Live {
+            admin: Some(Admin::new("http://127.0.0.1:8080", Some("t"))),
+            admin_from: "default",
+            running: running.then(|| "lock file x is held (pid 1)".to_string()),
+            error: None,
+            answers,
+            token,
+            players: None,
+            planned: None,
+            starter: None,
+            autostart: false,
+        };
+        assert_eq!(live(true, true, Token::Ok).why_no_stopper(), None);
+        // stopped: there is nothing to stop
+        assert_eq!(live(false, false, Token::Unchecked).why_no_stopper(), None);
+        let why = |l: Live| l.why_no_stopper().unwrap_or_default();
+        assert!(
+            why(live(true, false, Token::Unchecked))
+                .contains("did not answer at http://127.0.0.1:8080")
+        );
+        assert!(why(live(true, true, Token::Unchecked)).contains("who is in the game"));
+        assert!(why(live(true, true, Token::Unknown)).contains("does not know"));
+        assert!(why(live(true, true, Token::None)).contains("no admin token"));
+        // its database could not be read: it may be running
+        let mut unread = live(false, false, Token::Unchecked);
+        unread.error = Some("database is locked".into());
+        assert!(why(unread).contains("database is locked"));
+    }
 
     #[test]
     fn the_admin_api_is_where_silvermere_toml_says() {
