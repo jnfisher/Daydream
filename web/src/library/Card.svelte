@@ -197,13 +197,21 @@
     }
     // what the card's own table knows
     out.push(...(def?.problems?.(draft.get, { lines: linesOf }) ?? []));
-    if (table.name === 'Textblocks' && draft.has('Data')) {
+    // the end of a text block's text: its last part's (a part that goes on in the next ends
+    // mid-line, and its spaces are words apart)
+    if (table.name === 'Textblocks' && draft.has('Data') && !continues(key, rows)) {
       const p = trailingSpaces('Data', 'The text', draft.typed('Data'));
       if (p) out.push(p);
     }
     out.push(...foundProblems(found, table.name, key, (c) => draft.typed(c)));
     return byLevel(out);
   });
+
+  /** Whether a text block's part goes on in the next part. */
+  function continues(key: Cell[], rows: ListRow[]): boolean {
+    const [n, part] = key.map(Number);
+    return rows.some((r) => Number(r.key[0]) === n && Number(r.key[1]) === part! + 1);
+  }
 
   /** Gives the record its own copy of a message (the Library saves it first, then makes it). */
   function ownMessage(number: number) {

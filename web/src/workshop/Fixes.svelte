@@ -144,7 +144,8 @@
     </p>
   {:else if id === 'strip'}
     <label class="row"><span class="lbl">Take off</span><input class="text" bind:value={strip} placeholder="such as ␛[0m" /></label>
-    <p class="hint">Taken off the end of every text block part that ends with it. Type ␛ for the escape character.</p>
+    <p class="hint">Taken off the end of every text block part that ends with it, as NMR does. Type ␛ for the escape character.</p>
+    <p class="hint">A text goes on from part to part, so a part can end mid-line (“giveitem ” then “8:…” in the next): taking a space off such a part joins two words. Stray spaces at the end of a text are the Health check’s, which leaves those parts alone.</p>
   {:else if id === 'drops'}
     <div class="row">
       <span class="lbl">Drop %</span>

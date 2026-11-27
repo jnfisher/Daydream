@@ -332,6 +332,37 @@ export interface Finding {
   text: string;
 }
 
+/** A health check across the world (`/api/checks/health`): what is wrong that has a sure fix,
+ * and counts worth knowing. */
+export type HealthId = 'uses' | 'blank_blows' | 'exits' | 'drop_uses' | 'leftovers' | 'spaces' | 'limited';
+
+export interface Health {
+  id: HealthId;
+  /** Players meet it, worth a tidy, a count to know, or nothing found. */
+  level: 'warn' | 'note' | 'info' | 'ok';
+  /** The records it is about: for a check with a fix, the records the fix changes. */
+  records: number;
+  /** The values it is about (uses, messages, slots, exits). */
+  values: number;
+  /** The first of those records. */
+  list: { table: string; key: number[] }[];
+  /** What its fix could not put right, as NMR logs it. */
+  notes: string[];
+  /** The history's name for its fix; null when it has no sure fix. */
+  fix: string | null;
+}
+
+/** What putting a health check right did (or, as a preview, would do). */
+export interface HealthFix {
+  dry_run: boolean;
+  check: HealthId;
+  records: number;
+  values: number;
+  tables: { table: string; records: number; values: number }[];
+  notes: string[];
+  step: number | null;
+}
+
 export interface Checks {
   checks: CheckInfo[];
   /** The findings the ask matched, of which `findings` is a page. */
@@ -389,6 +420,10 @@ export const api = {
   /** The findings about one record, or resting on it. */
   checksOf: (table: string, key: Cell[]) =>
     call<{ findings: Finding[] }>('GET', `/api/checks/record?table=${encodeURIComponent(table)}&key=${encodeURIComponent(JSON.stringify(key))}`),
+  /** The health checks, in the order Home shows them. */
+  health: () => call<{ checks: Health[] }>('GET', '/api/checks/health'),
+  /** Puts a health check right as one step of the history. */
+  healthFix: (check: HealthId, dryRun = false) => call<HealthFix>('POST', '/api/checks/health/fix', { check, dry_run: dryRun }, dryRun),
   /** Spelling leaves a word alone from now on (or, with `accept` false, checks it again). */
   acceptWord: (word: string, accept = true) => call<{ words: string[] }>('POST', '/api/checks/words', { word, accept }, true),
   save: (table: string, key: Cell[], values: Record<string, Cell>) =>

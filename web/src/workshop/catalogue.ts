@@ -35,9 +35,10 @@ export const GROUPS: Group[] = [
   {
     id: 'health',
     title: 'Health checks',
-    about: 'Problems found in the data, with fixes you can take back.',
+    about: 'Problems found across the world, each fixed in one click you can take back.',
     tools: [
-      { id: 'uses', name: 'Fix uses on items', about: 'Items with 0 uses break the first time they are used: they get −1, never wearing out. Items kept after their uses get a recharge.', was: ['Fix Number of Uses'], tone: 'butter', icon: 'wand', words: 'charges' },
+      { id: 'uses', name: 'Fix uses on items', about: 'Items with 0 uses break the first time they are used: they get −1, never wearing out. Items kept after their uses get a recharge.', was: ['Fix Number of Uses'], tone: 'butter', icon: 'wand', words: 'charges health' },
+      { id: 'dropuses', name: 'Fix uses on drops', about: 'Monster drops that would arrive used up get their item’s own uses.', was: ['Fix Number of Uses on Item Drops'], tone: 'butter', icon: 'wand', words: 'charges health' },
       { id: 'checks', name: 'Checks that read the wiring', about: 'Prices against what is said, spelling, placeholders, messages that read wrong and spawns nobody reaches. They are on Home.', was: [], tone: 'lilac', icon: 'pulse', href: '#/home', words: 'health problems typos' },
     ],
   },
@@ -103,7 +104,6 @@ export const GROUPS: Group[] = [
       { id: 'kills', name: 'Kill timers', about: 'Set every monster as killed on a day, or clear the timers so they all come back.', was: ['Set Last Killed Times to Date', 'Reset Last Killed Times to Zero'], tone: 'peach', icon: 'timer', words: 'respawn boss' },
       { id: 'restock', name: 'Restock shops', about: 'Fill every shop back up to its normal stock.', was: ['Restock All Shops'], tone: 'teal', icon: 'store' },
       { id: 'floors', name: 'Tidy the floors', about: 'Put piles of the same item lying in a room into one slot.', was: ['Combine Like Items on Floor'], tone: 'mint', icon: 'combine', words: 'rooms items' },
-      { id: 'dropuses', name: 'Fix uses on drops', about: 'Monster drops that would arrive used up get their item’s own uses.', was: ['Fix Number of Uses on Item Drops'], tone: 'butter', icon: 'wand', words: 'charges' },
     ],
   },
   {
@@ -131,7 +131,7 @@ export const GROUPS: Group[] = [
     about: 'Rarely needed. Tucked away, not gone.',
     tools: [
       { id: 'buffer', name: 'Buffer rooms', about: 'Add or remove the spare rooms that keep rooms loading past gaps in a map’s numbers.', was: ['Insert Buffer Rooms', 'Delete Buffer Rooms'], tone: 'plain', icon: 'dashed' },
-      { id: 'strip', name: 'Strip trailing characters', about: 'Take stray characters off the end of every text block part that ends with them.', was: ['Strip Characters off Text Blocks'], tone: 'plain', icon: 'scissors', words: 'textblocks' },
+      { id: 'strip', name: 'Strip trailing characters', about: 'Take stray characters off the end of every text block part that ends with them.', was: ['Strip Characters off Text Blocks'], tone: 'plain', icon: 'scissors', words: 'textblocks spaces' },
       { id: 'delete', name: 'Delete records', about: 'Delete a range of a table’s records, or all of them. It can be taken back until you publish.', was: ['Delete Records', 'Database Deleter'], tone: 'bad', icon: 'trash', words: 'remove' },
       { id: 'call', name: 'File call letters', about: 'Rename the .DAT files for a second copy of the game.', was: ['Change dat call letters'], tone: 'plain', icon: 'hash', later: true },
       { id: 'readonly', name: 'Read-only mode', about: 'Look without touching: a lock on saving.', was: ['Disable DB Writing'], tone: 'plain', icon: 'lock', later: true },

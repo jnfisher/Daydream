@@ -7,6 +7,8 @@
 //! | `GET /api/checks?check=&level=&offset=&limit=` | each check with its counts, and a page of its findings (warnings first) |
 //! | `GET /api/checks/record?table=&key=` | the findings about one record or resting on it |
 //! | `POST /api/checks/words` `{"word", "accept"}` | accepts a word the world uses on purpose, so spelling leaves it alone (or takes it back) |
+//! | `GET /api/checks/health` | the health checks ([`daydream_nmr::health`]): each one's `{id, level, records, values, list, notes, fix}`, `fix` being the history's name for its fix (null when it has no sure fix) |
+//! | `POST /api/checks/health/fix` `{"check", "dry_run"}` | puts a health check right as one step of the history: `{dry_run, check, records, values, tables, notes, reports, step}` (`tables`: each table's `{table, records, values}`) |
 //!
 //! A finding is `{check, level, about: {table, key}, column, bits, refs, fix, word, suggest,
 //! text}`: `bits` are words and `{ref: {t, n, map?}}` records, as the cards' script lines are;
@@ -18,8 +20,10 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
+use daydream_nmr::health;
 use daydream_nmr::rows;
 use daydream_nmr::wiring::{self, Bit, Check, Finding, Level, Rec, Report};
+use daydream_store::Realm;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -228,6 +232,88 @@ pub(crate) async fn words(
             }
         })?;
         Ok(Json(json!({ "words": words })))
+    })
+    .await
+}
+
+/// `GET /api/checks/health`: kept until the realm's files change, as the wiring's report is.
+pub(crate) async fn health(State(s): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
+    blocking(move || {
+        let dir = s.realm_dir()?;
+        let found = health::cached(&dir).map_err(failed)?;
+        let checks: Vec<Value> = found
+            .iter()
+            .map(|f| {
+                json!({
+                    "id": f.check.id(),
+                    "level": f.level.id(),
+                    "records": f.records,
+                    "values": f.values,
+                    "list": f.list.iter().map(rec_json).collect::<Vec<_>>(),
+                    "notes": f.notes,
+                    "fix": f.check.fix_label(),
+                })
+            })
+            .collect();
+        Ok(Json(json!({ "checks": checks })))
+    })
+    .await
+}
+
+fn failed(e: impl std::fmt::Display) -> ApiError {
+    ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+/// A health check to put right.
+#[derive(Debug, Deserialize)]
+pub struct FixBody {
+    check: String,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// `POST /api/checks/health/fix`: every table the fix changes, in one step.
+pub(crate) async fn health_fix(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<FixBody>,
+) -> Result<Json<Value>, ApiError> {
+    let check = health::Check::parse(&body.check).ok_or_else(|| {
+        bad(format!(
+            "no health check {}: {}",
+            body.check,
+            health::Check::ALL.map(health::Check::id).join(", ")
+        ))
+    })?;
+    let label = check
+        .fix_label()
+        .ok_or_else(|| bad(format!("{} has no sure fix", check.id())))?;
+    let dry_run = body.dry_run;
+    blocking(move || {
+        let (writing, dir) = s.lock_write(dry_run, label)?;
+        let realm = Realm::open(&dir)?;
+        let layout = daydream_nmr::layout_of_realm(&realm);
+        let plans = health::fix(&realm, check, layout).map_err(failed)?;
+        let mut reports = Vec::new();
+        if !dry_run {
+            for p in &plans {
+                let r = daydream_nmr::modify::apply(&realm, p, layout).map_err(failed)?;
+                reports.push(rows::report_json(&r));
+            }
+        }
+        let step = writing.finish();
+        Ok(Json(json!({
+            "dry_run": dry_run,
+            "check": check.id(),
+            "records": plans.iter().map(|p| p.records()).sum::<usize>(),
+            "values": plans.iter().map(|p| p.changes.len()).sum::<usize>(),
+            "tables": plans
+                .iter()
+                .map(|p| json!({ "table": p.table, "records": p.records(), "values": p.changes.len() }))
+                .collect::<Vec<_>>(),
+            "notes": plans.iter().flat_map(|p| p.notes.iter()).collect::<Vec<_>>(),
+            "reports": reports,
+            "step": step,
+        })))
     })
     .await
 }

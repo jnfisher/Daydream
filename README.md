@@ -409,6 +409,18 @@ change, which values go from what to what, and what is already so or left out. A
 one step of the history, so Undo (the toast's, Ctrl+Z or Changes) takes it all back until you
 publish.
 
+**Health**, on Home and at the top of the Workshop's health checks, counts what is wrong
+across the world that has a sure fix, and fixes each kind in one click: items with 0 uses,
+which break the first time they are used (NMR's Fix Number of Uses), blows told by a blank
+attack message (set to 0, the game's own words), drops whose uses are not their item's
+(Fix Number of Uses on Item Drops), values left in empty ability slots (most often 8224, two
+spaces an old tool left), and text blocks that end in stray spaces. Those are trimmed at the
+end of the text only, since a text goes on from part to part and a part can end mid-line. It
+also counts exits to rooms the world does not have, which have no sure fix, and the limited
+items (NMR's Limited Item List). Each fix is one step of the history that Undo takes back;
+in the Workshop each line also lists its records. Routes: `GET /api/checks/health` and
+`POST /api/checks/health/fix` (`{"check", "dry_run"}`).
+
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
 sounds, which are off until you do. Licenses: `/notices.txt`.
