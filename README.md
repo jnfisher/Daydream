@@ -200,6 +200,14 @@ Min Index, Max Index and Max Regen), control room and room type, and sets any of
 all as one step that one Ctrl+Z takes back: NMR's Mass Room Editor on just those rooms (the
 server answers the same at `POST /api/map/set`, and refuses a number its field cannot hold).
 
+**Paint** (`5`, in the Select panel) is the region brush: it puts light, monsters (Mon Type,
+Min Index, Max Index and Max Regen) or a control room straight onto the rooms a drag goes
+over, a step for each stroke that one Ctrl+Z takes back. The map is coloured by what is
+painted (light, monsters or area), and the stroke shows the colours its rooms take before it
+is let go. `[` and `]` size it, Alt and a click (or **Take from a room**, for a finger) takes a
+room's value, and while rooms are picked, only they take paint, so a wand's area or a box
+keeps the paint inside it. Rooms that hold the value already are left as they are.
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
@@ -212,6 +220,7 @@ server answers the same at `POST /api/map/set`, and refuses a number its field c
 | Shift+arrows | In Build mode, move the room a cell (or drag it) |
 | `S` | Stamps: `1` to `9` pick one; `R` turn, `X` `Y` mirror, `[` `]` `{` `}` size, Space roll, `J` join what it touches, arrows and Enter aim and put it down, Shift and Alt held leave rooms alone or replace exits, Esc puts it away |
 | `V` | Select: `1` to `4` box, lasso, brush, wand; Shift adds, Alt takes away, `[` `]` size the brush, Space and a drag moves the map, Ctrl+A picks every room, Esc lets go of them, then puts it away |
+| `5` | In Select, Paint: a drag paints the field onto rooms, `[` `]` size it, Alt and a click takes a room's value, Esc puts the pipette back, then lets go of the rooms picked |
 
 **The Library** has the world's records a table at a time: the list (found by name or
 number, narrowed by chips such as Weapons or Map 3, or **Changed** for what changed since

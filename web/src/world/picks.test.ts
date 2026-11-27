@@ -1,10 +1,10 @@
 // Picking rooms on the World map: lassos, the wand's region, picks added and taken, what the
-// rooms picked share (picks.ts), with `npm test`.
+// rooms picked share, and the rooms a stroke of Paint changes (picks.ts), with `npm test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { MapRoom } from './model.ts';
 import { lightWord } from './light.ts';
-import { after, clickHow, howOf, inside, PICK_FIELDS, regionOf, shared, sharedOf, withValues } from './picks.ts';
+import { after, changing, clickHow, holds, howOf, inside, PAINT_COLOUR, PAINT_FIELDS, PICK_FIELDS, PICK_TOOLS, regionOf, shared, sharedOf, valuesOf, withValues } from './picks.ts';
 
 const [N, S, E, W] = [0, 1, 2, 3];
 
@@ -103,4 +103,30 @@ test('a field is shared when every column of it is, and light has the game words
     [250, 0, -1, -100, -101, -150, -151, -200, -201, 900].map(lightWord),
     ['Daylight', 'Regular light', 'Dimly lit', 'Dimly lit', 'Barely visible', 'Barely visible', 'Very dark', 'Very dark', 'Pitch black', 'Blinding'],
   );
+});
+
+test('a stroke of Paint changes only the rooms without its values, and each field it paints colours the map', () => {
+  const field = (id: string) => PICK_FIELDS.find((f) => f.id === id)!;
+  const by = new Map(
+    [
+      withValues(room(1, 'Cave'), [['Light', -175]]),
+      withValues(room(2, 'Cave'), [['Light', 0]]),
+      withValues(room(3, 'Cave'), [['Light', -175], ['Mon Type', 6], ['Min Index', 1], ['Max Index', 4], ['Max Regen', 2]]),
+      room(4, 'Cave'),
+    ].map((r) => [r.room, r]),
+  );
+  assert.deepEqual(changing(by, [4, 3, 2, 1, 9], [['Light', -175]]), [2, 4], 'room 9 is not on the map; rooms 1 and 3 are dark already');
+  assert.deepEqual(changing(by, new Set([3, 1]), [['Light', -175]]), []);
+  const monsters: [string, number][] = [['Mon Type', 6], ['Min Index', 1], ['Max Index', 4], ['Max Regen', 2]];
+  assert.deepEqual(changing(by, [1, 2, 3], monsters), [1, 2], 'every column of the field counts');
+  assert.ok(holds(by.get(3)!, monsters));
+  assert.ok(!holds(by.get(3)!, [['Max Regen', 3]]));
+  // the pipette takes a room's values
+  assert.deepEqual(valuesOf(by.get(3)!, field('monsters')), [6, 1, 4, 2]);
+  assert.deepEqual(valuesOf(by.get(1)!, field('light')), [-175]);
+  assert.deepEqual(valuesOf(withValues(room(5, 'Den'), [['Control Room', 12]]), field('control')), [12]);
+  // Paint is the fifth way of the Select tool, and each of its fields has a colouring that shows it
+  assert.equal(PICK_TOOLS[4]!.id, 'paint');
+  assert.deepEqual(PAINT_FIELDS.map((f) => PAINT_COLOUR[f]), ['light', 'monsters', 'area']);
+  for (const f of PAINT_FIELDS) assert.ok(field(f), `${f} is a field the bar sets too`);
 });

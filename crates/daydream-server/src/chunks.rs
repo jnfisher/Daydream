@@ -10,7 +10,7 @@ pub(crate) fn get(name: &str) -> Option<&'static str> {
         "Library-JIAYJGPR.js" => include_str!("chunks/Library-JIAYJGPR.js"),
         "PlayPanel-4OBS52NC.js" => include_str!("chunks/PlayPanel-4OBS52NC.js"),
         "Story-E32XLAOU.js" => include_str!("chunks/Story-E32XLAOU.js"),
-        "World-DK46SYCJ.js" => include_str!("chunks/World-DK46SYCJ.js"),
+        "World-II5YN7LH.js" => include_str!("chunks/World-II5YN7LH.js"),
         "chunk-3CJ3LA7O.js" => include_str!("chunks/chunk-3CJ3LA7O.js"),
         "chunk-4KTMHL72.js" => include_str!("chunks/chunk-4KTMHL72.js"),
         "chunk-5O6QYXHC.js" => include_str!("chunks/chunk-5O6QYXHC.js"),
@@ -60,7 +60,7 @@ pub(crate) fn get(name: &str) -> Option<&'static str> {
         "chunk-YSU7OTFY.js" => include_str!("chunks/chunk-YSU7OTFY.js"),
         "chunk-Z7PWHALG.js" => include_str!("chunks/chunk-Z7PWHALG.js"),
         "parts-TXLPU6L6.js" => include_str!("chunks/parts-TXLPU6L6.js"),
-        "picking-B5CHWU5Q.js" => include_str!("chunks/picking-B5CHWU5Q.js"),
+        "picking-X2TKAVUG.js" => include_str!("chunks/picking-X2TKAVUG.js"),
         "stamping-AUDRWK7H.js" => include_str!("chunks/stamping-AUDRWK7H.js"),
         _ => return None,
     })
