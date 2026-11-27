@@ -1,12 +1,12 @@
 //! The realm in a silvermere database (`daydream silvermere-export`, `silvermere-import`):
-//! the Tools page's silvermere card.
+//! the Workshop's silvermere page.
 //!
 //! | Route | Does |
 //! |---|---|
 //! | `GET /api/silvermere` | the open silvermere game's database, else the one `serve --silvermere` was given (password masked), if any; and whether another may be typed |
 //! | `POST /api/silvermere/info` | `{database?}`: what the database holds, and whether silvermere runs on it |
 //! | `POST /api/silvermere/export` | `{database?, dry_run, reset_state, keep_extra, no_raw}`: writes the realm's world into it |
-//! | `POST /api/silvermere/import` | `{database?, dry_run, keep_extra}`: rewrites the realm's world from it |
+//! | `POST /api/silvermere/import` | `{database?, dry_run, keep_extra}`: rewrites the realm's world from it, as one step of its history (`step`) |
 //!
 //! `database` is a SQLite file's path or a `sqlite:`/`postgres:` URL; left out, the open
 //! game's when it is a silvermere one, else the one the server was started with. With an
@@ -130,11 +130,15 @@ pub(crate) async fn import(
             dry_run: body.dry_run,
             ..ImportOptions::default()
         };
-        let (_writing, dir) = s.lock_write(body.dry_run, "Read from silvermere")?;
+        let (writing, dir) = s.lock_write(body.dry_run, "Read from silvermere")?;
         let realm = Realm::open(&dir)?;
         let tables =
             daydream_silvermere::block_on(daydream_silvermere::import(&realm, &url, &opts))?;
-        Ok(Json(json!({ "dry_run": body.dry_run, "tables": tables })))
+        drop(realm);
+        let step = writing.finish();
+        Ok(Json(
+            json!({ "dry_run": body.dry_run, "tables": tables, "step": step }),
+        ))
     })
     .await
 }

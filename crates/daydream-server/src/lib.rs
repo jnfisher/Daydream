@@ -261,8 +261,8 @@ impl Drop for WriteGuard<'_> {
 pub struct Options {
     /// The access token ([`auth`]). Without one, only this machine is answered.
     pub token: Option<String>,
-    /// A silvermere database (a SQLite file's path or a URL) for the silvermere card and the
-    /// MCP server's silvermere tools ([`silvermere`]).
+    /// A silvermere database (a SQLite file's path or a URL) for the Workshop's silvermere
+    /// page and the MCP server's silvermere tools ([`silvermere`]).
     pub silvermere: Option<String>,
     /// How games are found and opened from the browser ([`games`]).
     pub games: games::Config,

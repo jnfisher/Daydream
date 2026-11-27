@@ -1,8 +1,11 @@
 <!--
   A button that acts only when held down until it fills (about a second), so a stray click
   never publishes. Enter or Space acts at once: a keyboard press is deliberate already, and a
-  screen reader's press is a keyboard press.
+  screen reader's press is a keyboard press. Its styles go with it, as the Workshop's lazy pages
+  hold one too.
 -->
+<svelte:options css="injected" />
+
 <script lang="ts">
   import type { Snippet } from 'svelte';
 

@@ -92,6 +92,76 @@ export interface Plans {
 /** A Workshop run's request: previewed (`dry_run`) first, then written. */
 export type RunBody = Record<string, unknown>;
 
+/** What NMR's Database Importer brings in (`daydream_nmr::ImportOptions`): the tables, a
+ * run of numbers for some, whether records the world has are left alone, and which parts of
+ * rooms. */
+export interface ImportNmr {
+  tables: string[];
+  ranges: { table: string; map?: number; from: number; to: number }[];
+  skip_existing: boolean;
+  room_parts: 'all' | 'only_items' | 'not_items';
+  extra_parts: boolean;
+}
+
+/** What a write back to the WCC files does to one of them (`POST /api/tools/write-dat`). */
+export interface WrittenFile {
+  stem: string;
+  dest: string;
+  /** `written`: rows of a game's own .db files, changed in place. */
+  action: 'unchanged' | 'updated' | 'rebuilt' | 'written';
+  records: number | null;
+  /** Only the world's edits went in, onto the file as the game has it. */
+  merged: boolean;
+  /** Edits left out (the game has made them impossible meanwhile), and why. */
+  skipped: string[];
+}
+
+/** One of silvermere's tables, written or read back. */
+export interface SilvermereTable {
+  table: string;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  deleted: number;
+}
+
+/** What a silvermere database holds, and whether silvermere runs on it. */
+export interface SilvermereInfo {
+  url: string;
+  running: string | null;
+  tables: [string, number][];
+  raw: boolean;
+}
+
+/** A run of rooms MMUD Explorer's export leaves out. */
+export interface MmeRooms {
+  map: number;
+  from: number;
+  to: number;
+}
+
+/** NMR's Export to MMUD Explorer boxes (`daydream_nmr::mme::MmeOptions`). */
+export interface MmeOptions {
+  legit: boolean;
+  disable_kai: boolean;
+  exclude_default: boolean;
+  exclude_rooms: boolean;
+  excluded: MmeRooms[];
+  hide_excluded: boolean;
+  no_rooms: boolean;
+  custom: string;
+  update_url: string;
+  dat_version: string;
+}
+
+/** What the MME export form needs first: whether this machine writes a .mdb itself (Jet), the
+ * data version, and the rooms NMR leaves out unless asked (`GET /api/mme`). */
+export interface MmeInfo {
+  jet: boolean;
+  dat_version: string;
+  defaults: (MmeRooms & { name: string })[];
+}
+
 /** One record's new number. */
 export interface Move {
   from: number;
@@ -129,10 +199,12 @@ export class ApiError extends Error {
 
 /** `quiet`: a write that leaves the realm be (the map's side file), so nothing need be read again. */
 async function call<T>(method: string, url: string, body?: unknown, quiet = false): Promise<T> {
+  // a file goes as it is; anything else as JSON
+  const raw = body instanceof Blob;
   const res = await fetch(url, {
     method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined || raw ? {} : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
   });
   if (res.status === 401) {
     // the server has an access token, and this browser's sign-in is gone
@@ -152,6 +224,23 @@ async function call<T>(method: string, url: string, body?: unknown, quiet = fals
   // the frame keeps its changes list and history current
   if (method !== 'GET' && !quiet) window.dispatchEvent(new CustomEvent('dd:wrote'));
   return json as T;
+}
+
+/** A file the server makes from a JSON request, to save. */
+async function fileOf(url: string, body: unknown): Promise<Blob> {
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) location.href = '/login';
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = text || res.statusText;
+    try {
+      msg = (JSON.parse(text) as { error?: string }).error ?? msg;
+    } catch {
+      // not JSON: an error page
+    }
+    throw new ApiError(res.status, msg);
+  }
+  return res.blob();
 }
 
 /** A record that uses a message (`/api/messages/users`). */
@@ -588,6 +677,35 @@ export const api = {
   /** The Monster Group/Index Changer: the monsters, then the rooms that spawn them, as one step. */
   moveIndexes: (changes: IndexChange[], dryRun: boolean, label?: string) =>
     call<Plans>('POST', '/api/tools/monster-indexes', { changes, dry_run: dryRun, label }, dryRun),
+  /** NMR's Database Importer: an export (`.mdb` or NMR's JSON) brought in, previewed or as one step. */
+  importNmr: (file: Blob, options: ImportNmr, dryRun: boolean) =>
+    call<{ dry_run: boolean; reports: Report[]; step?: number | null }>(
+      'POST',
+      `/api/tools/import?options=${encodeURIComponent(JSON.stringify({ ...options, dry_run: dryRun }))}`,
+      file,
+      dryRun,
+    ),
+  /** Merge Users: another user file's users copied in, previewed or as one step. */
+  mergeUsers: (file: Blob, dryRun: boolean) =>
+    call<{ dry_run: boolean; copied: number; skipped: string[]; step?: number | null }>('POST', `/api/tools/merge-users?dry_run=${dryRun}`, file, dryRun),
+  /** Writes the world's edits into a folder of WCC files (none given: the open game's); then
+   * the world's changes are counted from what the files hold. */
+  writeDat: (body: { wcc: string | null; out: string | null; backup: boolean; force: boolean }, dryRun: boolean) =>
+    call<{ dry_run: boolean; files: WrittenFile[]; backup?: string | null }>('POST', '/api/tools/write-dat', { ...body, dry_run: dryRun }, dryRun),
+  /** The silvermere database the server knows (password masked), and whether another may be typed. */
+  silvermere: () => call<{ database: string | null; custom: boolean }>('GET', '/api/silvermere'),
+  silvermereInfo: (database: string | null) => call<SilvermereInfo>('POST', '/api/silvermere/info', { database }, true),
+  /** Writes the world into a silvermere database; it is not a step of the world's history. */
+  silvermereExport: (body: { database: string | null; reset_state: boolean; keep_extra: boolean; no_raw: boolean }, dryRun: boolean) =>
+    call<{ dry_run: boolean; tables: SilvermereTable[] }>('POST', '/api/silvermere/export', { ...body, dry_run: dryRun }, dryRun),
+  /** Rewrites the world from a silvermere database, previewed or as one step. */
+  silvermereImport: (body: { database: string | null; keep_extra: boolean }, dryRun: boolean) =>
+    call<{ dry_run: boolean; tables: SilvermereTable[]; step?: number | null }>('POST', '/api/silvermere/import', { ...body, dry_run: dryRun }, dryRun),
+  mmeInfo: () => call<MmeInfo>('GET', '/api/mme'),
+  /** The MME export's tables and how many rows each would hold; the world is only read. */
+  mmeSummary: (options: MmeOptions) => call<{ tables: { name: string; rows: number }[] }>('POST', '/api/mme/export', { options, format: 'summary' }, true),
+  /** The MME export as a file: the .mdb (with Jet), or the plan write-mdb.ps1 turns into one. */
+  mmeFile: (options: MmeOptions, format: 'plan' | 'mdb') => fileOf('/api/mme/export', { options, format }),
   /** Deletes a table's records: a range of them, or `all`. Previewed, or written as one step. */
   deleteRecords: (body: { table: string; range: { map?: number; from: number; to: number } | null; all: boolean }, dryRun: boolean) =>
     call<{ dry_run: boolean; report: Report; step?: number | null }>('POST', '/api/tools/delete', { ...body, dry_run: dryRun }, dryRun),

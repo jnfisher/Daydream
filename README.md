@@ -414,7 +414,11 @@ Renumber moves records to new numbers, or a map's rooms to another map, and list
 record, ability and script it rewrites before it runs; a card's More menu opens it on that
 record (`#/workshop/renumber/items/868`). Monster groups moves a run of a group's indexes
 along with the rooms that spawn them, and Edit rooms together sets fields on a run of rooms
-by number, as NMR's Mass Room Editor does.
+by number, as NMR's Mass Room Editor does. The import and export pages (records from an NMR
+export, another game's players, the WCC files, a silvermere database and the file MMUD Explorer
+reads) preview the same way, with a button to run each preview: bringing records in is one
+step to undo, and writing outside Daydream, which cannot be undone here, is held down until it
+fills, as publishing is.
 
 **Health**, on Home and at the top of the Workshop's health checks, counts what is wrong
 across the world that has a sure fix, and fixes each kind in one click: items with 0 uses,
@@ -445,7 +449,10 @@ cargo run -p daydream -- nmr-import ./realm export.mdb --dry-run   # any OS
 Like NMR's export, `nmr-export` zeroes the running game's state (room cash and floor items,
 shop stock, monster kills) unless given `--keep-runtime`. Writing the `.mdb` needs Windows
 because NMR's import seeks through the file's Jet indexes, which only Jet itself writes; NMR
-runs only on Windows, so the machine that imports the file can always write it.
+runs only on Windows, so the machine that imports the file can always write it. In the browser
+the import is the Workshop's **Nightmare Redux database** (`#/workshop/nmr`): drop the `.mdb`
+or JSON export on it, pick the tables (each whole or a run of numbers), and the preview counts
+what is new, changed and the same in each.
 
 For MMUD Explorer, `mme-export` writes the `.mdb` MME reads, as NMR's Export to MMUD Explorer
 does: the same tables and values (checked against NMR's own export of the stock world), the
@@ -457,9 +464,10 @@ MAP:FROM-TO` and `--no-rooms`.
 cargo run -p daydream -- mme-export ./realm data.mdb      # on Windows; or --plan as above
 ```
 
-In the browser the same export is the Workshop's **Export to MMUD Explorer** (`#/workshop/mme`), laid out
-as NMR's form (its config `.ini` files load and save there too). On Windows it downloads the
-`.mdb`; elsewhere it downloads the plan and `write-mdb.ps1` to run on a Windows machine.
+In the browser the same export is the Workshop's **Export for MME** (`#/workshop/mme`), with
+NMR's settings (its config `.ini` files load and save there too) and a preview of each table's
+rows. On Windows it downloads the `.mdb`; elsewhere it downloads the plan and `write-mdb.ps1`
+to run on a Windows machine.
 
 Back to the WCC files themselves, with no `WBTRV32.DLL` or NMR: `write-dat` writes the realm's
 edits into the `WCC*.DAT` files it was converted from. Only the edits go in, onto the files
@@ -508,7 +516,8 @@ cargo run -p daydream -- write-dat ./realm /path/to/WGSERV --dry-run
 cargo run -p daydream -- write-dat ./realm /path/to/WGSERV           # or --out DIR for a copy
 ```
 
-In the browser it is the Workshop's **Write to WCC files** (`#/workshop/wcc`).
+In the browser it is the Workshop's **WCC files** (`#/workshop/wcc`), which lists each file it
+would change before it writes.
 
 **The update file.** MajorMUD merges its update file (`WCCUPDAT`, or `WCCUPDA2` on Worldgroup
 3) into the world at every start, and MBBSEmu at its nightly cleanup too. The stock file holds
@@ -547,8 +556,10 @@ cargo run -p daydream -- silvermere-import ./realm postgres://user@host/silverme
 ```
 
 `serve` and `mcp` take `--silvermere DATABASE` to offer the same in the browser (the
-Workshop's **silvermere**, `#/workshop/silvermere`) and to agents (`silvermere_status`, `silvermere_export`,
-`silvermere_import`, which preview unless told otherwise).
+Workshop's **silvermere database**, `#/workshop/silvermere`, where reading the world back is
+one step to undo) and to agents (`silvermere_status`, `silvermere_export`, `silvermere_import`,
+which preview unless told otherwise). A preview into a SQLite file not made yet says what a new
+database would take.
 
 For AI agents, Daydream is an MCP (Model Context Protocol) server. An agent reads the realm
 in NMR's terms (tables, columns, rows, free record numbers, maps) and makes content with

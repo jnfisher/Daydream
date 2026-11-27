@@ -49,8 +49,8 @@ enum Command {
         /// machine only. `daydream new-token` makes one.
         #[arg(long, env = "DAYDREAM_TOKEN", hide_env_values = true)]
         token: Option<String>,
-        /// A silvermere database (its SQLite file or a URL) for the Tools page's silvermere
-        /// card and the MCP server's silvermere tools.
+        /// A silvermere database (its SQLite file or a URL) for the Workshop's silvermere
+        /// page and the MCP server's silvermere tools.
         #[arg(long, env = "DAYDREAM_SILVERMERE_DATABASE", hide_env_values = true)]
         silvermere: Option<String>,
         #[command(flatten)]
