@@ -43,8 +43,55 @@ export interface MapAnswer {
   rooms: MapRoom[];
   /** The map change exits between maps, by the two maps and the way they go. */
   links?: MapLink[];
+  /** The links no exit draws that start or end on the map (crates/daydream-nmr/src/scripted.rs). */
+  scripts?: Scripts;
   /** Where its rooms moved by hand are drawn. */
   pins?: PinCells;
+}
+
+/** How a room sets a source off: a line of its commands typed, its spell on whoever is in it, a
+ * way walked (a Cast exit's spells, a Spell Trap's), a Remote Action exit's words. */
+export type When = { by: 'typed'; words: string } | { by: 'here' } | { by: 'walking'; dir: number } | { by: 'words'; dir: number; words: string[] };
+
+/** Where a source leads. */
+export interface ScriptTarget {
+  /** A script's teleport, a spell's, or a remote action working an exit of the room. */
+  kind: 'teleport' | 'spell' | 'remote';
+  /** The map it leads onto: 0 for the one it runs on (a remote action's). */
+  to_map: number;
+  to_room: number;
+  /** A teleport rolled from `to_room` to here. */
+  to_last?: number;
+  /** The exit a remote action works. */
+  exit?: number;
+  /** The record that does it (a text block, a spell, the room's own exit), and what: the clause as written, the spell's name. */
+  table: string;
+  record: number;
+  what: string;
+}
+
+/** What rooms can set off, which several may share: a line of a command block, a spell, a Remote Action exit. */
+export interface ScriptSource {
+  table: string;
+  key: number[];
+  /** A command line's part of its block, and its number among the part's lines. */
+  line?: [number, number];
+  /** A spell's name. */
+  name?: string;
+  targets: ScriptTarget[];
+}
+
+/** A room's use of a source, by its place among the sources. */
+export interface ScriptUse {
+  map: number;
+  room: number;
+  when: When;
+  source: number;
+}
+
+export interface Scripts {
+  sources: ScriptSource[];
+  uses: ScriptUse[];
 }
 
 /** The name most of a map's rooms share, and how many do. */

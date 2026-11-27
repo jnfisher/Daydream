@@ -154,6 +154,17 @@ elsewhere (a click goes there) or to a room the map does not have ends in a chip
 ends in a portal with its map's number, which a click follows; the browser's Back comes back.
 **Show** turns names, symbols and grid dots on and off and says what the marks mean.
 
+Dotted arcs draw the links no exit does, for the selected room (or every room picked): where
+its command lines and spells teleport players (its room spell, a Cast exit's or a Spell
+Trap's, followed through the text blocks and spells they run), the exits its remote actions
+work (in a script, or a Remote Action exit's words), and its death, hang-up and control rooms;
+the links into the room show too. Pointing at one says what sets it off and what does it ("Typing
+'turn statue' in 9/1412 works the south exit of 9/1343"), and a click goes to the room at its
+other end. A link onto another map ends in a chip with that map's number. A teleport rolled
+from a range is drawn to each room of it, lighter, and a room scattering players over many
+rooms has 60 of each kind drawn. **Show** can draw every room's links instead, fainter, leaving
+out those that scatter players over many rooms, or none.
+
 **Build** (or `B`) digs with the same keys, as NMR's map editor does. From the selected room,
 a way with an exit is walked, a way into a room drawn next door joins the two (an exit each
 way), and a way into a free cell digs a new room there: a copy of the room it is dug from,
@@ -501,7 +512,8 @@ with changes; given `"messages": "named"`, the copy gets messages of its own, th
 messages that name it copied to new rows with the name swapped. Previews leave out the
 columns an insert leaves blank, and a big preview comes back as a summary. `list_rows` takes
 `where` conditions on any column (`"Room Item *"` is any of a room's items), and `get_map`
-takes a range of rooms and extra columns.
+takes a range of rooms and extra columns; it answers with the links no exit draws too (the
+teleports, spell teleports and remote actions the rooms' scripts and spells set off).
 
 `describe_table` explains each column: its choice list, the table it refers to, and notes on
 what the game does with it (an arena's Max Index is also its level cap), with the source in

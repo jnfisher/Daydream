@@ -1,0 +1,2 @@
+// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
+import{Ca as t,Da as e,Ga as o}from"./chunk-LSYDCY65.js";var p={name:"stamp",size:24,node:[["path",{d:"M14 13V8.5C14 7 15 7 15 5a3 3 0 0 0-6 0c0 2 1 2 1 3.5V13"}],["path",{d:"M20 15.5a2.5 2.5 0 0 0-2.5-2.5h-11A2.5 2.5 0 0 0 4 15.5V17a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1z"}],["path",{d:"M5 22h14"}]]},i=p.node,c=new Set(["$$slots","$$events","$$legacy"]);function r(a,s){let n=t(s,c);o(a,e(()=>n,{get icon(){return p}}))}export{r as a};
