@@ -540,6 +540,7 @@ const MESSAGES: CardDef = {
 const TEXTBLOCKS: CardDef = {
   sections: [
     { id: 'see', title: 'The text', text: { cols: ['Data'] }, fields: [F('Link To')] },
+    { id: 'does', title: 'What it does', hint: 'as the game reads it', custom: 'script' },
     { id: 'where', title: 'Where it is used', side: true, where: true },
   ],
 };

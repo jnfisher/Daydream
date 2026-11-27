@@ -202,7 +202,12 @@ does: how often each is picked (the Attack % add up), how many blows its Energy 
 lines each outcome sends to the player hit and to the room, and **Roll another round** for a
 round drawn as the game draws one. It also shows where the monster spawns (the rooms that
 take its Group and Index, and the group's monsters by Index) and how it is wired: its weapon,
-the lines a room reads when it arrives and dies, its names, and what it says. A card also
+the lines a room reads when it arrives and dies, its names, and what it says. A text block's
+card says what it does as the game reads it, following the text as it is typed: a script's
+lines as steps in plain words ("Take 20 platinum, or say message 1458 and stop"), each record
+it names a chip; a room's commands by the words that run them; a random block's lines by
+their chances; a talk block's topics with the text each shows and the script that follows; and
+a clause the game skips or a line it never reaches, with why. A card also
 says what is wrong with its record, each with a one-click fix that fills in the fields (so
 Save keeps it and Undo takes it back): a value its field can't hold, checked as you type
 (Save waits until it is fixed), a number that names a record the world does not have, an
