@@ -1,7 +1,8 @@
 <!--
   The map's Show menu: what its rooms are coloured by, the layers drawn over them, the scripted
-  links, its layout (laid out afresh, exported and imported) and what the marks mean. Its code
-  loads after the map is first drawn (World.svelte), so the World's own stays small.
+  links, its layout (flat or in levels, laid out afresh, exported and imported) and what the
+  marks mean. Its code loads after the map is first drawn (World.svelte), so the World's own
+  stays small.
 -->
 <svelte:options css="injected" />
 
@@ -26,16 +27,20 @@
     /** How many of the map's rooms are drawn where they were moved to, and the room its layout starts from. */
     pinCount: number;
     startRoom: number;
+    /** Drawn in levels: Up and Down lead a level up and down. */
+    levels: boolean;
     pal: Palette;
     oncolour: (by: ColourBy) => void;
     onlayer: (k: keyof Layers, on: boolean) => void;
     onwires: (v: WiresFor) => void;
     /** The map laid out by its exits again. */
     onlayout: () => void;
+    /** The map drawn in levels, or flat. */
+    onlevels: (on: boolean) => void;
     onimport: (file: File) => void;
   }
 
-  let { map, colourBy, layers, wiresFor, pinCount, startRoom, pal, oncolour, onlayer, onwires, onlayout, onimport }: Props = $props();
+  let { map, colourBy, layers, wiresFor, pinCount, startRoom, levels, pal, oncolour, onlayer, onwires, onlayout, onlevels, onimport }: Props = $props();
 
   let importer = $state<HTMLInputElement | undefined>();
 
@@ -68,7 +73,7 @@
   async function exportLayouts() {
     try {
       const f = await api.mapFile();
-      const rooms = Object.values(f.maps).reduce((a, p) => a + Object.keys(p.pins).length, 0);
+      const rooms = Object.values(f.maps).reduce((a, p) => a + Object.keys(p.pins).length + Object.keys(p.level_pins ?? {}).length, 0);
       if (!rooms) {
         toast('No map has been laid out by hand yet, so there is nothing to export.');
         return;
@@ -123,11 +128,20 @@
 </p>
 <div class="menu-sep"></div>
 <div class="eyebrow head">Layout</div>
+<div class="seg" role="radiogroup" aria-label="Up and down">
+  <button type="button" role="radio" aria-checked={!levels} class:on={!levels} onclick={() => onlevels(false)}>Flat</button>
+  <button type="button" role="radio" aria-checked={levels} class:on={levels} onclick={() => onlevels(true)}>In levels</button>
+</div>
 <p class="lay">
-  {#if pinCount}
-    Map {map} is laid out by hand: rooms stay where they are drawn, and new rooms join them by their exits.
+  {#if levels}
+    Up and down lead a level up and down, to rooms drawn in the same place: one level shows at a time, with the one below it faint. Press <span class="kbd">&lt;</span> and <span class="kbd">&gt;</span> for the next level.
   {:else}
-    Laid out by the exits, from room {startRoom}. In Build mode, drag a room (or press Shift and an arrow) to move it; the map then keeps its layout.
+    One plan: up and down are marks on their rooms, and the rooms only they reach are islands below.
+  {/if}
+  {#if pinCount}
+    Map {map} is laid out by hand{levels ? ' in levels' : ''}: rooms stay where they are drawn, and new rooms join them by their exits.
+  {:else}
+    Laid out by the exits, from room {startRoom}. In Build mode, drag a room (or press Shift and an arrow) to move it; the map then keeps its layout{levels ? ' in levels' : ''}.
   {/if}
 </p>
 <div class="acts">
@@ -188,6 +202,7 @@
 <style>
   .head { padding: 8px 10px 6px; }
   .lay { margin: 0 10px 8px; font-size: 12.5px; line-height: 1.4; color: var(--ink-2); max-width: 290px; }
+  .lay .kbd { height: 17px; font-size: 10.5px; }
   .acts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 10px 8px; }
   .acts .btn { gap: 5px; }
 

@@ -6,15 +6,20 @@
 //! | Route | Answer |
 //! |---|---|
 //! | `GET /api/map/pins` | the whole file, to export |
-//! | `POST /api/map/pins` | `{map, pins: {room: [x, y] or null}, replace}`: sets (or, `null`, drops) where rooms of one map are drawn; `replace` drops the map's others |
+//! | `POST /api/map/pins` | `{map, pins: {room: [x, y] or null}, replace, levels}`: sets (or, `null`, drops) where rooms of one map are drawn; `replace` drops the map's others; with `levels`, the places are `[x, y, level]` and the map is drawn in levels |
 //! | `POST /api/map/pins/import` | an exported file: each map it has takes its rooms' places, and loses the rest |
+//!
+//! A map drawn in levels (Up and Down lead a level up and down, and each level is laid out on
+//! its own) keeps its own places, with their levels, beside those of the map drawn flat: each
+//! way of drawing it keeps its layout. A write says which way the map is drawn from then on.
 //!
 //! `GET /api/map` answers each map's places with its rooms. The writes answer the newest
 //! step of the realm's history, so the page can tell whether its own undo of a move or a
 //! save to the realm came last.
 //!
 //! ```json
-//! {"daydream": "map", "version": 1, "maps": {"1": {"pins": {"12": [3, -4]}}}}
+//! {"daydream": "map", "version": 1, "maps": {"1": {"pins": {"12": [3, -4]}},
+//!   "6": {"pins": {}, "levels": true, "level_pins": {"40": [0, 2, -1]}}}}
 //! ```
 
 use std::collections::BTreeMap;
@@ -31,6 +36,8 @@ use crate::{ApiError, AppState, blocking};
 
 /// The furthest a room is drawn from the start room, in cells either way.
 pub const MAX_CELL: i32 = 100_000;
+/// The furthest level from the start room's, either way.
+pub const MAX_LEVEL: i32 = 10_000;
 /// The most places one request sets.
 pub const MAX_PINS: usize = 500_000;
 
@@ -79,6 +86,19 @@ pub struct MapPart {
     /// Where its rooms moved by hand are drawn: the cell, by room number.
     #[serde(default)]
     pub pins: BTreeMap<i64, [i32; 2]>,
+    /// The map is drawn in levels: Up and Down lead a level up and down.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub levels: bool,
+    /// Where its rooms moved by hand are drawn in levels: the cell and the level, by room number.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub level_pins: BTreeMap<i64, [i32; 3]>,
+}
+
+impl MapPart {
+    /// Nothing to keep: no room moved, and drawn flat.
+    fn is_empty(&self) -> bool {
+        self.pins.is_empty() && !self.levels && self.level_pins.is_empty()
+    }
 }
 
 fn bad(msg: impl Into<String>) -> ApiError {
@@ -92,15 +112,21 @@ fn checked_map(map: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn checked_pin(map: i64, room: i64, at: &[i32; 2]) -> Result<(), ApiError> {
+/// A room's place: its cell, and in levels its level after it.
+fn checked_pin(map: i64, room: i64, at: &[i32]) -> Result<(), ApiError> {
     if !(1..=i64::from(i32::MAX)).contains(&room) {
         return Err(bad(format!(
             "no room {map}/{room}: a room is numbered from 1"
         )));
     }
-    if at.iter().any(|v| v.abs() > MAX_CELL) {
+    if at.iter().take(2).any(|v| v.abs() > MAX_CELL) {
         return Err(bad(format!(
             "room {map}/{room} is drawn too far away: a cell is at most {MAX_CELL} from the start room"
+        )));
+    }
+    if at.get(2).is_some_and(|z| z.abs() > MAX_LEVEL) {
+        return Err(bad(format!(
+            "room {map}/{room} is drawn too far up or down: a level is at most {MAX_LEVEL} from the start room's"
         )));
     }
     Ok(())
@@ -130,14 +156,14 @@ pub fn load(realm_dir: &Path) -> Result<MapFile, ApiError> {
     })
 }
 
-/// One map's places, for the map's answer (none when the file cannot be read: the map is
-/// laid out as if no room had been moved, and a write says why).
-pub fn of_map(realm_dir: &Path, map: i64) -> BTreeMap<i64, [i32; 2]> {
+/// One map's places, and whether it is drawn in levels, for the map's answer (none when the
+/// file cannot be read: the map is laid out as if no room had been moved, and a write says why).
+pub fn of_map(realm_dir: &Path, map: i64) -> MapPart {
     match load(realm_dir) {
-        Ok(mut f) => f.maps.remove(&map).map(|m| m.pins).unwrap_or_default(),
+        Ok(mut f) => f.maps.remove(&map).unwrap_or_default(),
         Err(e) => {
             tracing::warn!("{}", e.1);
-            BTreeMap::new()
+            MapPart::default()
         }
     }
 }
@@ -186,7 +212,7 @@ async fn change<T: Send + 'static>(
             .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let mut file = load(&dir)?;
         let out = f(&mut file)?;
-        file.maps.retain(|_, m| !m.pins.is_empty());
+        file.maps.retain(|_, m| !m.is_empty());
         file.daydream = kind();
         file.version = VERSION;
         store(&dir, &file)?;
@@ -204,12 +230,15 @@ pub(crate) async fn get(State(s): State<Arc<AppState>>) -> Result<Json<MapFile>,
 #[derive(Debug, Deserialize)]
 pub struct PinsBody {
     map: i64,
-    /// Each room's cell, or `null` to draw it where the layout puts it.
+    /// Each room's cell (and in levels its level), or `null` to draw it where the layout puts it.
     #[serde(default)]
-    pins: BTreeMap<i64, Option<[i32; 2]>>,
+    pins: BTreeMap<i64, Option<Vec<i32>>>,
     /// The map's other rooms go back to the layout.
     #[serde(default)]
     replace: bool,
+    /// The places are the map's drawn in levels, and it is drawn so from now on (else flat).
+    #[serde(default)]
+    levels: bool,
 }
 
 /// `POST /api/map/pins`.
@@ -221,19 +250,44 @@ pub(crate) async fn set(
     if body.pins.len() > MAX_PINS {
         return Err(bad(format!("at most {MAX_PINS} rooms at once")));
     }
+    let size = if body.levels { 3 } else { 2 };
     for (room, at) in &body.pins {
         if let Some(at) = at {
+            if at.len() != size {
+                return Err(bad(format!(
+                    "room {}/{room}'s place is {at:?}: {}",
+                    body.map,
+                    if body.levels {
+                        "in levels, a place is [x, y, level]"
+                    } else {
+                        "a place is [x, y]"
+                    }
+                )));
+            }
             checked_pin(body.map, *room, at)?;
         }
     }
     let (pins, step) = change(s, move |file| {
         let part = file.maps.entry(body.map).or_default();
+        part.levels = body.levels;
+        if body.levels {
+            if body.replace {
+                part.level_pins.clear();
+            }
+            for (room, at) in body.pins {
+                match at {
+                    Some(at) => part.level_pins.insert(room, [at[0], at[1], at[2]]),
+                    None => part.level_pins.remove(&room),
+                };
+            }
+            return Ok(part.level_pins.len());
+        }
         if body.replace {
             part.pins.clear();
         }
         for (room, at) in body.pins {
             match at {
-                Some(at) => part.pins.insert(room, at),
+                Some(at) => part.pins.insert(room, [at[0], at[1]]),
                 None => part.pins.remove(&room),
             };
         }
@@ -260,7 +314,10 @@ pub(crate) async fn import(
         for (room, at) in &part.pins {
             checked_pin(*map, *room, at)?;
         }
-        total += part.pins.len();
+        for (room, at) in &part.level_pins {
+            checked_pin(*map, *room, at)?;
+        }
+        total += part.pins.len() + part.level_pins.len();
     }
     if total > MAX_PINS {
         return Err(bad(format!("at most {MAX_PINS} rooms at once")));

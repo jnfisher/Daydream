@@ -273,8 +273,8 @@ export class Stamper implements MapTool {
     // where its new rooms are drawn: the first stamp on a map keeps every room where it is drawn
     const before = h.pins;
     const first = before.size === 0;
-    const next = new Map(first ? [...sc.layout.at].map(([n, s]) => [n, { ...s }]) : before);
-    for (const c of p.cells) if (c.sort === 'new' && c.room !== null) next.set(c.room, { x: c.x, y: c.y });
+    const next = new Map(first ? sc.places() : before);
+    for (const c of p.cells) if (c.sort === 'new' && c.room !== null) next.set(c.room, sc.pinAt(c.x, c.y));
     const said = `Stamped ${what}: ${summary(m0, p)}${first ? '. The map keeps this layout now: rooms stay where they are drawn' : ''}`;
     h.patch(stamped(sc.rooms, p, brush));
     h.showPins(m0, next);

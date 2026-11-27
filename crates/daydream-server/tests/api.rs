@@ -913,6 +913,70 @@ async fn rooms_moved_by_hand_are_kept_beside_the_working_copy() {
     assert_eq!(body["pins"], 0);
     let (_, body) = get(d, "/api/map/pins").await;
     assert_eq!(body["maps"], json!({"1": {"pins": {"5": [1, 1]}}}));
+
+    // drawn in levels, a map keeps places of its own, with their levels, beside its flat ones
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/pins",
+        json!({"map": 1, "levels": true, "pins": {"5": [0, 0, -1], "6": [2, 3, 4]}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["pins"], 2);
+    let levels = json!({"5": [0, 0, -1], "6": [2, 3, 4]});
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(
+        body["maps"],
+        json!({"1": {"pins": {"5": [1, 1]}, "levels": true, "level_pins": levels}})
+    );
+    let (_, body) = get(d, "/api/map?map=1").await;
+    assert_eq!(
+        (&body["pins"], &body["levels"], &body["level_pins"]),
+        (&json!({"5": [1, 1]}), &json!(true), &levels),
+        "{body}"
+    );
+    // drawn flat again, its places in levels are kept for next time
+    let (_, body) = send(d, "POST", "/api/map/pins", json!({"map": 1, "pins": {}})).await;
+    assert_eq!(body["pins"], 1);
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(
+        body["maps"],
+        json!({"1": {"pins": {"5": [1, 1]}, "level_pins": levels}})
+    );
+    let (_, body) = get(d, "/api/map?map=1").await;
+    assert_eq!(body["levels"], false);
+    // a map only drawn in levels stays in the file, with no rooms moved
+    let (_, body) = send(
+        d,
+        "POST",
+        "/api/map/pins",
+        json!({"map": 3, "levels": true, "pins": {}}),
+    )
+    .await;
+    assert_eq!(body["pins"], 0);
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(body["maps"]["3"], json!({"pins": {}, "levels": true}));
+    for bad in [
+        json!({"map": 1, "levels": true, "pins": {"1": [0, 0]}}),
+        json!({"map": 1, "pins": {"1": [0, 0, 1]}}),
+        json!({"map": 1, "levels": true, "pins": {"1": [0, 0, 20000]}}),
+    ] {
+        let (status, body) = send(d, "POST", "/api/map/pins", bad.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
+    // an export with levels imports
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/pins/import",
+        json!({"daydream": "map", "version": 1, "maps": {"2": {"pins": {}, "levels": true, "level_pins": {"7": [2, 2, 1]}}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["pins"], 1);
+    let (_, body) = get(d, "/api/map?map=2").await;
+    assert_eq!(body["level_pins"], json!({"7": [2, 2, 1]}));
 }
 
 #[tokio::test]

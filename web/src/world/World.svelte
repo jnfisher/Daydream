@@ -39,6 +39,7 @@
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import Footprints from '@lucide/svelte/icons/footprints';
   import LayersIcon from '@lucide/svelte/icons/layers';
   import LocateFixed from '@lucide/svelte/icons/locate-fixed';
@@ -62,8 +63,8 @@
   import { COLOUR_BY, palette, type ColourBy } from './look';
   import { SPRAY, wiresOf, type End, type Wire, type WireKind, type WiresFor } from './wires';
   import type { Host } from './host';
-  import { cellKey, cellsOf, OPPOSITE, STEP, type Spot } from './layout';
-  import { DIR_WORDS, KEY_DIR, kindName, mapName, type MapFile, type MapLink, type MapName, type MapRoom, type PinCells, type Scripts, type When } from './model';
+  import { cellKey, cellsOf, OPPOSITE, spotsOf, STEP, type Spot } from './layout';
+  import { DIR_WORDS, KEY_DIR, kindName, mapName, type MapFile, type MapLink, type MapName, type MapRoom, type PinCell, type Scripts, type When } from './model';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
   import type { Selector } from './selector.svelte';
   import type { Stamper } from './stamper.svelte';
@@ -109,6 +110,11 @@
   let viewWidth = $state(0);
   let mapsOpen = $state(false);
   let mapFilter = $state('');
+  /** Drawn in levels: the level shown, and each level's number, rooms and commonest name, lowest first. */
+  let levels = $state(false);
+  let level = $state(0);
+  let levelList = $state.raw<[number, number, string][]>([]);
+  let levelsOpen = $state(false);
   let pal = $state(palette());
   // Build mode
   let building = $state(false);
@@ -241,10 +247,13 @@
       scene.setEdited(edited);
       // moves being saved are newer than this read's
       if (moved || !pinsPending) {
-        pins = pinsFrom(a.pins);
+        flatPins = spotsOf(a.pins);
+        levelPins = spotsOf(a.level_pins);
+        levels = !!a.levels;
+        pins = levels ? levelPins : flatPins;
         pinCount = pins.size;
       }
-      scene.setRooms(a.rooms, pins);
+      scene.setRooms(a.rooms, pins, levels, moved);
       roomsAt++;
       startRoom = scene.start;
       stale = false;
@@ -427,12 +436,12 @@
   /** What a wire says when pointed at; `n` of them share a chip, to rooms of another map (or rooms this map lacks), or from one. */
   function wireTip(w: Wire, n = 1): { title: string; sub: string } {
     if (n > 1) {
-      const out = w.to.map !== map || !scene?.by.has(w.to.room);
+      const out = w.to.map !== map || !scene?.layout?.at.has(w.to.room);
       const e = out ? w.to : w.from;
-      const rooms = e.map === map ? `${n} rooms map ${map} lacks` : `${n} rooms of map ${e.map}`;
+      const rooms = e.map !== map ? `${n} rooms of map ${e.map}` : scene?.by.has(e.room) ? `${n} rooms ${levelSaid(e.room) ?? 'elsewhere'}` : `${n} rooms map ${map} lacks`;
       return { title: `${WIRE_NAMES[w.kind]} ${out ? 'to' : 'from'} ${rooms}`, sub: `The first: ${wireTip(w).sub}` };
     }
-    const at = (e: End) => (e.map === map ? called(e.room) : `room ${e.map}/${e.room}`);
+    const at = (e: End) => (e.map !== map ? `room ${e.map}/${e.room}` : `${called(e.room)}${levelSaid(e.room) ? ` (${levelSaid(e.room)})` : ''}`);
     const [a, b] = [at(w.from), at(w.to)];
     const go = w.to.map === map && !scene?.by.has(w.to.room) ? ` Map ${map} has no room ${w.to.room}.` : ' Click to go there.';
     if (w.kind === 'death') return { title: `Death room: ${b}`, sub: `Whoever dies in ${a} wakes in ${b} (its Death Room).${go}` };
@@ -468,7 +477,7 @@
       }
       if (h.stub.sort === 'missing') return { title: `${way} to room ${e.to}`, sub: `Map ${map} has no room ${e.to}.` };
       const t = scene?.by.get(e.to);
-      return { title: `${way} to ${t?.name || `room ${e.to}`}`, sub: `${kind} to room ${map}/${e.to}, drawn elsewhere. Click to go there.` };
+      return { title: `${way} to ${t?.name || `room ${e.to}`}`, sub: `${kind} to room ${map}/${e.to}, ${levelSaid(e.to) ?? 'drawn elsewhere'}. Click to go there.` };
     }
     const r = h.room!;
     if (picking && selector) return { title: r.name || `Room ${r.room}`, sub: selector.about(r) };
@@ -486,6 +495,16 @@
     const name = scene?.by.get(n)?.name.trim();
     return name ? `${name} ${map}/${n}` : `room ${map}/${n}`;
   };
+
+  /** A level's number as said: a minus for those below the start room's. */
+  const signed = (z: number) => (z < 0 ? `−${-z}` : String(z));
+  /** In levels, where a room on another level is, from the level shown: "a level up", "on level −3, 4 levels down". */
+  function levelSaid(n: number): string | null {
+    const z = scene?.levelOf(n);
+    if (z === undefined || !scene || z === scene.level) return null;
+    const d = z - scene.level;
+    return Math.abs(d) === 1 ? `a level ${d > 0 ? 'up' : 'down'}` : `on level ${signed(z)}, ${Math.abs(d)} levels ${d > 0 ? 'up' : 'down'}`;
+  }
 
   function setBuilding(on: boolean) {
     if (on === building) return;
@@ -522,6 +541,8 @@
     let left = Math.max(1, Math.min(MOST, count));
     let made = false;
     while (left > 0 && scene.layout) {
+      // in levels, the level of the room it goes on from
+      scene.setLevel(scene.levelOf(at) ?? scene.level);
       const m = moveFrom(scene.by, scene.layout, at, dir, left);
       if (m.kind === 'stop') {
         sfx('nope');
@@ -649,7 +670,7 @@
     if (pins.size) return joinRooms(from, dir, to);
     const m = map;
     const before = pins;
-    const next = new Map([...l.at].map(([n, s]) => [n, { ...s }]));
+    const next = scene.places();
     const label = `Join ${called(from)} ${DIR_WORDS[dir]} to ${called(to)}`;
     patch(joined(scene.rooms, from, dir, to).rooms);
     showPins(m, next);
@@ -777,8 +798,10 @@
 
   // ---- rooms moved by hand ---------------------------------------------------------------
 
-  /** Where this map's rooms moved by hand are drawn (kept beside the working copy). */
+  /** Where this map's rooms moved by hand are drawn (kept beside the working copy): as it is drawn now, flat and in levels. */
   let pins: ReadonlyMap<number, Spot> = new Map();
+  let flatPins: ReadonlyMap<number, Spot> = new Map();
+  let levelPins: ReadonlyMap<number, Spot> = new Map();
   let pinCount = $state(0);
   /** The room the layout starts from. */
   let startRoom = $state(1);
@@ -786,23 +809,30 @@
   let pinsPending = 0;
   let pinChain: Promise<unknown> = Promise.resolve();
 
-  const pinsFrom = (c: PinCells | undefined) => new Map(Object.entries(c ?? {}).map(([k, [x, y]]) => [Number(k), { x, y }]));
+  /** Whether places are those of a map drawn in levels: they name their levels (none: as the map is drawn now). */
+  function inLevels(p: Iterable<Spot | PinCell | null>): boolean {
+    for (const c of p) if (c) return Array.isArray(c) ? c.length === 3 : c.z !== undefined;
+    return levels;
+  }
 
-  /** Draws map `m`'s rooms with these places, if it is the map shown. */
-  function showPins(m: number, next: ReadonlyMap<number, Spot>) {
+  /** Draws map `m`'s rooms with these places, if it is the map shown, flat or (`lv`) in levels. */
+  function showPins(m: number, next: ReadonlyMap<number, Spot>, lv = inLevels(next.values())) {
     if (m !== map || !scene) return;
+    if (lv) levelPins = next;
+    else flatPins = next;
+    levels = lv;
     pins = next;
     pinCount = next.size;
-    scene.setPins(next);
+    scene.setPins(next, lv);
     toolsChanged(false);
   }
 
-  /** Saves places of map `m`'s rooms, after those sent before; answers the realm history's newest step. */
-  function savePins(m: number, body: Record<string, [number, number] | null>, replace: boolean): Promise<number> {
+  /** Saves places of map `m`'s rooms, flat or (`lv`) in levels, after those sent before; answers the realm history's newest step. */
+  function savePins(m: number, body: Record<string, PinCell | null>, replace: boolean, lv = inLevels(Object.values(body))): Promise<number> {
     pinsPending++;
     const done = pinChain.then(async () => {
       try {
-        return (await api.pins(m, body, replace)).step;
+        return (await api.pins(m, body, replace, lv)).step;
       } finally {
         pinsPending--;
       }
@@ -811,32 +841,32 @@
     return done;
   }
 
-  /** A change of places, shown at once: Ctrl+Z or its toast takes it back. */
-  function placesChanged(m: number, before: ReadonlyMap<number, Spot>, next: ReadonlyMap<number, Spot>, label: string, said: string, body: Record<string, [number, number] | null>, replace: boolean) {
-    showPins(m, next);
+  /** A change of places (drawn as `lv` says, from as `was` says), shown at once: Ctrl+Z or its toast takes it back. */
+  function placesChanged(m: number, before: ReadonlyMap<number, Spot>, next: ReadonlyMap<number, Spot>, label: string, said: string, body: Record<string, PinCell | null>, replace: boolean, lv = levels, was = lv) {
+    showPins(m, next, lv);
     const step: LocalStep = {
       label,
       after: Infinity,
       // the move's own toast would undo something else now
       undo: async () => {
         dismiss(buildToast);
-        showPins(m, before);
-        await savePins(m, cellsOf(before), true);
+        showPins(m, before, was);
+        await savePins(m, cellsOf(before), true, was);
       },
       redo: async () => {
         dismiss(buildToast);
-        showPins(m, next);
-        await savePins(m, cellsOf(next), true);
+        showPins(m, next, lv);
+        await savePins(m, cellsOf(next), true, lv);
       },
     };
     localStep(step);
     dismiss(buildToast);
     buildToast = toast(said, { action: 'Undo', onAction: () => void undo() });
-    savePins(m, body, replace).then(
+    savePins(m, body, replace, lv).then(
       (newest) => (step.after = newest),
       (e) => {
         dropLocalStep(step);
-        showPins(m, before);
+        showPins(m, before, was);
         sfx('nope');
         dismiss(buildToast);
         toast(messageOf(e), { kind: 'error' });
@@ -849,10 +879,11 @@
     const l = scene?.layout;
     if (!scene || !l || !l.at.has(n) || l.cell.has(cellKey(x, y))) return;
     const first = pins.size === 0;
-    const next = new Map(first ? [...l.at].map(([k, s]) => [k, { ...s }]) : pins);
-    next.set(n, { x, y });
+    const next = new Map(first ? scene.places() : pins);
+    const at = scene.pinAt(x, y);
+    next.set(n, at);
     const said = first ? `Moved ${called(n)}. The map keeps this layout now: rooms stay where they are drawn.` : `Moved ${called(n)}.`;
-    placesChanged(map, pins, next, `Move ${called(n)}`, said, first ? cellsOf(next) : { [String(n)]: [x, y] }, first);
+    placesChanged(map, pins, next, `Move ${called(n)}`, said, cellsOf(first ? next : new Map([[n, at]])), first);
     sfx('pop');
     if (selected?.room !== n) choose(n, 'keep', false);
     else scene.keepInView(n);
@@ -880,6 +911,44 @@
     if (!pins.size) return;
     placesChanged(map, pins, new Map(), `Lay out map ${map} afresh`, `Map ${map} is laid out by its exits again.`, {}, true);
     sfx('toggle');
+  }
+
+  // ---- levels --------------------------------------------------------------------------
+
+  /** Draws the map in levels, or flat: each way keeps its own rooms moved by hand. Ctrl+Z or its toast takes it back. */
+  function setLevels(on: boolean) {
+    if (on === levels || !scene) return;
+    const sel = selected?.room;
+    const said = on ? `Map ${map} is drawn in levels: up and down lead a level up and down, and the level below shows faintly. Press < and > for the next level.` : `Map ${map} is drawn flat again.`;
+    placesChanged(map, pins, on ? levelPins : flatPins, on ? `Draw map ${map} in levels` : `Draw map ${map} flat`, said, {}, false, on, levels);
+    sfx('toggle');
+    // the selected room stays in view, on its level
+    if (sel !== undefined) {
+      scene.select(sel);
+      scene.keepInView(sel);
+    }
+  }
+
+  /** The level shown changed, or the levels the map has. */
+  function levelled() {
+    const st = scene?.stack;
+    level = scene?.level ?? 0;
+    levelList = st ? [...st.of].map(([z, l]) => [z, l.at.size, l.labels[0]?.text ?? '']) : [];
+  }
+
+  /** Shows level `z`; if none of its rooms are in view, all of them. */
+  function toLevel(z: number) {
+    if (!scene?.setLevel(z, true)) return;
+    const n = levelList.find(([x]) => x === z)?.[1] ?? 0;
+    live = `Level ${signed(z)}: ${n.toLocaleString()} room${n === 1 ? '' : 's'}.`;
+    sfx('pop');
+  }
+
+  /** The next level up (`by` 1) or down (-1) that has rooms. */
+  function stepLevel(by: number) {
+    const next = by > 0 ? levelList.find(([z]) => z > level) : levelList.filter(([z]) => z < level).at(-1);
+    if (next) toLevel(next[0]);
+    else sfx('nope');
   }
 
   // ---- the map's tools -------------------------------------------------------------------
@@ -1286,7 +1355,9 @@
     }
     const k = e.key.toLowerCase();
     let done = true;
-    if (e.shiftKey && e.code === 'Digit1') scene?.fit();
+    // in levels, the next level up or down
+    if ((k === '<' || k === '>') && levels) stepLevel(k === '<' ? 1 : -1);
+    else if (e.shiftKey && e.code === 'Digit1') scene?.fit();
     else if (e.shiftKey && e.code === 'Digit2') {
       if (selected) scene?.frameRoom(selected.room);
     } else if (e.shiftKey) done = false;
@@ -1358,6 +1429,7 @@
         reachNote = r ? reachSaid(r) : null;
         reachDrag = !!scene?.reachingOut;
       },
+      levelled,
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
@@ -1548,11 +1620,13 @@
               {wiresFor}
               {pinCount}
               {startRoom}
+              {levels}
               {pal}
               oncolour={setColour}
               onlayer={setLayer}
               onwires={setWiresFor}
               onlayout={layOutAfresh}
+              onlevels={setLevels}
               onimport={(f) => void importLayouts(f)}
             />
           {:else}
@@ -1581,6 +1655,36 @@
       {#if spot.length}
         <button type="button" class="chip glass clear" onclick={clearSpot}><X size={12} />Show all</button>
       {/if}
+    </div>
+  {/if}
+
+  {#if levels && levelList.length > 1}
+    <div class="float lift glass" role="group" aria-label="Levels">
+      <button type="button" class="btn icon sm ghost" onclick={() => stepLevel(1)} disabled={level >= (levelList.at(-1)?.[0] ?? 0)} title="A level up (<)" aria-label="A level up"><ChevronUp size={16} /></button>
+      <Popover.Root bind:open={levelsOpen}>
+        <Popover.Trigger class="lv" title="Pick a level" aria-label="Level {signed(level)}: pick a level"><small>Level</small><b class="tnum">{signed(level)}</b></Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content class="pop maps-pop" side="right" sideOffset={8} collisionPadding={8}>
+            <div class="eyebrow head">Levels of map {map}</div>
+            <div class="list">
+              {#each [...levelList].reverse() as [z, n, name] (z)}
+                <button
+                  type="button"
+                  class="menu-item"
+                  onclick={() => {
+                    levelsOpen = false;
+                    toLevel(z);
+                  }}
+                >
+                  <span class="num">{signed(z)}</span><span class="nm">{name || `Level ${signed(z)}`}</span>
+                  <span class="end faint tnum">{n.toLocaleString()}{#if z === level}<Check size={15} />{/if}</span>
+                </button>
+              {/each}
+            </div>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+      <button type="button" class="btn icon sm ghost" onclick={() => stepLevel(-1)} disabled={level <= (levelList[0]?.[0] ?? 0)} title="A level down (>)" aria-label="A level down"><ChevronDown size={16} /></button>
     </div>
   {/if}
 
@@ -1633,7 +1737,7 @@
       {:else if building}
         <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">Shift</span> click a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
-        <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down <span class="kbd">P</span> playtest <span class="kbd">Shift 2</span> close up
+        <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down {#if levelList.length > 1}<span class="kbd">&lt;</span><span class="kbd">&gt;</span> levels {/if}<span class="kbd">P</span> playtest <span class="kbd">Shift 2</span> close up
       {:else}
         Click a room for its card <span class="kbd">H</span> start room <span class="kbd">P</span> playtest <span class="kbd">W</span> all maps <span class="kbd">F</span> full screen
       {/if}
@@ -1752,6 +1856,15 @@
   .zoom .grow { flex: 1; }
   .pct { min-width: 44px; text-align: center; font-size: 12px; font-weight: 800; color: var(--ink-2); }
   .mini { width: 100%; height: 128px; border-radius: 11px; border: 1px solid var(--line); display: block; cursor: crosshair; touch-action: none; }
+
+  /* in levels: the level shown, between the ways up and down */
+  .lift { left: var(--edge); top: 50%; transform: translateY(-50%); flex-direction: column; gap: 2px; padding: 4px; border-radius: 14px; }
+  .lift :global(.lv) {
+    display: flex; flex-direction: column; align-items: center; min-width: 40px; padding: 3px 4px; border: 0; border-radius: 10px;
+    background: var(--lilac-2); color: var(--lilac-ink); box-shadow: none; line-height: 1.1;
+  }
+  .lift :global(.lv small) { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; opacity: .8; }
+  .lift :global(.lv b) { font: 800 16px var(--font-display, Fredoka, sans-serif); }
 
   .hint {
     left: calc((100% - var(--card)) / 2); bottom: var(--edge); transform: translateX(-50%);

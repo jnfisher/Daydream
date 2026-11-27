@@ -188,6 +188,15 @@ never in the game's files: it is not published, and Ctrl+Z takes a move back lik
 **Show** exports every map's layout to a file another builder can import, and lays a map
 out by its exits again.
 
+**Show** can also draw a map in levels: Up and Down then lead a level up and down, to a room
+drawn in the same place, so a tower's floors stack and each level is laid out around its
+stairs instead of as islands below the map. One level shows at a time, with the level below
+faint under it. Selecting a room on another level (walking a stair, a search, a link) shows
+its level; the lift at the left goes a level up or down or picks one from the list, and `<`
+and `>` do the same. An exit or a link to a room on another level ends in a chip with an
+arrow. Each way of drawing a map keeps its own layout, so rooms moved by hand in levels stay
+on their level, and drawing the map flat again brings back its flat layout.
+
 **Stamps** (or `S`) put a shape of rooms down at once: a corridor, an L-bend, a T, a
 crossroads, an open hall, a ring, a plaza, a spiral, a maze, a stairwell, a gatehouse, a lair
 spur, a shop row, a forest patch, a cave or a one-way drop. `1` to `9` pick the first nine,
@@ -265,6 +274,7 @@ and finds one by its number or its name.
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
 | `U` `D` | Walk up or down |
+| `<` `>` | In levels, show the next level up or down |
 | `H` | The start room |
 | `P` | Walk: playtest from the room, the arrows and `U` `D` walking its exits; a click puts the player in a room, Esc goes back to editing at the room reached |
 | `W` | All maps: every map as a disc and the map changes between them; the arrows go from map to map, Enter opens one, `W` or Esc go back |

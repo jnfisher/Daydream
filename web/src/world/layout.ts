@@ -12,7 +12,13 @@
 // they lead to are placed around them as before, and a room dug from one lands beside it.
 // Rooms no pinned room reaches are islands below them.
 //
+// A map can be drawn in levels instead (layOutLevels): the walk goes up and down too, each a
+// level up or down into the same cell, so a tower's floors stack and the rooms on each are laid
+// out around their stairs. Each level has a layout of its own, and pins name a level too.
+//
 // Pure: no DOM, so `node --test` runs its tests (layout.test.ts).
+
+import type { PinCells } from './model.ts';
 
 /** A room as the layout needs it. */
 export interface LRoom {
@@ -44,10 +50,20 @@ export function dirOf(dx: number, dy: number): number {
 export interface Spot {
   x: number;
   y: number;
+  /** The level, when the map is drawn in levels: 0 is the start room's, and Up leads one higher. */
+  z?: number;
 }
 
-/** Places of rooms, as the map's side file keeps them: `{"14": [3, -2]}`. */
-export const cellsOf = (p: ReadonlyMap<number, Spot>): Record<string, [number, number]> => Object.fromEntries([...p].map(([n, s]) => [String(n), [s.x, s.y]]));
+/** A place in levels: the cell and the level. */
+export type Spot3 = Required<Spot>;
+
+/** Places of rooms, as the map's side file keeps them: `{"14": [3, -2]}`, or `{"14": [3, -2, 1]}` in levels. */
+export const cellsOf = (p: ReadonlyMap<number, Spot>): PinCells =>
+  Object.fromEntries([...p].map(([n, s]) => [String(n), s.z === undefined ? [s.x, s.y] : [s.x, s.y, s.z]]));
+
+/** Places as the map's side file keeps them, by room number. */
+export const spotsOf = (c: PinCells | undefined): Map<number, Spot> =>
+  new Map(Object.entries(c ?? {}).map(([k, [x, y, z]]) => [Number(k), z === undefined ? { x, y } : { x, y, z }]));
 
 /** A name shared by a run of joined rooms, drawn once where the run is. */
 export interface Label {
@@ -75,18 +91,30 @@ export interface Layout {
   labels: Label[];
 }
 
+/** A map drawn in levels: Up and Down lead a level up and down, to a room drawn in the same cell
+ * as the room they leave, when it is free. */
+export interface Levels {
+  /** Where each room is, and on what level. */
+  at: Map<number, Spot3>;
+  /** Each level's own layout, lowest first. */
+  of: Map<number, Layout>;
+}
+
 /** A cell's key in `Layout.cell`. */
 export const cellKey = (x: number, y: number) => (x + 1_000_000) * 2_097_152 + (y + 1_000_000);
 
 /** Whether the layout walks through an exit of this type: not a map change, nor a remote action. */
 const follows = (kind: number) => kind !== 8 && kind !== 12;
 
+/** How many levels Up and Down climb. */
+const RISE: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 1, -1];
+
 /** Blank cells between islands. */
 const GAP = 2;
 
 interface Grown {
   seed: number;
-  at: Map<number, Spot>;
+  at: Map<number, Spot3>;
   displaced: Set<number>;
   x0: number;
   y0: number;
@@ -94,15 +122,76 @@ interface Grown {
   y1: number;
 }
 
+/** Where a walk put every room, before it is cut into levels. */
+interface Walked {
+  rooms: LRoom[];
+  by: Map<number, LRoom>;
+  at: Map<number, Spot3>;
+  pinned: Set<number>;
+  displaced: Set<number>;
+  island: Map<number, number>;
+}
+
 export function layOut(given: readonly LRoom[], start: number, pins?: ReadonlyMap<number, Spot>): Layout {
+  const w = walk(given, start, pins, false);
+  return layoutOf(w, w.rooms, true);
+}
+
+/** The map drawn in levels: the walk goes up and down as well, and pins name their level. */
+export function layOutLevels(given: readonly LRoom[], start: number, pins?: ReadonlyMap<number, Spot>): Levels {
+  const w = walk(given, start, pins, true);
+  const on = new Map<number, LRoom[]>();
+  for (const r of w.rooms) {
+    const z = w.at.get(r.room)!.z;
+    let list = on.get(z);
+    if (!list) on.set(z, (list = []));
+    list.push(r);
+  }
+  const of = new Map([...on].sort((a, b) => a[0] - b[0]).map(([z, list]) => [z, layoutOf(w, list, false)]));
+  return { at: w.at, of };
+}
+
+/** The layout of a walk's rooms: all of them, or one level's. */
+function layoutOf(w: Walked, rooms: readonly LRoom[], origin: boolean): Layout {
+  const at = new Map<number, Spot>();
+  const cell = new Map<number, number>();
+  const island = new Map<number, number>();
+  const pinned = new Set<number>();
+  const displaced = new Set<number>();
+  const islands = new Set<number>();
+  // a whole map's bounds hold the start room's cell, where its walk began
+  const first = origin ? { x: 0, y: 0 } : (w.at.get(rooms[0]?.room ?? 0) ?? { x: 0, y: 0 });
+  const bounds = { x0: first.x, y0: first.y, x1: first.x, y1: first.y };
+  for (const r of rooms) {
+    const n = r.room;
+    const s = w.at.get(n)!;
+    at.set(n, { x: s.x, y: s.y });
+    cell.set(cellKey(s.x, s.y), n);
+    const i = w.island.get(n)!;
+    island.set(n, i);
+    islands.add(i);
+    if (w.pinned.has(n)) pinned.add(n);
+    if (w.displaced.has(n)) displaced.add(n);
+    bounds.x0 = Math.min(bounds.x0, s.x);
+    bounds.y0 = Math.min(bounds.y0, s.y);
+    bounds.x1 = Math.max(bounds.x1, s.x);
+    bounds.y1 = Math.max(bounds.y1, s.y);
+  }
+  return { at, pinned, cell, displaced, island, islands: islands.size, bounds, labels: labels(rooms, w.by, island, at) };
+}
+
+/** Places every room: a walk from the pins or the start room, then islands below. With `levels`, up and down too. */
+function walk(given: readonly LRoom[], start: number, pins: ReadonlyMap<number, Spot> | undefined, levels: boolean): Walked {
   // in room order, whatever order they came in, so the same rooms give the same layout
   const rooms = [...given].sort((a, b) => a.room - b.room);
   const by = new Map(rooms.map((r) => [r.room, r]));
+  /** The exits a walk goes through: along the grid, and in levels up and down too. */
+  const walked = (dir: number, kind: number) => (dir <= 7 || (levels && dir <= 9)) && follows(kind);
   // the exits into each room, so a room is placed by its way in as well as its way out
   const into = new Map<number, { from: number; dir: number }[]>();
   for (const r of rooms) {
     for (const e of r.exits) {
-      if (e.dir > 7 || !follows(e.kind) || e.to === r.room || !by.has(e.to)) continue;
+      if (!walked(e.dir, e.kind) || e.to === r.room || !by.has(e.to)) continue;
       let list = into.get(e.to);
       if (!list) into.set(e.to, (list = []));
       list.push({ from: r.room, dir: e.dir });
@@ -112,51 +201,57 @@ export function layOut(given: readonly LRoom[], start: number, pins?: ReadonlyMa
   const pinned = new Set<number>();
 
   /** Walks from rooms placed first: the start room, or the pinned rooms in their cells. */
-  function grow(seeds: readonly (readonly [number, number, number])[], pin: boolean): Grown {
-    const at = new Map<number, Spot>();
-    const occupied = new Set<number>();
+  function grow(seeds: readonly (readonly [number, number, number, number])[], pin: boolean): Grown {
+    const at = new Map<number, Spot3>();
+    /** The cells taken, level by level. */
+    const occupied = new Map<number, Set<number>>();
+    const cells = (z: number) => {
+      let c = occupied.get(z);
+      if (!c) occupied.set(z, (c = new Set()));
+      return c;
+    };
     const displaced = new Set<number>();
     const queue: number[] = [];
-    const deferred: [number, number, number][] = [];
-    const place = (n: number, x: number, y: number) => {
-      at.set(n, { x, y });
-      occupied.add(cellKey(x, y));
+    const deferred: [number, number, number, number][] = [];
+    const place = (n: number, x: number, y: number, z: number) => {
+      at.set(n, { x, y, z });
+      cells(z).add(cellKey(x, y));
       taken.add(n);
       queue.push(n);
     };
-    const want = (n: number, x: number, y: number) => {
+    const want = (n: number, x: number, y: number, z: number) => {
       if (taken.has(n)) return;
-      if (occupied.has(cellKey(x, y))) deferred.push([n, x, y]);
-      else place(n, x, y);
+      if (cells(z).has(cellKey(x, y))) deferred.push([n, x, y, z]);
+      else place(n, x, y, z);
     };
-    for (const [n, x, y] of seeds) {
+    for (const [n, x, y, z] of seeds) {
       // two pins in one cell: the lower room number keeps it, and the walk places the other
-      if (occupied.has(cellKey(x, y))) continue;
-      place(n, x, y);
+      if (cells(z).has(cellKey(x, y))) continue;
+      place(n, x, y, z);
       if (pin) pinned.add(n);
     }
     let next = 0;
     for (;;) {
       while (next < queue.length) {
         const n = queue[next++]!;
-        const { x, y } = at.get(n)!;
+        const { x, y, z } = at.get(n)!;
         for (const e of by.get(n)!.exits) {
-          if (e.dir > 7 || !follows(e.kind) || !by.has(e.to)) continue;
-          const [dx, dy] = STEP[e.dir]!;
-          want(e.to, x + dx, y + dy);
+          if (!walked(e.dir, e.kind) || !by.has(e.to)) continue;
+          const [dx, dy] = STEP[e.dir] ?? [0, 0];
+          want(e.to, x + dx, y + dy, z + RISE[e.dir]!);
         }
         for (const w of into.get(n) ?? []) {
-          const [dx, dy] = STEP[w.dir]!;
-          want(w.from, x - dx, y - dy);
+          const [dx, dy] = STEP[w.dir] ?? [0, 0];
+          want(w.from, x - dx, y - dy, z - RISE[w.dir]!);
         }
       }
       // every room that fits is placed: the first one whose cell was taken goes to the
-      // nearest free cell, and the walk goes on from it
+      // nearest free cell of its level, and the walk goes on from it
       let d = deferred.shift();
       while (d && taken.has(d[0])) d = deferred.shift();
       if (!d) break;
-      const free = nearestFree(occupied, d[1], d[2]);
-      place(d[0], free.x, free.y);
+      const free = nearestFree(cells(d[3]), d[1], d[2]);
+      place(d[0], free.x, free.y, d[3]);
       displaced.add(d[0]);
     }
     let x0 = Infinity;
@@ -173,16 +268,17 @@ export function layOut(given: readonly LRoom[], start: number, pins?: ReadonlyMa
   }
 
   const grown: Grown[] = [];
-  const pinsGiven: [number, number, number][] = [];
+  const pinsGiven: [number, number, number, number][] = [];
   if (pins?.size) {
     for (const r of rooms) {
       const p = pins.get(r.room);
-      if (p && Number.isInteger(p.x) && Number.isInteger(p.y)) pinsGiven.push([r.room, p.x, p.y]);
+      const z = levels ? (p?.z ?? 0) : 0;
+      if (p && Number.isInteger(p.x) && Number.isInteger(p.y) && Number.isInteger(z)) pinsGiven.push([r.room, p.x, p.y, z]);
     }
   }
   if (pinsGiven.length) grown.push(grow(pinsGiven, true));
-  else if (by.has(start)) grown.push(grow([[start, 0, 0]], false));
-  for (const r of rooms) if (!taken.has(r.room)) grown.push(grow([[r.room, 0, 0]], false));
+  else if (by.has(start)) grown.push(grow([[start, 0, 0, 0]], false));
+  for (const r of rooms) if (!taken.has(r.room)) grown.push(grow([[r.room, 0, 0, 0]], false));
 
   // the start room's island where it is, the others in rows below it, biggest first
   const offsets: Spot[] = [];
@@ -208,30 +304,22 @@ export function layOut(given: readonly LRoom[], start: number, pins?: ReadonlyMa
     }
   }
 
-  const at = new Map<number, Spot>();
-  const cell = new Map<number, number>();
+  const at = new Map<number, Spot3>();
   const island = new Map<number, number>();
   const displaced = new Set<number>();
-  const bounds = { x0: 0, y0: 0, x1: 0, y1: 0 };
   grown.forEach((g, i) => {
     const o = offsets[i]!;
-    for (const [n, { x, y }] of g.at) {
-      const s = { x: x + o.x, y: y + o.y };
-      at.set(n, s);
-      cell.set(cellKey(s.x, s.y), n);
+    for (const [n, { x, y, z }] of g.at) {
+      at.set(n, { x: x + o.x, y: y + o.y, z });
       island.set(n, i);
-      bounds.x0 = Math.min(bounds.x0, s.x);
-      bounds.y0 = Math.min(bounds.y0, s.y);
-      bounds.x1 = Math.max(bounds.x1, s.x);
-      bounds.y1 = Math.max(bounds.y1, s.y);
     }
     for (const n of g.displaced) displaced.add(n);
   });
-  return { at, pinned, cell, displaced, island, islands: grown.length, bounds, labels: labels(rooms, by, island, at) };
+  return { rooms, by, at, pinned, displaced, island };
 }
 
 /** The free cell nearest (x, y), ring by ring, in a fixed order. */
-function nearestFree(occupied: Set<number>, x: number, y: number): Spot {
+function nearestFree(occupied: ReadonlySet<number>, x: number, y: number): Spot {
   for (let r = 1; ; r++) {
     let best: Spot | null = null;
     let bestD = Infinity;
@@ -260,9 +348,9 @@ const norm = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
 /** One label for each run of joined rooms with the same name, at the room nearest its middle. */
 function labels(
   rooms: readonly LRoom[],
-  by: Map<number, LRoom>,
-  island: Map<number, number>,
-  at: Map<number, Spot>,
+  by: ReadonlyMap<number, LRoom>,
+  island: ReadonlyMap<number, number>,
+  at: ReadonlyMap<number, Spot>,
 ): Label[] {
   const parent = new Map<number, number>();
   const find = (n: number): number => {
