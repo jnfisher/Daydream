@@ -1,7 +1,7 @@
 <!--
-  The map's Show menu: what its rooms are coloured by, the layers drawn over them, the scripted
-  links, its layout (flat or in levels, laid out afresh, exported and imported) and what the
-  marks mean. Its code loads after the map is first drawn (World.svelte), so the World's own
+  The map's Show menu: what its rooms are coloured by, the map's style, the layers drawn over
+  them, the scripted links, its layout (flat or in levels, laid out afresh, exported and
+  imported) and what the marks mean. Its code loads after the map is first drawn (World.svelte), so the World's own
   stays small.
 -->
 <svelte:options css="injected" />
@@ -15,7 +15,7 @@
   import { app } from '../shell/state.svelte';
   import { messageOf, toast } from '../shell/toasts.svelte';
   import { ICONS } from './icons';
-  import { COLOUR_BY, EXIT_LEGEND, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName, type Palette } from './look';
+  import { COLOUR_BY, contrast, EXIT_LEGEND, MAP_STYLES, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName, type MapStyle, type Palette } from './look';
   import type { Layers } from './scene';
   import type { WireKind, WiresFor } from './wires';
 
@@ -29,8 +29,12 @@
     startRoom: number;
     /** Drawn in levels: Up and Down lead a level up and down. */
     levels: boolean;
+    /** The map's palette, in its style; the style; and the theme's palette (the style `theme`). */
     pal: Palette;
+    mapStyle: MapStyle;
+    themePal: Palette;
     oncolour: (by: ColourBy) => void;
+    onstyle: (s: MapStyle) => void;
     onlayer: (k: keyof Layers, on: boolean) => void;
     onwires: (v: WiresFor) => void;
     /** The map laid out by its exits again. */
@@ -40,14 +44,14 @@
     onimport: (file: File) => void;
   }
 
-  let { map, colourBy, layers, wiresFor, pinCount, startRoom, levels, pal, oncolour, onlayer, onwires, onlayout, onlevels, onimport }: Props = $props();
+  let { map, colourBy, layers, wiresFor, pinCount, startRoom, levels, pal, mapStyle, themePal, oncolour, onstyle, onlayer, onwires, onlayout, onlevels, onimport }: Props = $props();
 
   let importer = $state<HTMLInputElement | undefined>();
 
   const LAYERS: [keyof Layers, string, string][] = [
     ['labels', 'Place names', 'One name for each run of rooms that share it'],
     ['symbols', 'Exit symbols and room marks', 'Doors, keys, traps, shops, NPCs and where far exits lead'],
-    ['grid', 'Grid dots', 'The cells rooms sit on'],
+    ['grid', 'The grid', 'The cells rooms sit on'],
     ['notes', 'Your notes', 'Notes, labels and regions, never published'],
   ];
 
@@ -67,6 +71,9 @@
   ];
 
   const exitColour = (l: ExitLook) => (l.sort ? pal.exit[l.sort] : pal.path);
+  /** A room's marks on its plain colour: its outline's, or else what shows on it. */
+  const roomInk = $derived(contrast(pal.line, pal.plain) >= 3 ? pal.line : pal.dark ? '#ffffff' : '#1a1636');
+  const paletteOf = (s: MapStyle) => (s === 'theme' ? themePal : palette(s));
 
   /** The export's name: the world's, as a file name. */
   const fileStem = () => (app.current?.label ?? 'world').split('(')[0]!.trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'world';
@@ -94,6 +101,24 @@
   }
 </script>
 
+{#snippet preview(p: Palette)}
+  <!-- a corner of a map in the style: three rooms, a plain exit and a locked one, the second room selected -->
+  <svg viewBox="0 0 84 40" aria-hidden="true">
+    <rect width="84" height="40" fill={p.bg} />
+    {#if p.grid === 'dots'}
+      {#each [0, 1, 2, 3, 4, 5, 6] as i (i)}{#each [0, 1, 2] as j (j)}<rect x={i * 13 - 1.5} y={j * 13 + 6} width="1.6" height="1.6" fill={p.dot} />{/each}{/each}
+    {:else if p.grid === 'lines'}
+      <path d="M6 0v40M19 0v40M32 0v40M45 0v40M58 0v40M71 0v40M0 7h84M0 20h84M0 33h84" stroke={p.dot} stroke-opacity="0.1" />
+    {/if}
+    <path d="M19 13H45" stroke={p.path} stroke-width="2" />
+    <path d="M45 13L65 27" stroke={p.exit.lock} stroke-width="2.2" />
+    <rect x="12" y="6" width="14" height="14" rx={4 * p.round} fill={p.upDown ? p.plain : p.biome.street} stroke={p.line} stroke-width="1.2" />
+    <rect x="58" y="20" width="14" height="14" rx={4 * p.round} fill={p.upDown ? '#4ee04e' : p.biome.forest} stroke={p.line} stroke-width="1.2" />
+    <rect x="38" y="6" width="14" height="14" rx={4 * p.round} fill={p.upDown ? '#e8d020' : p.biome.shop} stroke={p.line} stroke-width="1.2" />
+    <rect x="35.5" y="3.5" width="19" height="19" rx={6 * p.round} fill="none" stroke={p.sel} stroke-width="1.8" />
+  </svg>
+{/snippet}
+
 {#snippet glyph(name: IconName)}
   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     {#each ICONS[name] as [tag, attrs], i (i)}<svelte:element this={tag} {...attrs} />{/each}
@@ -104,6 +129,16 @@
 <div class="seg" role="radiogroup" aria-label="Colour rooms by">
   {#each COLOUR_BY as c (c.id)}
     <button type="button" role="radio" aria-checked={colourBy === c.id} class:on={colourBy === c.id} onclick={() => oncolour(c.id)}>{c.label}</button>
+  {/each}
+</div>
+<div class="menu-sep"></div>
+<div class="eyebrow head">Map style</div>
+<div class="styles" role="radiogroup" aria-label="Map style">
+  {#each MAP_STYLES as m (m.id)}
+    <button type="button" role="radio" aria-checked={mapStyle === m.id} class:on={mapStyle === m.id} title={m.sub} onclick={() => onstyle(m.id)}>
+      {@render preview(paletteOf(m.id))}
+      <span>{m.name}</span>
+    </button>
   {/each}
 </div>
 <div class="menu-sep"></div>
@@ -166,9 +201,9 @@
 </div>
 <div class="menu-sep"></div>
 <div class="eyebrow head">What the marks mean</div>
-<ul class="key">
+<ul class="key" style:--ground={pal.bg} style:--disc={pal.badge} style:--room-line={pal.line}>
   {#each ROOM_LEGEND as m (m.label)}
-    <li><span class="mark room">{@render glyph(m.icon)}</span>{m.label}</li>
+    <li><span class="mark room" style:background={pal.plain} style:color={roomInk}>{@render glyph(m.icon)}</span>{m.label}</li>
   {/each}
   <li>
     <span class="mark"><svg viewBox="0 0 28 14" width="28" height="14" aria-hidden="true"><path d="M2 7h24" stroke={pal.oneway} stroke-width="2" /><path d="M17 3l5 4-5 4z" fill={pal.oneway} /></svg></span>One-way exit
@@ -215,9 +250,20 @@
 
   .key { list-style: none; margin: 0; padding: 0 8px 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
   .key li { display: flex; align-items: center; gap: 7px; min-width: 0; line-height: 1.25; }
-  .mark { flex: none; width: 28px; height: 18px; display: grid; place-items: center; }
-  .mark.room { width: 22px; height: 18px; border-radius: 6px; background: var(--surface-3); color: var(--ink); margin-inline: 3px; }
+  /* each mark on a scrap of the map's own ground, so its colours read as they do there */
+  .mark { flex: none; width: 28px; height: 18px; display: grid; place-items: center; border-radius: 5px; background: var(--ground); }
+  .mark.room { width: 22px; height: 18px; box-sizing: border-box; border: 1.5px solid var(--room-line); border-radius: 6px; margin-inline: 3px; box-shadow: 0 0 0 3px var(--ground); }
   /* a dotted arc, its symbol on a disc midway */
   .mark.wire > :global(svg) { grid-area: 1 / 1; }
-  .mark.wire > :global(svg + svg) { background: var(--surface); border-radius: 50%; padding: 1px; box-sizing: content-box; }
+  .mark.wire > :global(svg + svg) { background: var(--disc); border-radius: 50%; padding: 1px; box-sizing: content-box; }
+
+  .styles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0 8px 8px; }
+  .styles button {
+    display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-height: 0; padding: 4px 4px 5px; border-radius: 12px;
+    border: 1.5px solid var(--line); background: var(--surface); box-shadow: none; font-size: 11.5px; font-weight: 800; color: var(--ink-2); white-space: normal;
+  }
+  .styles button:hover:not(.on) { background: var(--surface-2); }
+  .styles button.on { border-color: var(--focus); color: var(--ink); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 30%, transparent); }
+  .styles :global(svg) { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); }
+  .styles span { line-height: 1.15; text-align: center; }
 </style>

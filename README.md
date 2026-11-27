@@ -152,7 +152,11 @@ to pitch black) or your own edits; a click on a colour in the legend picks its r
 key, a toll, a trap) carries its symbol, a one-way exit an arrow, and an exit to a room drawn
 elsewhere (a click goes there) or to a room the map does not have ends in a chip. A map change
 ends in a portal with its map's number, which a click follows; the browser's Back comes back.
-**Show** turns names, symbols and grid dots on and off and says what the marks mean.
+**Show** turns names, symbols and the grid on and off and says what the marks mean. It also
+picks the map's style: the theme's own colours (Daydream by day, Starlight by night), either
+of those whatever the theme, **Terminal** (the 16 ANSI colours on black), **Blueprint** (white
+lines on blue paper, on a grid) or **Classic NMR** (Nightmare Redux's grey rooms on black, each
+exit's line in its type's colour, and rooms with a way up green, down yellow, both cyan).
 
 Dotted arcs draw the links no exit does, for the selected room (or every room picked): where
 its command lines and spells teleport players (its room spell, a Cast exit's or a Spell
