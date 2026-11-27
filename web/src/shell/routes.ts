@@ -1,6 +1,6 @@
 // Where the page is, from its hash. Every record has a stable link (`#/items/868`,
 // `#/rooms/1/224`, `#/users/Sysop`), so a link pasted into a chat, a note or an agent's
-// report opens the same record. Today's links (`#/Items/[868]`, `#/map/1/224`, `#/tools`)
+// report opens the same record, and a table's grid has one too (`#/items?grid`). Today's links (`#/Items/[868]`, `#/map/1/224`, `#/tools`)
 // keep working; the old map is `#/map-classic/1/224`.
 
 import type { Cell, TableInfo } from '../api';
@@ -12,6 +12,8 @@ export interface Route {
   /** Library and Players: the table (`Items`) and the record's key, when one is open. */
   table?: string;
   key?: Cell[];
+  /** Library: the table as a spreadsheet grid. */
+  view?: 'grid';
   /** What follows the place: the World's map and room, the Workshop's tab. */
   rest: string[];
 }
@@ -39,6 +41,12 @@ const PLACES: Record<string, Place> = {
 
 /** The route a hash names; a table the realm does not have goes Home. */
 export function parse(hash: string, tables: TableInfo[]): Route {
+  const [path = '', query = ''] = hash.split('?');
+  const r = parsePath(path, tables);
+  return r.place === 'library' && !r.key && r.table && query.split('&').includes('grid') ? { ...r, view: 'grid' } : r;
+}
+
+function parsePath(hash: string, tables: TableInfo[]): Route {
   const parts = hash.replace(/^#\/?/, '').split('/');
   const head = safeDecode(parts[0] ?? '').toLowerCase();
   const rest = parts.slice(1);
@@ -111,6 +119,9 @@ export function recordHref(table: string, key?: Cell[] | null): string {
   const base = `#/${slug(table)}`;
   return key?.length ? `${base}/${key.map((k) => encodeURIComponent(String(k ?? ''))).join('/')}` : base;
 }
+
+/** A table's spreadsheet grid. */
+export const gridHref = (table: string) => `${recordHref(table)}?grid`;
 
 /** A key as people write it: `868`, `1/224`. */
 export const keyLabel = (key: Cell[]) => key.map((k) => String(k ?? '')).join('/');

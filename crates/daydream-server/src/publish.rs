@@ -35,7 +35,7 @@
 //! | Route | Answer |
 //! |---|---|
 //! | `GET /api/publish` | the plan: `{engine, game, location, running, changes, since, ways: [{id, title, summary, ready, why, not_carried, steps, button}], way, checks, control, job}` (`control`: silvermere's, as `GET /api/control` answers) |
-//! | `POST /api/publish` | `{way, warn?: {in_secs, message}}`: starts publishing that way; the job |
+//! | `POST /api/publish` | `{way, warn?: {in_secs, message}}`: starts publishing that way; the job. With `warn` (the plan had silvermere warn and stop), 409 when Daydream cannot do that now while silvermere may run, rather than wait for the sysop instead |
 //! | `GET /api/publish/job` | the job under way or the last one (`null` before any) |
 //! | `POST /api/publish/cancel` | calls off a job while its step may be (`cancel`): a countdown, or waiting for the sysop |
 //!
@@ -76,6 +76,9 @@ const ANSWER_WITHIN: Duration = Duration::from_secs(120);
 
 /// The longest countdown a publish asks for.
 const MAX_WARN: u64 = 3600;
+
+/// How long a publish waits to look at silvermere once more, when it cannot stop it as planned.
+const LOOK_AGAIN: Duration = Duration::from_secs(1);
 
 /// Why silvermere closes, when the page gives no reason.
 pub const DEFAULT_MESSAGE: &str = "a world update, back in a minute or two";
@@ -1577,6 +1580,8 @@ pub(crate) async fn start(
     blocking(move || {
         let conflict = |m: String| ApiError(StatusCode::CONFLICT, m);
         let bad = |m: String| ApiError(StatusCode::BAD_REQUEST, m);
+        // the person saw silvermere warn the players and stop: only that plan is theirs
+        let asked = body.warn.is_some();
         let mut warn = body.warn.unwrap_or_default();
         warn.message = warn.message.trim().to_string();
         if warn.in_secs > MAX_WARN {
@@ -1584,7 +1589,15 @@ pub(crate) async fn start(
         }
         control::check_line(&warn.message, control::MAX_MESSAGE, "message").map_err(bad)?;
         // the plan reads the job too: before the lock is taken
-        let plan = plan(&s)?;
+        let no_stopper = |p: &Plan| p.live.as_ref().and_then(Live::why_no_stopper);
+        let plan = match plan(&s)? {
+            // silvermere slow to answer just now: one more look before the person is asked
+            first if asked && no_stopper(&first).is_some() => {
+                std::thread::sleep(LOOK_AGAIN);
+                plan(&s)?
+            }
+            first => first,
+        };
         let mut current = s.publish.current.lock().unwrap_or_else(|e| e.into_inner());
         if current
             .as_ref()
@@ -1607,6 +1620,13 @@ pub(crate) async fn start(
                 _ => "this way cannot be taken now".into(),
             };
             return Err(conflict(why));
+        }
+        // without it, the publish would wait for a stop the person did not plan
+        if let Some(why) = no_stopper(&plan).filter(|_| asked) {
+            return Err(conflict(format!(
+                "{why}, so Daydream cannot warn the players and stop it. Nothing has started: \
+                 look at the plan again."
+            )));
         }
         let realm_dir = s.realm_dir()?;
         let Plan {
