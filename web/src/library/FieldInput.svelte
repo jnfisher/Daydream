@@ -1,7 +1,7 @@
 <!--
   One column's control on a record card: a list's choices by name, a record or an ability
-  picked by name or typed by number (with a chip of what it points at), text, or a number.
-  The record's key is shown, not edited.
+  picked by name or typed by number (with a chip of what it points at, and for a message, how
+  many other records read it), text, or a number. The record's key is shown, not edited.
 -->
 <svelte:options css="injected" />
 
@@ -13,6 +13,7 @@
   import type { Draft } from './draft.svelte';
   import Picker from './Picker.svelte';
   import RefChip from './RefChip.svelte';
+  import Shared from './Shared.svelte';
 
   let {
     draft,
@@ -94,6 +95,7 @@
       <Picker what="an ability" choices={abilityChoices} onpick={(v) => set(String(v))} />
     {:else if target}
       {#if n > 0}<RefChip table={target} key={refKey(target, n, map)} compact={compact} />{/if}
+      {#if n > 0 && target === 'Messages' && draft.row}<Shared {draft} {n} />{/if}
       <Picker what="a {kindOf(target).one.toLowerCase()}" choices={() => recordChoices(target!, map)} onpick={(v) => set(String(v))} />
     {/if}
   {/if}

@@ -201,6 +201,8 @@ pub fn get_message(
                                 .map(|f| {
                                     if *f == messages::ITS_NAME {
                                         name.clone()
+                                    } else if *f == messages::STAR {
+                                        "*".to_string()
                                     } else {
                                         format!("<{f}>")
                                     }

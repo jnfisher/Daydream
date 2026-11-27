@@ -23,7 +23,7 @@
   import Mascot from '../shell/Mascot.svelte';
   import { sfx } from '../shell/prefs.svelte';
   import { gridHref, PLAYER_TABLES, recordHref, type Route } from '../shell/routes';
-  import { addGuard, app, remember, undo } from '../shell/state.svelte';
+  import { addGuard, app, realmChanged, remember, undo } from '../shell/state.svelte';
   import { messageOf, toast } from '../shell/toasts.svelte';
   import Card from './Card.svelte';
   import { CARDS } from './cards';
@@ -357,6 +357,31 @@
     }
   }
 
+  /**
+   * Gives a record its own copy of a message it shares (a field's badge, a borrowed line's
+   * fix): the open card's changes saved first, then the copy made and the record pointed at it,
+   * as one save.
+   */
+  async function ownMessage(e: Event) {
+    const { table: tn, key: k, number } = (e as CustomEvent<{ table: string; key?: Cell[]; number: number }>).detail;
+    if (!k?.length || !(number > 0)) return;
+    const open = table?.name === tn && draft?.row && keyLabel(draft.row.key) === keyLabel(k);
+    if (open && draft?.dirty && !(await save())) return;
+    const one = kindOf(tn).one.toLowerCase();
+    writing = true;
+    try {
+      const r = await api.ownMessage(tn, k, number);
+      sfx('pop');
+      const named = r.swapped ? `, its own name written in ${r.swapped === 1 ? 'once' : `${r.swapped} times`}` : '';
+      toast(`Gave ${one} ${keyLabel(k)} its own message ${r.number}${named}`, { action: 'Undo', onAction: () => void undo() });
+      realmChanged();
+    } catch (err) {
+      failedWith(err);
+    } finally {
+      writing = false;
+    }
+  }
+
   /** The map a new room is offered on: the open room's, or the map chip's. */
   function near(): Cell[] | null {
     if (key) return key;
@@ -397,7 +422,9 @@
     window.addEventListener('beforeunload', unload);
     window.addEventListener('dd:realm', realm);
     window.addEventListener('dd:wrote', wrote);
+    window.addEventListener('dd:own-message', ownMessage);
     return () => {
+      window.removeEventListener('dd:own-message', ownMessage);
       document.removeEventListener('keydown', keys);
       window.removeEventListener('beforeunload', unload);
       window.removeEventListener('dd:realm', realm);

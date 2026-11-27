@@ -213,7 +213,14 @@ or work a door, a hidden way or a trap (here or in another room), then the room'
 with a warning where an exit's words keep a command or another exit from ever answering; and
 every way out, its "Obvious exits:" line as the game prints it and what each exit asks of a
 player who walks it (a key or a pick of the lock, a toll, a level, a search), in plain words
-from the game's own rules. A card also
+from the game's own rules. A message's card shows how the game reads it for each record that
+uses it, gathered by when it is read (a monster's hit lines, its death line, a script's words):
+the lines filled in as the game fills them, each monster's own name where a blank takes it, so
+an edit shows what every one of them will say, and while a line is changed, that saving changes
+them all. A message field on any other card counts the other records that read the same
+message; its badge lists them and gives the record a copy of its own, with the record's own
+name written in where the lines name another monster, in one save that Undo takes back (the
+server answers the same at `GET /api/messages/users` and `POST /api/messages/own`). A card also
 says what is wrong with its record, each with a one-click fix that fills in the fields (so
 Save keeps it and Undo takes it back): a value its field can't hold, checked as you type
 (Save waits until it is fixed), a number that names a record the world does not have, an
@@ -264,7 +271,8 @@ spawn range holds no monster of their group, and monsters no room spawns, with w
 them instead: a room that keeps one as its NPC, a spell that summons it and what casts the
 spell, a script. Warnings come first, and what was checked and holds is folded away. A
 record's card lists the findings about it among its problems, with a fix where there is a
-sure one (the game's own words for a blank message, the likely word for a typo). The checks
+sure one (the game's own words for a blank message, the likely word for a typo, a copy of its
+own for a line written for another creature). The checks
 run again after each save.
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,

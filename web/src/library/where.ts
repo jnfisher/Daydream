@@ -14,6 +14,21 @@ export interface Reference {
   column: string | null;
   /** How, for a person. */
   by: string;
+  /** For a message: the lines this use reads, for whom, filled with what in order (null where
+   * the game does not read its lines one by one). */
+  reads?: MessageRead[] | null;
+}
+
+/** A line of a message one use reads (`messages::reads` on the server). */
+export interface MessageRead {
+  /** 1 to 3. */
+  line: number;
+  /** When the game shows it: `it dies`, `attack 2 hits`. */
+  when: string;
+  /** Who reads it: `the room`, `the player`. */
+  to: string;
+  /** What fills its blanks, in order: `its name`, `the damage`. */
+  fills: string[];
 }
 
 export interface References {

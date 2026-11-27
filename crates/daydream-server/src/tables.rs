@@ -16,7 +16,7 @@
 //! | `GET /api/tables` | every table: name, index columns, columns with type and size |
 //! | `GET /api/tables/{table}/rows?columns=&nonzero=&match=&values=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked; with `nonzero`, only the rows where one of those columns holds something, and with `match`, the rows where one of those columns holds one of the numbers `values` (with both, the rows either picks) |
 //! | `GET /api/tables/{table}/row?key=[...]&missing=null` | one row: `{key, values: {column: value}, published}`; with `missing=null`, a row the realm lacks is `values: null` rather than a 404 |
-//! | `GET /api/references?table=&key=[...]` | the rows that name a record: `{references: [{table, key, title, column, by}], more}` |
+//! | `GET /api/references?table=&key=[...]` | the rows that name a record: `{references: [{table, key, title, column, by}], more}`; for a message, each also says what it `reads` (`[{line, when, to, fills}]`, or `null` where the game does not read its lines one by one) |
 //! | `GET /api/spawns?group=` | where a monster group spawns: `{group, monsters: [[number, name, index]], ranges: [{min, max, rooms, maps: [[map, rooms]], names: [[name, rooms]]}], idle}` |
 //! | `PUT /api/tables/{table}/row?key=[...]` | `{values}` over the row; the import's report |
 //! | `POST /api/tables/{table}/row` | `{values}` as a new row; the import's report |
@@ -41,11 +41,11 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
-use daydream_nmr::refs;
 use daydream_nmr::rows::{
     self, Edit, Published, RowError, cell_json, find_row, index_columns, key_of_row, record_table,
     report_json, title_json,
 };
+use daydream_nmr::{messages, refs};
 use daydream_store::Realm;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -272,25 +272,44 @@ pub(crate) async fn references(
             return Err(not_found(format!("{} {}", t.name, q.key)));
         }
         let search: Vec<_> = rows::record_tables().collect();
-        let found = refs::pointing_at(&mut tables, &search, t, &key)?;
-        let list: Vec<Value> = found
-            .list
-            .iter()
-            .map(|r| {
-                json!({
-                    "table": r.table,
-                    "key": r.key.iter().map(cell_json).collect::<Vec<_>>(),
-                    "title": r.title.as_ref().map(title_json),
-                    "column": r.column,
-                    "by": r.by,
-                })
+        let json_of = |r: &refs::Reference| {
+            json!({
+                "table": r.table,
+                "key": r.key.iter().map(cell_json).collect::<Vec<_>>(),
+                "title": r.title.as_ref().map(title_json),
+                "column": r.column,
+                "by": r.by,
             })
-            .collect();
+        };
+        // a message's uses say which of its lines each reads, for whom, filled with what
+        let (list, more): (Vec<Value>, bool) = match (t.name, key.first().and_then(refs::num)) {
+            ("Messages", Some(number)) => {
+                let (uses, more) = messages::uses(&mut tables, &search, number)?;
+                let list = uses
+                    .iter()
+                    .map(|u| {
+                        let mut v = json_of(&u.reference);
+                        v["reads"] = json!(u.reads.as_ref().map(|reads| {
+                            reads
+                                .iter()
+                                .map(|r| json!({ "line": r.line, "when": r.when, "to": r.to, "fills": r.fills }))
+                                .collect::<Vec<_>>()
+                        }));
+                        v
+                    })
+                    .collect();
+                (list, more)
+            }
+            _ => {
+                let found = refs::pointing_at(&mut tables, &search, t, &key)?;
+                (found.list.iter().map(json_of).collect(), found.more)
+            }
+        };
         Ok(Json(json!({
             "table": t.name,
             "key": key.iter().map(cell_json).collect::<Vec<_>>(),
             "references": list,
-            "more": found.more,
+            "more": more,
         })))
     })
     .await

@@ -84,6 +84,20 @@ async function call<T>(method: string, url: string, body?: unknown, quiet = fals
   return json as T;
 }
 
+/** A record that uses a message (`/api/messages/users`). */
+export interface MessageUser {
+  table: string;
+  key: Cell[];
+  title: Cell;
+}
+
+/** The other records that use a message: how many, by table, and the first few. */
+export interface SharedWith {
+  others: number;
+  tables: Record<string, number>;
+  some: MessageUser[];
+}
+
 /** Where a monster group spawns (`/api/spawns`). */
 export interface Ladder {
   group: number;
@@ -314,9 +328,20 @@ export const api = {
     call<Omit<Row, 'values'> & { values: Row['values'] | null }>('GET', `${t(table)}/row${k(key)}&missing=null`),
   /** Where a monster group spawns: its monsters by Index, and its rooms by Index range. */
   spawns: (group: number) => call<Ladder>('GET', `/api/spawns?group=${group}`),
-  /** The rows of every table that name a record. */
+  /** The rows of every table that name a record; for a message, what each use reads. */
   references: (table: string, key: Cell[]) =>
     call<References>('GET', `/api/references?table=${encodeURIComponent(table)}&key=${encodeURIComponent(JSON.stringify(key))}`),
+  /** The records besides `table`'s record `key` that use each message, a record once (at
+   * most 64 numbers at a time). */
+  messageUsers: (numbers: number[], table: string, key: Cell[]) =>
+    call<{ users: Record<string, SharedWith> }>(
+      'GET',
+      `/api/messages/users?numbers=${numbers.join(',')}&table=${encodeURIComponent(table)}&key=${encodeURIComponent(JSON.stringify(key))}`,
+    ),
+  /** Gives a record a copy of a message it shares, its other users' names swapped for its own,
+   * and points its columns that named the message at the copy: one save. */
+  ownMessage: (table: string, key: Cell[], number: number) =>
+    call<{ number: number; lines: string[]; columns: string[]; swapped: number }>('POST', '/api/messages/own', { table, key, number }),
   /** The checks that read the wiring: each with its counts, and a page of findings, warnings first. */
   checks: (q: { check?: CheckId; level?: Finding['level'][]; offset?: number; limit?: number } = {}) =>
     call<Checks>(
