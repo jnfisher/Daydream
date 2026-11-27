@@ -13,13 +13,18 @@
 //!   and names (always capitalised) are left alone, and so are the world's accepted words.
 //! - [`Check::Placeholders`]: a blank message where the game would otherwise tell a blow in its
 //!   own words (a monster's attack, a weapon's verbs), and names or text left as placeholders.
+//! - [`Check::Messages`]: the lines a monster reads ([`crate::messages::reads`]) that name another
+//!   creature, written for a monster that uses them too (borrowed with its message), and arrival
+//!   lines the game fills the wrong way round (its name and where it came from swap with a name
+//!   list) or with `the the` (where it came from is `the north` already).
 //! - [`Check::Spawns`]: rooms whose spawn range has no monster of their group, so they spawn
 //!   nothing, and monsters no room spawns, with what does bring them: a room that keeps one as
 //!   its NPC, a spell that summons it (and what casts the spell), a script, or nothing at all.
 //!
 //! The game's rules are silvermere's (silvermere-engine `combat/attack.rs` for the attack
 //! slots, `combat/mod.rs` and `combat/messages.rs` for the lines a blank message replaces,
-//! silvermere-rules `spawn.rs` through [`crate::refs::Spawning`]).
+//! `monsters/generate.rs` for an arrival line, silvermere-rules `spawn.rs` through
+//! [`crate::refs::Spawning`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -29,6 +34,7 @@ use std::time::SystemTime;
 use daydream_store::Realm;
 
 use crate::NmrRows;
+use crate::messages::{self, Names};
 use crate::refs::{Spawning, num};
 use crate::rows::{self, RowError};
 use crate::schema::Value;
@@ -53,14 +59,16 @@ pub enum Check {
     Prices,
     Spelling,
     Placeholders,
+    Messages,
     Spawns,
 }
 
 impl Check {
-    pub const ALL: [Check; 4] = [
+    pub const ALL: [Check; 5] = [
         Check::Prices,
         Check::Spelling,
         Check::Placeholders,
+        Check::Messages,
         Check::Spawns,
     ];
 
@@ -69,6 +77,7 @@ impl Check {
             Check::Prices => "prices",
             Check::Spelling => "spelling",
             Check::Placeholders => "placeholders",
+            Check::Messages => "messages",
             Check::Spawns => "spawns",
         }
     }
@@ -78,6 +87,7 @@ impl Check {
             Check::Prices => "Prices",
             Check::Spelling => "Spelling",
             Check::Placeholders => "Placeholders",
+            Check::Messages => "Messages",
             Check::Spawns => "Spawns",
         }
     }
@@ -93,6 +103,9 @@ impl Check {
             }
             Check::Placeholders => {
                 "Blank messages where the game would tell a blow in its own words, and names left as placeholders."
+            }
+            Check::Messages => {
+                "Lines that name another creature, borrowed with its message, and arrival lines the game fills the wrong way round."
             }
             Check::Spawns => {
                 "Rooms that spawn nothing, and monsters no room spawns, with what else brings them into play."
@@ -525,6 +538,7 @@ pub fn check(world: &World, opts: &Options, which: &[Check]) -> Vec<Finding> {
             Check::Prices => prices(world, &mut out),
             Check::Spelling => spelling(world, opts, &mut out),
             Check::Placeholders => placeholders(world, &mut out),
+            Check::Messages => borrowed_lines(world, &mut out),
             Check::Spawns => spawns(world, &mut out),
         }
     }
@@ -1538,21 +1552,29 @@ fn placeholder(name: &str) -> Option<String> {
     None
 }
 
+/// A monster's attack slots that make plain blows (and so read their messages): a slot is
+/// picked by the cumulative percentages, so one under an earlier, larger one never is; the
+/// first is the blow when none is picked.
+fn blow_slots(t: &Table, row: &[Value]) -> Vec<usize> {
+    let mut top = -1;
+    let mut out = Vec::new();
+    for i in 0..5 {
+        let ty = t.n(row, &format!("Attack Type {i}"));
+        let pct = t.n(row, &format!("Attack % {i}"));
+        let picked = i == 0 || pct > top;
+        top = top.max(pct);
+        if ty == NORMAL && picked {
+            out.push(i);
+        }
+    }
+    out
+}
+
 fn placeholders(world: &World, out: &mut Vec<Finding>) {
     // a monster's plain blows told by a blank message
     for (t, row) in world.each("Monsters") {
         let me = Rec::of("Monsters", t.n(row, "Number"));
-        let mut top = -1;
-        for i in 0..5 {
-            let ty = t.n(row, &format!("Attack Type {i}"));
-            let pct = t.n(row, &format!("Attack % {i}"));
-            // the slot is picked by the cumulative percentages: one under an earlier, larger
-            // one never is; the first is the blow when none is picked
-            let picked = i == 0 || pct > top;
-            top = top.max(pct);
-            if ty != NORMAL || !picked {
-                continue;
-            }
+        for i in blow_slots(t, row) {
             let mut blank: Vec<(String, &str, i64)> = Vec::new();
             for (what, col) in [("hit", "Hit"), ("dodge", "Dodge"), ("miss", "Miss")] {
                 let c = format!("Attack {col} Msg {i}");
@@ -1663,6 +1685,283 @@ fn placeholders(world: &World, out: &mut Vec<Finding>) {
                 }
             }
         }
+    }
+}
+
+// ---- messages -----------------------------------------------------------------------------
+
+/// A named monster, with the messages it reads: each use's column, the message and the lines
+/// the use reads.
+struct Reader<'a> {
+    number: i64,
+    name: &'a str,
+    words: Vec<String>,
+    /// Whether it has a name list (Desc Txt), which decides its arrival line's order.
+    named: bool,
+    uses: Vec<(String, i64, Vec<messages::Read>)>,
+}
+
+fn readers(t: &Table) -> Vec<Reader<'_>> {
+    t.rows
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let name = t.s(row, "Name").trim();
+            let words = messages::name_words(name);
+            if words.is_empty() {
+                return None;
+            }
+            let get = |c: &str| t.n(row, c);
+            let mut cols: Vec<String> = Vec::new();
+            for i in blow_slots(t, row) {
+                for kind in ["Hit", "Dodge", "Miss"] {
+                    cols.push(format!("Attack {kind} Msg {i}"));
+                }
+            }
+            cols.push("Move Msg".into());
+            cols.push("Death Msg".into());
+            let uses = cols
+                .into_iter()
+                .filter_map(|c| {
+                    let m = t.n(row, &c);
+                    let reads = messages::reads("Monsters", &c, &get)?;
+                    (m > 0).then_some((c, m, reads))
+                })
+                .collect();
+            Some(Reader {
+                number: t.n(row, "Number"),
+                name,
+                words,
+                named: t.n(row, "Desc Txt") != 0,
+                uses,
+            })
+        })
+        .collect()
+}
+
+/// What a blank of an arrival line is written for, by the words before it: the monster's
+/// name (after `a`, `an` or `the`, or first), or where it came from (after `from`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Name,
+    From { the: bool },
+    Unknown,
+}
+
+fn arrival_slots(line: &str) -> Vec<Slot> {
+    messages::blanks(line)
+        .into_iter()
+        .map(|b| {
+            let before = ansi_free(&line[..b.start]).to_ascii_lowercase();
+            let ws: Vec<&str> = before
+                .split(|c: char| !c.is_ascii_alphabetic())
+                .filter(|w| !w.is_empty())
+                .collect();
+            match ws.as_slice() {
+                [] => Slot::Name,
+                [.., "from"] => Slot::From { the: false },
+                [.., "from", "the"] => Slot::From { the: true },
+                [.., "a" | "an" | "the"] => Slot::Name,
+                _ => Slot::Unknown,
+            }
+        })
+        .collect()
+}
+
+/// `a` or `an`, for a word.
+fn article(word: &str) -> &'static str {
+    if word.starts_with(|c: char| "aeiouAEIOU".contains(c)) {
+        "an"
+    } else {
+        "a"
+    }
+}
+
+/// How players read a line, in quotes, without its colour codes.
+fn quoted_line(line: &str) -> String {
+    let t = ansi_free(line);
+    format!("“{}”", t.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn borrowed_lines(world: &World, out: &mut Vec<Finding>) {
+    let Some(mons) = world.table("Monsters") else {
+        return;
+    };
+    let list = readers(mons);
+    let names = Names::new(
+        list.iter()
+            .enumerate()
+            .map(|(i, m)| (m.name.to_string(), i)),
+    );
+    // who reads each message
+    let mut users: HashMap<i64, Vec<usize>> = HashMap::new();
+    for (i, m) in list.iter().enumerate() {
+        for (_, msg, _) in &m.uses {
+            let u = users.entry(*msg).or_default();
+            if !u.contains(&i) {
+                u.push(i);
+            }
+        }
+    }
+
+    // a line that names another creature, written for one that reads it too
+    for (i, m) in list.iter().enumerate() {
+        for (col, msg, reads) in &m.uses {
+            let Some(lines) = world.messages.get(msg) else {
+                continue;
+            };
+            let borrowed = reads.iter().find_map(|r| {
+                let line = &lines[r.line - 1];
+                names.find(line).into_iter().find_map(|f| {
+                    if messages::within(f.name, &m.words) {
+                        return None;
+                    }
+                    let mut owners: Vec<usize> = users[msg]
+                        .iter()
+                        .copied()
+                        .filter(|&j| j != i && messages::within(f.name, &list[j].words))
+                        .collect();
+                    // those it names exactly, when there are some (a troll, not a cave troll)
+                    if owners.iter().any(|&j| list[j].words.len() == f.name.len()) {
+                        owners.retain(|&j| list[j].words.len() == f.name.len());
+                    }
+                    (!owners.is_empty()).then(|| (r, line, line[f.at].to_string(), owners))
+                })
+            });
+            let Some((r, line, written, owners)) = borrowed else {
+                continue;
+            };
+            // a proper name as written; a creature with an article
+            let proper = list[owners[0]]
+                .name
+                .starts_with(|c: char| c.is_ascii_uppercase());
+            let named = if proper {
+                written
+            } else {
+                let lower = written.to_ascii_lowercase();
+                format!("{} {lower}", article(&lower))
+            };
+            let owner_recs: Vec<Rec> = owners
+                .iter()
+                .map(|&j| Rec::of("Monsters", list[j].number))
+                .collect();
+            let mut bits = vec![
+                tx(format!(
+                    "When {}, {} reads {} (line {} of ",
+                    r.when,
+                    r.to,
+                    quoted_line(line),
+                    r.line
+                )),
+                rc(Rec::of("Messages", *msg)),
+                tx(format!("), which names {named}: a line written for ")),
+            ];
+            bits.extend(listed_some(&owner_recs, 3));
+            bits.push(tx(format!(
+                ", which {} it too. Give it a message of its own.",
+                if owners.len() == 1 { "reads" } else { "read" }
+            )));
+            out.push(
+                Finding::new(
+                    Check::Messages,
+                    Level::Note,
+                    Rec::of("Monsters", m.number),
+                    bits,
+                )
+                .column(col.clone()),
+            );
+        }
+    }
+
+    // arrival lines filled the wrong way round, or with `the the`
+    let mut doubled: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
+    for (i, m) in list.iter().enumerate() {
+        let Some((col, msg, _)) = m.uses.iter().find(|u| u.0 == "Move Msg") else {
+            continue;
+        };
+        let Some(line) = world.messages.get(msg).map(|l| &l[0]) else {
+            continue;
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let slots = arrival_slots(line);
+        let order = if m.named {
+            [Slot::Name, Slot::From { the: false }]
+        } else {
+            [Slot::From { the: false }, Slot::Name]
+        };
+        let backwards = slots.iter().zip(order).any(|(s, o)| match (s, o) {
+            (Slot::Unknown, _) => false,
+            (Slot::From { .. }, Slot::From { .. }) => false,
+            (s, o) => *s != o,
+        });
+        let from = "the north";
+        let read = |line: &str| {
+            let args = if m.named {
+                [m.name, from]
+            } else {
+                [from, m.name]
+            };
+            quoted_line(&messages::fill(line, &args))
+        };
+        if backwards {
+            let why = if m.named {
+                "with a name list (Desc Txt) the game gives its name first, then where it came from"
+            } else {
+                "without a name list (Desc Txt) the game gives where it came from first, then its name"
+            };
+            out.push(
+                Finding::new(
+                    Check::Messages,
+                    Level::Warn,
+                    Rec::of("Monsters", m.number),
+                    vec![
+                        tx(format!(
+                            "When it appears, the room reads {} (line 1 of ",
+                            read(line)
+                        )),
+                        rc(Rec::of("Messages", *msg)),
+                        tx(format!(
+                            "): {why}. Write the line that way round, or give it a message that is."
+                        )),
+                    ],
+                )
+                .column(col.clone()),
+            );
+        } else if slots
+            .iter()
+            .zip(order)
+            .any(|(s, o)| *s == Slot::From { the: true } && matches!(o, Slot::From { .. }))
+        {
+            doubled.entry(*msg).or_default().push(i);
+        }
+    }
+    for (msg, who) in doubled {
+        let Some(line) = world.messages.get(&msg).map(|l| &l[0]) else {
+            continue;
+        };
+        let m = &list[who[0]];
+        let args = if m.named {
+            [m.name, "the north"]
+        } else {
+            ["the north", m.name]
+        };
+        let recs: Vec<Rec> = who
+            .iter()
+            .map(|&j| Rec::of("Monsters", list[j].number))
+            .collect();
+        let mut bits = vec![tx("As ")];
+        bits.extend(listed_some(&recs, 3));
+        bits.push(tx(format!(
+            " {} in, the room reads {}: the game's words for where a monster came from start with “the” already, so “from the %s” reads “from the the north”. Write “from %s”.",
+            if recs.len() == 1 { "comes" } else { "come" },
+            quoted_line(&messages::fill(line, &args))
+        )));
+        let mut f = Finding::new(Check::Messages, Level::Note, Rec::of("Messages", msg), bits)
+            .column("Line 1");
+        f.refs = recs;
+        out.push(f);
     }
 }
 
@@ -2359,6 +2658,100 @@ mod tests {
                 ("Attack Miss Msg 0".into(), 0)
             ]
         );
+    }
+
+    #[test]
+    fn messages_borrowed_and_arrivals_backwards() {
+        let messages = table(
+            "Messages",
+            &["Number", "Line 1", "Line 2", "Line 3"],
+            vec![
+                vec![
+                    n(8572),
+                    s("The %s slashes you for %d damage!"),
+                    s("The %s slashes %s for %s damage!"),
+                    s("The troll spits up some black blood, and dies!"),
+                ],
+                vec![n(8574), s("A %s lumbers in from %s."), s(""), s("")],
+                vec![n(204), s("A %s stomps in from the %s."), s(""), s("")],
+            ],
+        );
+        let monsters = table(
+            "Monsters",
+            &[
+                "Number",
+                "Name",
+                "Desc Txt",
+                "Move Msg",
+                "Death Msg",
+                "Attack Type 0",
+                "Attack % 0",
+                "Attack Hit Msg 0",
+            ],
+            vec![
+                vec![
+                    n(82),
+                    s("troll"),
+                    n(0),
+                    n(8574),
+                    n(8572),
+                    n(1),
+                    n(100),
+                    n(8572),
+                ],
+                vec![
+                    n(1200),
+                    s("mountain ape"),
+                    n(2003),
+                    n(8574),
+                    n(8572),
+                    n(1),
+                    n(100),
+                    n(8572),
+                ],
+                vec![n(741), s("yeti"), n(2001), n(204), n(0), n(0), n(0), n(0)],
+                // a cave troll is a troll: its line is its own
+                vec![
+                    n(760),
+                    s("cave troll"),
+                    n(0),
+                    n(0),
+                    n(8572),
+                    n(0),
+                    n(0),
+                    n(0),
+                ],
+            ],
+        );
+        let world = World::from_rows(vec![messages, monsters]);
+        let found = check(&world, &Options::default(), &[Check::Messages]);
+        let said: Vec<(Level, String, String)> = found
+            .iter()
+            .map(|f| (f.level, f.about.label(), f.text(|_| None)))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (
+                    Level::Note,
+                    "monster 1200".to_string(),
+                    "When it dies, the room reads “The troll spits up some black blood, and dies!” (line 3 of message 8572), which names a troll: a line written for monster 82, which reads it too. Give it a message of its own.".to_string()
+                ),
+                (
+                    Level::Warn,
+                    "monster 82".to_string(),
+                    "When it appears, the room reads “A the north lumbers in from troll.” (line 1 of message 8574): without a name list (Desc Txt) the game gives where it came from first, then its name. Write the line that way round, or give it a message that is.".to_string()
+                ),
+                (
+                    Level::Note,
+                    "message 204".to_string(),
+                    "As monster 741 comes in, the room reads “A yeti stomps in from the the north.”: the game's words for where a monster came from start with “the” already, so “from the %s” reads “from the the north”. Write “from %s”.".to_string()
+                ),
+            ],
+            "{said:#?}"
+        );
+        // the note on a message names the monsters that read it, so their cards show it
+        assert!(found[2].concerns(&Rec::of("Monsters", 741)));
     }
 
     #[test]

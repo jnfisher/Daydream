@@ -1563,7 +1563,10 @@ async fn the_checks_read_the_world_and_keep_accepted_words() {
         .iter()
         .map(|c| c["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["prices", "spelling", "placeholders", "spawns"]);
+    assert_eq!(
+        ids,
+        ["prices", "spelling", "placeholders", "messages", "spawns"]
+    );
     assert_eq!(body["total"], 0, "{body}");
     let (status, body) = get(dir.path(), "/api/checks?check=prices&level=warn,ok&limit=5").await;
     assert_eq!(status, StatusCode::OK, "{body}");

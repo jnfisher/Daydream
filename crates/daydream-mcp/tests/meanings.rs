@@ -339,3 +339,127 @@ fn check_world_reads_the_wiring() {
     let all = c.call("check_world", json!({}));
     assert_eq!(all["counts"]["placeholders"]["warn"], 0, "{all}");
 }
+
+#[test]
+fn messages_are_records_of_their_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    empty_realm(tmp.path());
+    let server = Server::new(tmp.path(), Options::default());
+    let mut c = Client::new(&server);
+    let p = c.call("preview_edits", json!({ "edits": [
+        { "op": "insert", "table": "Messages", "values": { "Number": 9,
+            "Line 1": "The %s bites you for %d damage!",
+            "Line 2": "The %s bites %s for %s damage!",
+            "Line 3": "The cave newt squeaks, and dies." } },
+        { "op": "insert", "table": "Messages", "values": { "Number": 10, "Line 1": "A %s scurries in from %s." } },
+        { "op": "insert", "table": "Monsters", "values": {
+            "Number": 1, "Name": "cave newt", "Group": 6, "Index": 4, "Move Msg": 10, "Death Msg": 9,
+            "Attack Type 0": 1, "Attack % 0": 100, "Attack Hit Msg 0": 9 } },
+        { "op": "insert", "table": "Textblocks", "values": { "Number": 5, "Part #": 0, "Data": "pet newt:message 9\n" } }
+    ] }));
+    c.call("apply_edits", json!({ "token": p["token"] }));
+
+    // its lines, who reads which, and the names they hold
+    let m = c.call("get_message", json!({ "number": 9 }));
+    assert_eq!(m["blanks"], json!([2, 3, 0]));
+    let uses: Vec<String> = m["uses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| format!("{} {} {}", u["table"], u["key"], u["by"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        uses,
+        [
+            "\"Monsters\" [1] Death Msg",
+            "\"Monsters\" [1] Attack Hit Msg 0",
+            "\"Textblocks\" [5,0] line 1: message 9",
+        ],
+        "{m}"
+    );
+    assert_eq!(m["uses"][0]["reads"][0]["line"], 3);
+    assert_eq!(
+        m["uses"][1]["reads"][0]["reads_as"],
+        "The cave newt bites you for <the damage> damage!"
+    );
+    assert_eq!(m["uses"][1]["reads"][1]["to"], "the room");
+    assert_eq!(
+        m["uses"][2]["reads"][1]["fills"],
+        json!(["the player's name"])
+    );
+    assert_eq!(m["names"][0]["line"], 3);
+    assert_eq!(m["names"][0]["monsters"][0]["reads_it"], true);
+    assert!(
+        c.fails("get_message", json!({ "number": 77 }))
+            .contains("77")
+    );
+
+    // a script that names it is a reference too
+    let refs = c.call(
+        "find_references",
+        json!({ "table": "Messages", "key": [9] }),
+    );
+    assert!(
+        refs["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["table"] == "Textblocks" && r["by"] == "line 1: message 9"),
+        "{refs}"
+    );
+
+    // a clone with messages gets copies of those that name it, its name in them
+    let p = c.call(
+        "preview_edits",
+        json!({ "edits": [
+        { "op": "clone", "table": "Monsters", "from": [1], "messages": "named",
+          "values": { "Number": 2, "Name": "marsh toad" } }
+    ] }),
+    );
+    c.call("apply_edits", json!({ "token": p["token"] }));
+    let toad = c.call("get_row", json!({ "table": "Monsters", "key": [2] }));
+    let v = |col: &str| toad["values"][col].clone();
+    assert_eq!(v("Death Msg"), 11, "{toad}");
+    assert_eq!(v("Attack Hit Msg 0"), 11);
+    assert_eq!(
+        v("Move Msg"),
+        10,
+        "a line that does not name it stays shared"
+    );
+    let copy = c.call("get_row", json!({ "table": "Messages", "key": [11] }));
+    assert_eq!(
+        copy["values"]["Line 3"],
+        "The marsh toad squeaks, and dies."
+    );
+    assert_eq!(copy["values"]["Line 1"], "The %s bites you for %d damage!");
+    assert!(
+        c.fails(
+            "preview_edits",
+            json!({ "edits": [{ "op": "clone", "table": "Monsters", "from": [1], "messages": "some",
+                "values": { "Number": 3 } }] })
+        )
+        .contains("named or all")
+    );
+
+    // the arrival line reads backwards without a name list; the borrowed death line is gone
+    let found = c.call("check_world", json!({ "check": "messages" }));
+    let says: Vec<String> = found["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            format!(
+                "{} {} {}",
+                f["level"],
+                f["about"]["key"],
+                f["says"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(says.len(), 2, "{found}");
+    assert!(
+        says[0].starts_with("\"warn\" [1] When it appears, the room reads “A the north scurries in from cave newt.” (line 1 of message 10"),
+        "{says:?}"
+    );
+    assert!(says[1].starts_with("\"warn\" [2]"), "{says:?}");
+}

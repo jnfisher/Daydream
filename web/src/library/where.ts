@@ -86,6 +86,7 @@ const SAYS: [string, string][] = [
   ['Monsters Greet Txt', 'The greeting of {n}'],
   ['Monsters Talk Txt', 'The talk of {n}'],
   ['Textblocks Link To', 'Linked to from {n}'],
+  ['Textblocks Data', 'Named in the scripts of {n}'],
   ['Spells Cast MSG A', 'The cast message of {n}'],
   ['Spells Cast MSG B', 'The cast message of {n}'],
   ['Shops Class Limit', '{n} only it may use'],

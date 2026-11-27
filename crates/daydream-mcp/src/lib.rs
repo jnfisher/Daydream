@@ -11,8 +11,9 @@
 //! |---|---|
 //! | `list_tables` | every table: key columns, title column |
 //! | `describe_table` | a table's columns: types, sizes, choice lists, what they refer to, and notes on what the game does with them |
-//! | `find_references` | every row that names a record: refers to it, an exit's parameter, or spawns it |
-//! | `check_world` | the checks that read the wiring across the world: prices against what is said, spelling, placeholders, spawns nobody reaches |
+//! | `find_references` | every row that names a record: refers to it, an exit's parameter, a script, or spawns it |
+//! | `get_message` | a message's lines, every use of it with the lines it reads and what fills them, and the monster names its lines hold |
+//! | `check_world` | the checks that read the wiring across the world: prices against what is said, spelling, placeholders, messages, spawns nobody reaches |
 //! | `list_rows` | a table's rows: key and title, more columns on request, filtered and paged |
 //! | `get_row` | one row, every column |
 //! | `free_numbers` | record numbers not in use (rooms: within a map) |
@@ -277,13 +278,14 @@ fn tool_list(silvermere: bool) -> Value {
     let key = json!({ "type": "array", "description": "The row's key: its key columns' values in order, as list_tables gives them (Rooms: [map, room])" });
     let edit = json!({
         "type": "object",
-        "description": "One edit. op insert: table and values (must include the key columns; other columns start blank). op update: table, key and the values to change (not the key). op delete: table and key. op clone: table, from (the key of a row to copy) and values (the new row's key columns, and any columns to change); get_row the row first, since stock rows can hold junk.",
+        "description": "One edit. op insert: table and values (must include the key columns; other columns start blank). op update: table, key and the values to change (not the key). op delete: table and key. op clone: table, from (the key of a row to copy) and values (the new row's key columns, and any columns to change); get_row the row first, since stock rows can hold junk. A clone's messages option copies the messages it uses into new Messages rows, with the copied row's name swapped for the new Name, and points the clone at them: named copies those whose lines name it, all copies every one.",
         "properties": {
             "op": { "type": "string", "enum": ["insert", "update", "delete", "clone"] },
             "table": table,
             "key": key,
             "from": { "type": "array", "description": "clone: the key of the row to copy" },
-            "values": { "type": "object", "description": "{column: value}, column names as describe_table gives them" }
+            "values": { "type": "object", "description": "{column: value}, column names as describe_table gives them" },
+            "messages": { "type": "string", "enum": ["named", "all"], "description": "clone: copy its messages to new rows with the name swapped (named: those whose lines name it; all: every one), so the clone never reads another's lines" }
         },
         "required": ["op", "table"]
     });
@@ -346,15 +348,21 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "find_references",
-            "description": "Every row that names a record: columns that refer to its table (a monster's messages, a shop's items, a room's exits), exit parameters by exit type (a key exit's item), and for a monster the rooms that spawn it. Use it before changing or reusing a record that others may share, such as a message.",
+            "description": "Every row that names a record: columns that refer to its table (a monster's messages, a shop's items, a room's exits), exit parameters by exit type (a key exit's item), what text blocks' scripts name (a message, an item given, a room teleported to: by gives the line), and for a monster the rooms that spawn it. Use it before changing or reusing a record that others may share, such as a message.",
             "inputSchema": { "type": "object", "properties": { "table": table, "key": key }, "required": ["table", "key"] },
             "annotations": { "readOnlyHint": true }
         },
         {
+            "name": "get_message",
+            "description": "A message as the game reads it: its three lines and how many blanks (%s, %d) each has; every record that uses it (monsters, items, spells, exits, scripts) with the lines that use reads, when, to whom, what fills each blank in order, and how the line reads with the user's name in it (reads_as); and the monsters whose names its lines hold (names), with whether each reads it. A message is often shared, and a monster's Death Msg line 3 may say another creature's name: read this before changing or reusing one, and clone a monster with messages to give it lines of its own.",
+            "inputSchema": { "type": "object", "properties": { "number": { "type": "integer" } }, "required": ["number"] },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
             "name": "check_world",
-            "description": "The checks that read the wiring across the whole world, as Daydream's Home lists them. prices: what each script line charges (its price clauses added up) against the amounts its words quote, the lines beside it that do the same for another price, and the Cost of the item it gives. spelling: words in players' text the dictionary lacks, used once or twice, one letter from a word the world uses (with what they may be; the sysop's accepted words are left out). placeholders: blank messages where the game would tell a blow in its own words (a monster's attack, a weapon's verbs), and names left as placeholders. spawns: rooms whose spawn range has no monster of their group, monsters no room spawns, and what brings the rest (a room's NPC, a summoning spell and what casts it, a script). Each finding says what is wrong (warn: players meet it; note: worth a look) or what was checked and holds (ok), about one record, naming the records it rests on, with `fix` (values to set on it) when there is a sure one. `table` and `key` keep what is about one record or rests on it. Run it after a batch of edits. Paged by offset and limit (at most 200).",
+            "description": "The checks that read the wiring across the whole world, as Daydream's Home lists them. prices: what each script line charges (its price clauses added up) against the amounts its words quote, the lines beside it that do the same for another price, and the Cost of the item it gives. spelling: words in players' text the dictionary lacks, used once or twice, one letter from a word the world uses (with what they may be; the sysop's accepted words are left out). placeholders: blank messages where the game would tell a blow in its own words (a monster's attack, a weapon's verbs), and names left as placeholders. messages: lines a monster reads that name another creature, written for a monster that reads them too (a message borrowed whole), and arrival lines the game fills the wrong way round or with \"the the\". spawns: rooms whose spawn range has no monster of their group, monsters no room spawns, and what brings the rest (a room's NPC, a summoning spell and what casts it, a script). Each finding says what is wrong (warn: players meet it; note: worth a look) or what was checked and holds (ok), about one record, naming the records it rests on, with `fix` (values to set on it) when there is a sure one. `table` and `key` keep what is about one record or rests on it. Run it after a batch of edits. Paged by offset and limit (at most 200).",
             "inputSchema": { "type": "object", "properties": {
-                "check": { "type": "string", "enum": ["prices", "spelling", "placeholders", "spawns"] },
+                "check": { "type": "string", "enum": ["prices", "spelling", "placeholders", "messages", "spawns"] },
                 "level": { "type": "array", "items": { "type": "string", "enum": ["warn", "note", "ok"] }, "description": "default [warn, note]" },
                 "table": table,
                 "key": key,
@@ -631,6 +639,7 @@ impl Server {
             "list_tables" => Ok(self.list_tables()),
             "describe_table" => self.describe_table(args),
             "find_references" => self.find_references(args),
+            "get_message" => self.get_message(args),
             "check_world" => self.check_world(args),
             "list_rows" => self.list_rows(args),
             "get_row" => self.get_row(args),
@@ -687,15 +696,20 @@ impl Server {
         describe::find_references(&realm, &self.searched(), t, &key)
     }
 
+    fn get_message(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
+        self.table("Messages")?;
+        let number = number_arg(args, "number")?.ok_or_else(|| bad("number is required"))?;
+        describe::get_message(&self.realm()?, &self.searched(), number)
+    }
+
     fn check_world(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
         use daydream_nmr::wiring::{self, Check, Level, Rec};
-        let check =
-            match args.get("check") {
-                None | Some(Value::Null) => None,
-                Some(v) => Some(v.as_str().and_then(Check::parse).ok_or_else(|| {
-                    bad("check is one of prices, spelling, placeholders, spawns")
-                })?),
-            };
+        let check = match args.get("check") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_str().and_then(Check::parse).ok_or_else(|| {
+                bad("check is one of prices, spelling, placeholders, messages, spawns")
+            })?),
+        };
         let levels: Vec<Level> = match args.get("level") {
             None | Some(Value::Null) => vec![Level::Warn, Level::Note],
             Some(Value::Array(ls)) => ls

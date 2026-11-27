@@ -186,9 +186,9 @@ number, narrowed by chips such as Weapons or Map 3, or **Changed** for what chan
 publishing) and the open record's card. A card groups the fields by what they are for, with
 NMR's labels: an item's fight, what players see (its text as the game shows it), its
 abilities by name, who may use it, and where it is in the world (the shops that sell it, the
-monsters that drop or wield it, the rooms it lies in). A number that names a record shows it
-as a chip, which opens it beside the page, with a search to pick another by name. A number is
-drawn among its peers' (every 1H Sharp weapon) to read in context, and a weapon's Max Hit
+monsters that drop or wield it, the rooms it lies in, the scripts that name it). A number
+that names a record shows it as a chip, which opens it beside the page, with a search to
+pick another by name. A number is drawn among its peers' (every 1H Sharp weapon) to read in context, and a weapon's Max Hit
 against its Speed among theirs, its own dot moving as you type and each of theirs opening it. A field changed since
 publishing shows what it was, struck through, and the header counts those changes and takes
 them back. **All fields** lays out every column as NMR's forms do, and **Copy** makes a new
@@ -251,16 +251,21 @@ each finding rests on. **Prices** puts what each script line charges (its `price
 added up, as the game takes them) against the amounts its own words and its conversation
 quote, the lines beside it that do the same for another price, and the Cost of the item it
 gives: the stock smith charges 200 gold to make a hide tunic his words price at 2,000.
-**Spelling** finds the words of players' text that the dictionary (SCOWL's word lists) lacks,
-used once or twice, a letter from a word the world uses ("exhange" for "exchange"); **Not a
-typo** leaves one alone from then on. **Placeholders** finds blank messages where the game
-would tell a blow in its own words (a monster's attack, a weapon's verbs) and names left as
-placeholders. **Spawns** finds rooms whose spawn range holds no monster of their group, and
-monsters no room spawns, with what brings them instead: a room that keeps one as its NPC, a
-spell that summons it and what casts the spell, a script. Warnings come first, and what was
-checked and holds is folded away. A record's card lists the findings about it among its
-problems, with a fix where there is a sure one (the game's own words for a blank message, the
-likely word for a typo). The checks run again after each save.
+**Spelling** finds the words of players' text that the dictionary (SCOWL's word lists)
+lacks, used once or twice, a letter from a word the world uses ("exhange" for "exchange");
+**Not a typo** leaves one alone from then on. **Placeholders** finds blank messages where
+the game would tell a blow in its own words (a monster's attack, a weapon's verbs) and names
+left as placeholders. **Messages** reads each message as the game fills it in for each
+monster that uses it: a line written for another creature ("Aiken utters a sharp cry, and
+dies." on a monster that is not Aiken), an arrival line the wrong way round for how the game
+fills it ("A the north lumbers in from troll.", since without a name list the game gives
+where a monster came from first), and "from the the north". **Spawns** finds rooms whose
+spawn range holds no monster of their group, and monsters no room spawns, with what brings
+them instead: a room that keeps one as its NPC, a spell that summons it and what casts the
+spell, a script. Warnings come first, and what was checked and holds is folded away. A
+record's card lists the findings about it among its problems, with a fix where there is a
+sure one (the game's own words for a blank message, the likely word for a typo). The checks
+run again after each save.
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
@@ -398,18 +403,23 @@ Big pieces of work stay cheap. An agent can write its edits to a JSON file in th
 `.daydream/batches` folder (or a folder given with `--batch-dir`) and hand `preview_edits`
 the file's name instead of retyping every edit; that only works for an agent on the same
 machine, so a hosted one still sends its edits inline. A `clone` edit copies an existing row
-with changes. Previews leave out the columns an insert leaves blank, and a big preview comes
-back as a summary. `list_rows` takes `where` conditions on any column (`"Room Item *"` is any
-of a room's items), and `get_map` takes a range of rooms and extra columns.
+with changes; given `"messages": "named"`, the copy gets messages of its own, the template's
+messages that name it copied to new rows with the name swapped. Previews leave out the
+columns an insert leaves blank, and a big preview comes back as a summary. `list_rows` takes
+`where` conditions on any column (`"Room Item *"` is any of a room's items), and `get_map`
+takes a range of rooms and extra columns.
 
 `describe_table` explains each column: its choice list, the table it refers to, and notes on
 what the game does with it (an arena's Max Index is also its level cap), with the source in
 silvermere's engine; for Rooms it gives what each exit type's parameters mean.
-`find_references` lists every row that names a record, and `check_world` runs Home's checks
-that read the wiring, for the whole world or one record. `preview_edits` warns of what a
-batch would leave pointing at nothing: a value that names a record the realm does not have
-(the batch's own inserts and deletes counted), or rows still naming a record it deletes. These
-come from `crates/daydream-nmr/src/fields.json`, which the web editors' choice lists use too.
+`find_references` lists every row that names a record (a script's lines included), and
+`get_message` gives a message's three lines with what the game fills each blank with, and
+every monster, item, spell and script that uses it, each line as it reads for that one.
+`check_world` runs Home's checks that read the wiring, for the whole world or one record.
+`preview_edits` warns of what a batch would leave pointing at nothing: a value that names a
+record the realm does not have (the batch's own inserts and deletes counted), or rows still
+naming a record it deletes. These come from `crates/daydream-nmr/src/fields.json`, which the
+web editors' choice lists use too.
 
 ```sh
 claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over stdio
