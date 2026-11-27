@@ -47,13 +47,41 @@ pub struct MapRoom {
     pub light: i64,
 }
 
-/// One map's rooms, and the realm's maps.
+/// The map change exits from one map to another: the world's portals between two maps, one way.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct MapLink {
+    pub from: i64,
+    pub to: i64,
+    /// How many map change exits lead from `from` to `to`.
+    pub exits: usize,
+    /// The first of them, by room number: its room on `from`, and the room it leads to on `to`.
+    pub room: i64,
+    pub to_room: i64,
+}
+
+/// The name most of a map's rooms share, which says what the map mostly is (MajorMUD's maps have
+/// only numbers).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct MapName {
+    pub map: i64,
+    pub name: String,
+    /// How many of the map's rooms have it.
+    pub rooms: usize,
+}
+
+/// One map's rooms, and the realm's maps and how they join.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MapView {
     /// Every map number with rooms, and its room count.
     pub maps: Vec<(i64, usize)>,
+    /// Each map's commonest room name, by map (a tie goes to the name of the lower room; a map
+    /// whose rooms are all unnamed has none).
+    pub names: Vec<MapName>,
     /// The rooms of the map asked for, in room order.
     pub rooms: Vec<MapRoom>,
+    /// Every pair of maps a map change exit leads between, one way, by `from` and `to` (a map
+    /// change onto its own map is left out).
+    pub links: Vec<MapLink>,
 }
 
 /// Every room of `map`, and the realm's maps.
@@ -115,12 +143,59 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
         .collect();
     out.sort_by_key(|r| r.room);
     let mut maps: std::collections::BTreeMap<i64, usize> = Default::default();
+    let mut links: std::collections::BTreeMap<(i64, i64), MapLink> = Default::default();
+    // by map, each room name's count and its lowest room
+    let mut named: std::collections::BTreeMap<
+        i64,
+        std::collections::HashMap<String, (usize, i64)>,
+    > = Default::default();
     for r in &rows.0.rows {
-        *maps.entry(n(&r[mapn])).or_default() += 1;
+        let from = n(&r[mapn]);
+        *maps.entry(from).or_default() += 1;
+        let title = text(&r[name]);
+        if !title.trim().is_empty() {
+            let at = n(&r[room]);
+            let seen = named
+                .entry(from)
+                .or_default()
+                .entry(title)
+                .or_insert((0, at));
+            seen.0 += 1;
+            seen.1 = seen.1.min(at);
+        }
+        for d in 0..10 {
+            let (to_room, to) = (n(&r[exits[d]]), n(&r[p1[d]]));
+            if to_room == 0 || n(&r[kinds[d]]) != 8 || to == from {
+                continue;
+            }
+            let at = n(&r[room]);
+            let link = links.entry((from, to)).or_insert(MapLink {
+                from,
+                to,
+                exits: 0,
+                room: at,
+                to_room,
+            });
+            link.exits += 1;
+            if at < link.room {
+                (link.room, link.to_room) = (at, to_room);
+            }
+        }
     }
+    let names = named
+        .into_iter()
+        .filter_map(|(map, counts)| {
+            let (name, (rooms, _)) = counts
+                .into_iter()
+                .min_by_key(|(_, (count, first))| (std::cmp::Reverse(*count), *first))?;
+            Some(MapName { map, name, rooms })
+        })
+        .collect();
     Ok(MapView {
         maps: maps.into_iter().collect(),
+        names,
         rooms: out,
+        links: links.into_values().collect(),
     })
 }
 

@@ -38,9 +38,38 @@ export interface MapAnswer {
   map: number;
   /** Every map with rooms, and how many. */
   maps: [number, number][];
+  /** Each map's commonest room name. */
+  names?: MapName[];
   rooms: MapRoom[];
+  /** The map change exits between maps, by the two maps and the way they go. */
+  links?: MapLink[];
   /** Where its rooms moved by hand are drawn. */
   pins?: PinCells;
+}
+
+/** The name most of a map's rooms share, and how many do. */
+export interface MapName {
+  map: number;
+  name: string;
+  rooms: number;
+}
+
+/** The map change exits from one map to another. */
+export interface MapLink {
+  from: number;
+  to: number;
+  /** How many lead that way. */
+  exits: number;
+  /** The first of them: its room on `from`, and the room it leads to on `to`. */
+  room: number;
+  to_room: number;
+}
+
+/** What a map is mostly, by the name of its rooms (MajorMUD's maps have only numbers): the
+ * commonest name, when a fair share of the map's rooms have it, else null. */
+export function mapName(names: ReadonlyMap<number, MapName>, map: number, rooms: number): string | null {
+  const n = names.get(map);
+  return n && n.rooms * 20 >= rooms ? n.name : null;
 }
 
 /** Cells by room number, as the map's side file keeps them. */

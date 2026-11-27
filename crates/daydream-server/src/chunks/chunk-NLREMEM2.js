@@ -1,2 +1,0 @@
-// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
-import{Ca as t,Da as e,Ia as o}from"./chunk-YP3VWJKH.js";var a={name:"trash",size:24,node:[["path",{d:"M10 11v6"}],["path",{d:"M14 11v6"}],["path",{d:"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}],["path",{d:"M3 6h18"}],["path",{d:"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],aliases:["trash-2"]},$=a.node,d=new Set(["$$slots","$$events","$$legacy"]);function r(p,s){let n=t(s,d);o(p,e(()=>n,{get icon(){return a}}))}export{r as a};

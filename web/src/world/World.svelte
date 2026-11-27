@@ -26,6 +26,9 @@
   exits as the game would, its words for each room and each refusal in a panel, and the map
   follows them, onto other maps too. A room clicked puts the player there; Esc goes back to
   editing at the room reached.
+
+  All maps (W, or zooming out past a map) shows every map as a disc and the map change exits
+  between them as lines (WorldView.svelte); a disc opens its map.
 -->
 <!-- loaded when the World is first opened, so its styles travel with its code -->
 <svelte:options css="injected" />
@@ -51,6 +54,7 @@
   import SquareDashedMousePointer from '@lucide/svelte/icons/square-dashed-mouse-pointer';
   import StampIcon from '@lucide/svelte/icons/stamp';
   import Upload from '@lucide/svelte/icons/upload';
+  import Waypoints from '@lucide/svelte/icons/waypoints';
   import X from '@lucide/svelte/icons/x';
   import { api, type Cell } from '../api';
   import type PlayPanel from '../story/PlayPanel.svelte';
@@ -62,10 +66,11 @@
   import { COLOUR_BY, EXIT_LEGEND, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName } from './look';
   import type { Host } from './host';
   import { cellKey, cellsOf, OPPOSITE, STEP, type Spot } from './layout';
-  import { DIR_WORDS, KEY_DIR, kindName, type MapFile, type MapRoom, type PinCells } from './model';
+  import { DIR_WORDS, KEY_DIR, kindName, mapName, type MapFile, type MapLink, type MapName, type MapRoom, type PinCells } from './model';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
   import type { Selector } from './selector.svelte';
   import type { Stamper } from './stamper.svelte';
+  import type WorldViewKind from './WorldView.svelte';
 
   let canvas: HTMLCanvasElement;
   let mini: HTMLCanvasElement;
@@ -73,6 +78,10 @@
 
   let map = $state(0);
   let maps = $state<[number, number][]>([]);
+  /** Each map's commonest room name, and the map change exits between maps (for All maps). */
+  let names = $state.raw<MapName[]>([]);
+  let links = $state.raw<MapLink[]>([]);
+  const namesOf = $derived(new Map(names.map((n) => [n.map, n])));
   let count = $state(0);
   let loading = $state(false);
   let failed = $state('');
@@ -142,6 +151,10 @@
   /** Walk mode: a playtest from a room, in a panel whose code loads the first time. */
   let walking = $state(false);
   let WalkPanel = $state.raw<typeof PlayPanel | null>(null);
+  /** All maps: loaded the first time it is opened; shown while `worldShown`. */
+  let WorldView = $state.raw<typeof WorldViewKind | null>(null);
+  let worldView = $state<ReturnType<typeof WorldViewKind>>();
+  let worldShown = $state(false);
   let walker = $state<ReturnType<typeof PlayPanel>>();
   /** The room the walk started from. */
   let walkStart = $state.raw<{ table: string; key: Cell[] } | null>(null);
@@ -210,6 +223,8 @@
       }
       map = a.map;
       maps = a.maps;
+      names = a.names ?? [];
+      links = a.links ?? [];
       count = a.rooms.length;
       write(lastKey(), String(map));
       scene.setEdited(edited);
@@ -372,7 +387,12 @@
       const e = h.stub.exit;
       const way = cap(DIR_WORDS[e.dir] ?? 'An exit');
       const kind = e.kind ? `${kindName(e.kind)} exit` : 'Exit';
-      if (h.stub.sort === 'map') return { title: `${way} to map ${e.para1}`, sub: `${kind} to room ${e.para1}/${e.to}. Click to go there.` };
+      if (h.stub.sort === 'map') {
+        const rooms = maps.find(([m]) => m === e.para1)?.[1];
+        const name = rooms ? mapName(namesOf, e.para1, rooms) : null;
+        const sub = rooms ? `${kind} to room ${e.para1}/${e.to}. Click to go there.` : `${kind} to room ${e.para1}/${e.to}. This world has no rooms on map ${e.para1}: an add-on’s map, perhaps.`;
+        return { title: `${way} to map ${e.para1}${name ? ` · ${name}` : ''}`, sub };
+      }
       if (h.stub.sort === 'missing') return { title: `${way} to room ${e.to}`, sub: `Map ${map} has no room ${e.to}.` };
       const t = scene?.by.get(e.to);
       return { title: `${way} to ${t?.name || `room ${e.to}`}`, sub: `${kind} to room ${map}/${e.to}, drawn elsewhere. Click to go there.` };
@@ -916,6 +936,54 @@
     else if (selected?.room !== n) choose(n, 'keep', false);
   }
 
+  // ---- all maps ------------------------------------------------------------------------
+
+  /** All maps: every map as a disc, joined by their map changes, over the map. */
+  async function openWorld() {
+    if (worldShown || !map) return;
+    if (!WorldView) {
+      try {
+        WorldView = (await import('./WorldView.svelte')).default;
+      } catch (e) {
+        toast(messageOf(e), { kind: 'error' });
+        return;
+      }
+    }
+    stopWalking(false);
+    if (stamping) await setStamping(false);
+    if (picking) await setPicking(false);
+    if (cardOnMap()) closeInspector();
+    mapsOpen = false;
+    tip = null;
+    worldShown = true;
+    sfx('toggle');
+  }
+
+  /** The picture zooms into the disc picked, and then makes way. */
+  let worldTimer: ReturnType<typeof setTimeout> | undefined;
+  function leaveWorld() {
+    clearTimeout(worldTimer);
+    worldTimer = setTimeout(() => (worldShown = false), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200);
+  }
+
+  /** Back into the map, all of it in view if it was zoomed out past. */
+  function closeWorld() {
+    leaveWorld();
+    scene?.fitIfPast();
+    canvas.focus({ preventScroll: true });
+    sfx('toggle');
+  }
+
+  /** A disc or a line picked: its map, at the room. */
+  function fromWorld(m: number, room: number | null) {
+    leaveWorld();
+    // the map left keeps a view of all its rooms for next time
+    scene?.fitIfPast(false);
+    if (m !== map) go(m, room);
+    else if (room !== null) choose(room, 'centre');
+    canvas.focus({ preventScroll: true });
+  }
+
   // the walk's panel along the bottom: the player's room is kept in view above it, under the tools
   $effect(() => {
     const [h, t] = walking ? [walkHigh, toolsHigh] : [0, 0];
@@ -1063,7 +1131,10 @@
     });
   });
 
-  const filteredMaps = $derived(mapFilter.trim() ? maps.filter(([m]) => String(m).startsWith(mapFilter.trim())) : maps);
+  const filteredMaps = $derived.by(() => {
+    const q = mapFilter.trim().toLowerCase();
+    return q ? maps.filter(([m, c]) => String(m).startsWith(q) || !!mapName(namesOf, m, c)?.toLowerCase().includes(q)) : maps;
+  });
 
   function setFocus(on: boolean) {
     focus = on;
@@ -1094,6 +1165,14 @@
       if (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
       // the card, the bar and the rail keep their own keys
       if (t.closest('#dd-inspector, #dd-top, #dd-rail, .pop')) return;
+    }
+    // All maps keeps its own keys: W or Esc go back into the map
+    if (worldShown) {
+      if (e.key === 'Escape' || (e.key.toLowerCase() === 'w' && !e.shiftKey)) {
+        e.preventDefault();
+        worldView?.back();
+      }
+      return;
     }
     if (stamping && stamper?.keys(e)) return;
     if (picking && selector?.keys(e)) return;
@@ -1135,6 +1214,7 @@
     else if (k === 'u') step(8);
     else if (k === 'd') step(9);
     else if (k === 'p') walking ? stopWalking() : void startWalking();
+    else if (k === 'w') void openWorld();
     else if (k === 'b') setBuilding(!building);
     else if (k === 's') void setStamping(!stamping);
     else if (k === 'v') void setPicking(!picking);
@@ -1185,6 +1265,7 @@
         }
       },
       follow,
+      out: () => void openWorld(),
       hover: (h, x, y) => (tip = h ? { x, y, ...tipFor(h) } : null),
       moved: (c) => {
         zoom = c.z;
@@ -1295,24 +1376,32 @@
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content class="pop maps-pop" sideOffset={8} align="start" collisionPadding={8}>
+          <button type="button" class="menu-item all" onclick={() => void openWorld()}>
+            <span class="num"><Waypoints size={14} /></span>
+            <span>All maps<span class="sub">Every map, and the map changes between them</span></span>
+            <span class="end"><span class="kbd">W</span></span>
+          </button>
+          <div class="menu-sep"></div>
           <div class="eyebrow head">Maps in this world</div>
           {#if maps.length > 12}
-            <input class="find" type="search" placeholder="Map number" aria-label="Find a map" bind:value={mapFilter} />
+            <input class="find" type="search" placeholder="Map number or name" aria-label="Find a map" bind:value={mapFilter} />
           {/if}
           <div class="list">
             {#each filteredMaps as [m, c] (m)}
+              {@const name = mapName(namesOf, m, c)}
               <button
                 type="button"
                 class="menu-item"
                 class:on={m === map}
+                title="Map {m}: {c.toLocaleString()} rooms"
                 onclick={() => {
                   mapsOpen = false;
                   mapFilter = '';
                   if (m !== map) go(m, null);
                 }}
               >
-                <span class="num">{m}</span>Map {m}
-                <span class="end faint tnum">{c.toLocaleString()} rooms{#if m === map}<Check size={15} />{/if}</span>
+                <span class="num">{m}</span><span class="nm">{name ?? `Map ${m}`}</span>
+                <span class="end faint tnum">{c.toLocaleString()}{#if m === map}<Check size={15} />{/if}</span>
               </button>
             {:else}
               <p class="faint none">No map {mapFilter}.</p>
@@ -1499,6 +1588,10 @@
     <WalkPanel bind:this={walker} bind:high={walkHigh} start={walkStart} walking onclose={() => stopWalking()} onmove={walkedTo} />
   {/if}
 
+  {#if worldShown && WorldView}
+    <WorldView bind:this={worldView} {maps} {names} {links} current={map} {pal} onopen={fromWorld} onclose={closeWorld} />
+  {/if}
+
   {#if roomy && !walking}
     <div class="float hint map-hint glass" aria-hidden="true">
       {#if note}
@@ -1520,7 +1613,7 @@
       {:else if selected}
         <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down <span class="kbd">P</span> playtest <span class="kbd">Shift 2</span> close up
       {:else}
-        Click a room for its card <span class="kbd">H</span> start room <span class="kbd">P</span> playtest <span class="kbd">F</span> full screen
+        Click a room for its card <span class="kbd">H</span> start room <span class="kbd">P</span> playtest <span class="kbd">W</span> all maps <span class="kbd">F</span> full screen
       {/if}
     </div>
   {/if}
@@ -1620,6 +1713,8 @@
   :global(.maps-pop) .find { margin: 0 6px 6px; width: calc(100% - 12px); }
   :global(.maps-pop) .num { min-width: 30px; height: 22px; padding: 0 6px; border-radius: 8px; display: inline-grid; place-items: center; background: var(--mint-2); color: var(--mint-ink); font: 700 12px var(--font-mono); }
   :global(.maps-pop) .none { margin: 6px 10px; font-size: 13px; }
+  :global(.maps-pop) .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :global(.maps-pop) .all .num { background: var(--lilac-2); color: var(--lilac-ink); }
   :global(.layers-pop) { width: min(360px, calc(100vw - 16px)); max-height: min(78vh, 640px); overflow: auto; }
   .key { list-style: none; margin: 0; padding: 0 8px 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
   .key li { display: flex; align-items: center; gap: 7px; min-width: 0; line-height: 1.25; }
