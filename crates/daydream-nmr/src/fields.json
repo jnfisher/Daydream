@@ -799,6 +799,11 @@
     },
     "Room Item # USES": {
      "note": "Uses left on each."
+    },
+    "Command Text": {
+     "links": "Textblocks",
+     "note": "The text block of what players can type here: each line is words:clauses, its words matched against the typed line (| between alternatives, a * lets the rest be cut short), and the lines that match run in turn until one runs through.",
+     "source": "silvermere-engine/src/scripts/special.rs (room_command, perform_special_command)"
     }
    },
    "note": "A room is keyed by Map Number and Room Number. Exits, Death Room, Exit Room and Control Room name rooms on the same map. A room spawns monsters whose Group equals its Mon Type and whose Index lies from Min Index to Max Index, up to Max Regen at a time; a Max Index of 0 spawns nothing."
@@ -844,6 +849,15 @@
   "Messages": {
    "columns": {},
    "note": "A message is three lines (Line 1 to Line 3). %s and %d are filled in order with what the use passes, a %s past the last argument prints nothing, and %% is a percent sign. One row is often shared: a monster's Hit Msg may use lines 1-2 while its Death Msg uses line 3 of the same row."
+  },
+  "Textblocks": {
+   "columns": {
+    "Link To": {
+     "links": "Textblocks",
+     "note": "Of a monster's talk block (its Greet Txt), the text it says when greeted. Of a text a monster shows when asked about something, the block then run as a whole. Nothing else reads it.",
+     "source": "silvermere-engine/src/commands/ask_greet.rs (ask_monster_a_question)"
+    }
+   }
   }
  },
  "abilities": {

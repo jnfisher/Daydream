@@ -92,6 +92,8 @@
       <parts.Attacks {draft} />
     {:else if section.custom === 'wired'}
       <parts.Wired {draft} />
+    {:else if section.custom === 'script'}
+      <parts.Script {draft} {rowKey} {version} />
     {:else}
       <parts.Spawns {draft} {rowKey} {version} />
     {/if}
