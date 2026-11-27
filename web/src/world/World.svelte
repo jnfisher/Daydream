@@ -12,6 +12,10 @@
   In Build mode a room can be carried to a free cell (or moved a cell with Shift and an arrow).
   The first move on a map keeps every room where it is drawn, so the map holds still from then
   on; the places are kept beside the working copy, never in the game, and can be exported.
+
+  Stamps (S) put a shape of rooms down at once: the shape follows the pointer see-through, each
+  cell tinted by what it would do, and a click puts it down as one save, which one undo takes
+  back with the places its rooms were drawn in.
 -->
 <!-- loaded when the World is first opened, so its styles travel with its code -->
 <svelte:options css="injected" />
@@ -33,11 +37,12 @@
   import Plus from '@lucide/svelte/icons/plus';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Scan from '@lucide/svelte/icons/scan';
+  import StampIcon from '@lucide/svelte/icons/stamp';
   import Upload from '@lucide/svelte/icons/upload';
   import X from '@lucide/svelte/icons/x';
   import { api } from '../api';
   import { read, sfx, write } from '../shell/prefs.svelte';
-  import { app, closeInspector, dropLocalStep, inspect, localStep, undo, type LocalStep } from '../shell/state.svelte';
+  import { app, closeInspector, dropLocalStep, inspect, localStep, realmChanged, undo, type LocalStep } from '../shell/state.svelte';
   import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
   import { dug, joined, moveFrom, renamed } from './build';
   import { ICONS } from './icons';
@@ -45,6 +50,7 @@
   import { cellKey, STEP, type Spot } from './layout';
   import { DIR_WORDS, kindName, type MapFile, type MapRoom, type PinCells } from './model';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
+  import type { Placed, StampKind, StampOptions, StampRequest, Turn } from './stamps';
 
   let canvas: HTMLCanvasElement;
   let mini: HTMLCanvasElement;
@@ -102,6 +108,30 @@
   let stale = false;
   /** Where the camera was on each map, so coming back to one finds it as it was left. */
   const cams = new Map<number, Camera>();
+  // Stamps
+  /** The stamps' code, once the drawer has been opened. */
+  let kit = $state<typeof import('./stamping') | null>(null);
+  const UPRIGHT: Turn = { turns: 0, flipX: false, flipY: false };
+  /** The stamp drawer is open. */
+  let stamping = $state(false);
+  /** The stamp held, its sizes, its roll, how it is turned, and whether it joins the rooms it touches. */
+  let stampKind = $state<StampKind | null>(null);
+  let stampSizes = $state<number[]>([]);
+  let stampSeed = $state(1);
+  let stampTurn = $state<Turn>(UPRIGHT);
+  let stampSeam = $state(false);
+  /** Leave the rooms already there alone, and replace the exits in the way: switched on, or held down (Shift, Alt). */
+  let stampKeep = $state(false);
+  let stampOverwrite = $state(false);
+  /** The cell the held stamp's first cell is over. */
+  let aim = $state<[number, number] | null>(null);
+  /** Shift (leave the rooms already there alone) and Alt (replace the exits in the way), held down. */
+  let mods = $state({ shift: false, alt: false });
+  /** A finger, not a mouse: a stamp is aimed with one tap and put down with another. */
+  const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  /** The held stamp as it would go down where it is aimed, and the room its new rooms copy. */
+  let ghost = $state<Placed | null>(null);
+  let ghostBrush = $state<number | null>(null);
 
 
   function colourFrom(v: string): ColourBy {
@@ -158,6 +188,7 @@
       if (moved) {
         scene.select(null);
         selected = null;
+        aim = null;
       }
       map = a.map;
       maps = a.maps;
@@ -186,6 +217,7 @@
       selected = selected ? (scene.by.get(selected.room) ?? null) : null;
       if (had !== undefined && !selected && !moved) gone(had);
       legend = scene.legend();
+      reghost();
     } catch (e) {
       failed = messageOf(e);
     } finally {
@@ -244,10 +276,11 @@
 
   /** A note in the hint bar for a moment (a toast when the hint bar has no room). */
   let noteTimer: ReturnType<typeof setTimeout> | undefined;
-  function say(text: string) {
+  /** A line in the bar along the bottom (a toast on a small screen, unless `quiet`: then only for a screen reader). */
+  function say(text: string, quiet = false) {
     live = text;
     if (!roomy) {
-      if (!toasts.some((t) => t.text === text)) toast(text, { ms: 2600 });
+      if (!quiet && !toasts.some((t) => t.text === text)) toast(text, { ms: 2600 });
       return;
     }
     note = text;
@@ -345,6 +378,10 @@
     building = on;
     countText = '';
     if (!on && naming) finishNaming(true);
+    if (!on && stamping) {
+      stamping = false;
+      pickStamp(null);
+    }
     scene?.setBuild(on);
     if (on && !selected && scene?.layout) choose(scene.start, 'centre', false);
     live = on ? 'Build mode: the arrow keys dig, join and walk.' : 'Build mode off.';
@@ -437,6 +474,7 @@
     maps = maps.map(([m, c]) => [m, m === map ? rooms.length : c]);
     selected = selected ? (scene.by.get(selected.room) ?? null) : null;
     legend = scene.legend();
+    reghost();
   }
 
   /** Sends an edit once those before it are in; `done` says what it did, in a toast that can undo it. */
@@ -535,6 +573,7 @@
     pins = next;
     pinCount = next.size;
     scene.setPins(next);
+    reghost();
   }
 
   /** Saves places of map `m`'s rooms, after those sent before; answers the realm history's newest step. */
@@ -620,6 +659,232 @@
     if (!pins.size) return;
     placesChanged(map, pins, new Map(), `Lay out map ${map} afresh`, `Map ${map} is laid out by its exits again.`, {}, true);
     sfx('toggle');
+  }
+
+  // ---- stamps ---------------------------------------------------------------------------
+
+  /** The drawer of stamps open (Build mode with it) or put away. */
+  async function setStamping(on: boolean) {
+    if (on === stamping) return;
+    if (on && !kit) {
+      try {
+        kit = await import('./stamping');
+      } catch (e) {
+        toast(messageOf(e), { kind: 'error' });
+        return;
+      }
+    }
+    stamping = on;
+    if (on && !building) setBuilding(true);
+    if (!on) {
+      pickStamp(null);
+      stampKeep = stampOverwrite = false;
+    }
+    say(on ? (coarse ? 'Stamps: pick a shape, then tap the map where it goes.' : 'Stamps: pick a shape (1 to 9), then click the map to put it down.') : 'Stamps put away.', true);
+    sfx('toggle');
+  }
+
+  /** Picks a stamp up (or puts the one held away). */
+  function pickStamp(k: StampKind | null) {
+    stampKind = k;
+    tip = null;
+    if (k) {
+      stampSizes = k.sizes.map((z) => z.start);
+      stampTurn = UPRIGHT;
+      stampSeed = Math.floor(Math.random() * 2 ** 31);
+      aim ??= startAim();
+      // too far out to aim at a cell: come in close where it aims
+      if (aim && scene && scene.cam.z < 0.35) scene.lookAt(aim[0], aim[1], 0.75, openMiddle());
+      say(
+        coarse
+          ? `${k.name}: tap the map to aim it, and tap it again to put it down.`
+          : `${k.name}: click the map to put it down. R turns it, X and Y mirror it${k.sizes.length ? ', [ and ] size it' : ''}.`,
+        true,
+      );
+    } else {
+      aim = null;
+      mods = { shift: false, alt: false };
+    }
+    scene?.setHolding(!!k);
+    reghost();
+  }
+
+  /** Where a stamp first aims: the selected room, else the middle of what the map shows. */
+  function startAim(): [number, number] | null {
+    const p = selected ? scene?.layout?.at.get(selected.room) : undefined;
+    if (p) return [p.x, p.y];
+    return scene && canvas ? scene.cellAt(...openMiddle()) : null;
+  }
+
+  /** The middle of the map that the card and the stamp drawer leave showing, on the canvas. */
+  function openMiddle(): [number, number] {
+    const c = canvas.getBoundingClientRect();
+    let [x0, x1, y0, y1] = [0, canvas.clientWidth - card, 0, canvas.clientHeight];
+    const d = canvas.parentElement?.querySelector('section.drawer')?.getBoundingClientRect();
+    if (d?.width) {
+      // a sheet along the bottom (a small screen), else a panel down the left
+      if (d.top - c.top > c.height * 0.3) y1 = Math.min(y1, d.top - c.top);
+      else x0 = Math.max(x0, d.right - c.left);
+    }
+    return [(x0 + x1) / 2, (y0 + y1) / 2];
+  }
+
+  const stampOptions = (m = mods): StampOptions => ({ keep: m.shift || stampKeep, overwrite: m.alt || stampOverwrite, seam: stampSeam });
+
+  /** The held stamp, drawn where it would go down. */
+  function reghost() {
+    if (!scene?.layout || !stampKind || !aim || !kit) {
+      ghost = null;
+      ghostBrush = null;
+      scene?.setStamp(null);
+      return;
+    }
+    const p = kit.placed(scene.by, scene.layout, kit.turned(stampKind.make(stampSizes, stampSeed), stampTurn), aim[0], aim[1], stampOptions());
+    ghost = p;
+    ghostBrush = kit.brushOf(p, selected?.room ?? scene.start);
+    scene.setStamp(p);
+  }
+
+  function sizeStamp(i: number, by: number) {
+    const z = stampKind?.sizes[i];
+    if (!z) return;
+    stampSizes = stampSizes.map((v, j) => (j === i ? Math.max(z.min, Math.min(z.max, v + by)) : v));
+    reghost();
+  }
+
+  /** A quarter turn clockwise, as the map shows it. */
+  function turnStamp() {
+    stampTurn = { ...stampTurn, turns: (stampTurn.turns + 1) % 4 };
+    reghost();
+  }
+
+  /** Mirrors the stamp as the map shows it: once turned a quarter, across is up and down before the turn. */
+  function flipStamp(axis: 'x' | 'y') {
+    const across = (axis === 'x') === (stampTurn.turns % 2 === 0);
+    stampTurn = across ? { ...stampTurn, flipX: !stampTurn.flipX } : { ...stampTurn, flipY: !stampTurn.flipY };
+    reghost();
+  }
+
+  function rollStamp() {
+    stampSeed = Math.floor(Math.random() * 2 ** 31);
+    reghost();
+  }
+
+  function seamStamp(on: boolean) {
+    stampSeam = on;
+    reghost();
+  }
+
+  function keepStamp(on: boolean) {
+    stampKeep = on;
+    reghost();
+  }
+
+  function overwriteStamp(on: boolean) {
+    stampOverwrite = on;
+    reghost();
+  }
+
+  /** What the held stamp would do where it is aimed, for the drawer. */
+  const ghostSaid = $derived.by(() => {
+    if (!ghost || !kit) return '';
+    const makes = ghost.rooms.length || ghost.links.some((l) => l.sort === 'make' || l.sort === 'replace');
+    if (!makes) return ghost.count.left ? 'Here: nothing, the exits in its way are left (Alt replaces them).' : 'Here: nothing, it is all there already.';
+    return `Here: ${kit.summary(map, ghost)}.`;
+  });
+
+  /** Puts the held stamp down with its first cell at (x, y). */
+  function putStamp(x: number, y: number, m: { shift: boolean; alt: boolean }) {
+    if (!scene?.layout || !stampKind || !kit) return;
+    aim = [x, y];
+    const o = stampOptions(m);
+    const p = kit.placed(scene.by, scene.layout, kit.turned(stampKind.make(stampSizes, stampSeed), stampTurn), x, y, o);
+    if (!p.rooms.length && !p.links.some((l) => l.sort === 'make' || l.sort === 'replace')) {
+      sfx('nope');
+      say(p.count.left ? 'Nothing to put down here: the exits in its way are left (hold Alt to replace them).' : 'Nothing to put down here: it is all there already.');
+      reghost();
+      return;
+    }
+    const brushNo = kit.brushOf(p, selected?.room ?? scene.start);
+    const brush = brushNo === null ? undefined : scene.by.get(brushNo);
+    if (!brush) {
+      sfx('nope');
+      say('Pick a room first: new rooms copy it.');
+      return;
+    }
+    const m0 = map;
+    const what = kit.named(stampKind);
+    // where its new rooms are drawn: the first stamp on a map keeps every room where it is drawn
+    const before = pins;
+    const first = pins.size === 0;
+    const next = new Map(first ? [...scene.layout.at].map(([k, s]) => [k, { ...s }]) : pins);
+    for (const c of p.cells) if (c.sort === 'new' && c.room !== null) next.set(c.room, { x: c.x, y: c.y });
+    const said = `Stamped ${what}: ${kit.summary(m0, p)}${first ? '. The map keeps this layout now: rooms stay where they are drawn' : ''}`;
+    patch(kit.stamped(scene.rooms, p, brush));
+    showPins(m0, next);
+    sfx('pop');
+    sendStamp(m0, kit.request(m0, brush.room, p, o, what), before, next, said);
+  }
+
+  /**
+   * Writes a stamp once the edits before it are in, then the places its rooms are drawn in;
+   * Ctrl+Z (or its toast) takes back both at once.
+   */
+  function sendStamp(m: number, req: StampRequest, before: ReadonlyMap<number, Spot>, next: ReadonlyMap<number, Spot>, said: string) {
+    pending++;
+    chain = chain.then(async () => {
+      if (broken) return;
+      try {
+        const out = await api.stamp(req);
+        const step = out.step;
+        await savePins(m, cellsOf(next), true);
+        if (step !== null) {
+          localStep({
+            label: `Stamp ${req.what}`,
+            after: step,
+            undo: async () => {
+              dismiss(buildToast);
+              await api.undo(step);
+              showPins(m, before);
+              await savePins(m, cellsOf(before), true);
+              realmChanged();
+            },
+            redo: async () => {
+              dismiss(buildToast);
+              await api.redo(step);
+              showPins(m, next);
+              await savePins(m, cellsOf(next), true);
+              realmChanged();
+            },
+          });
+        }
+        const notes = out.notes?.length ? ` ${out.notes.join(' ')}` : '';
+        dismiss(buildToast);
+        buildToast = toast(`${said}.${notes}`, { action: 'Undo', onAction: () => void undo() });
+      } catch (e) {
+        broken = true;
+        sfx('nope');
+        showPins(m, before);
+        dismiss(buildToast);
+        toast(messageOf(e), { kind: 'error' });
+      } finally {
+        pending--;
+        if (!pending) {
+          broken = false;
+          void settle();
+        }
+      }
+    });
+  }
+
+  /** Shift and Alt held down change what the held stamp would do: shown as they change. */
+  function onMods(e: KeyboardEvent) {
+    if (!stampKind || !here()) return;
+    const m = { shift: e.shiftKey, alt: e.altKey };
+    if (e.key === 'Alt') e.preventDefault();
+    if (m.shift === mods.shift && m.alt === mods.alt) return;
+    mods = m;
+    reghost();
   }
 
   /** The export's name: the world's, as a file name. */
@@ -781,6 +1046,49 @@
     Numpad8: 0, Numpad2: 1, Numpad6: 2, Numpad4: 3, Numpad9: 4, Numpad7: 5, Numpad3: 6, Numpad1: 7,
   };
 
+  /** The stamp drawer's keys: 1 to 9 pick a stamp, and the one held is moved, turned, sized and put down. Answers whether the key was one. */
+  function stampKeys(e: KeyboardEvent): boolean {
+    const done = () => {
+      e.preventDefault();
+      return true;
+    };
+    if (e.key === 'Escape') {
+      if (stampKind) pickStamp(null);
+      else void setStamping(false);
+      return done();
+    }
+    if (!e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
+      const k = kit?.STAMPS[Number(e.code.slice(5)) - 1] ?? null;
+      pickStamp(k && k.id !== stampKind?.id ? k : null);
+      return done();
+    }
+    if (!stampKind) return false;
+    const d = KEY_DIR[e.code] ?? KEY_DIR[e.key];
+    if (d !== undefined && !e.shiftKey) {
+      const [dx, dy] = STEP[d]!;
+      aim = aim ? [aim[0] + dx, aim[1] + dy] : startAim();
+      if (aim) scene?.showCell(aim[0], aim[1]);
+      reghost();
+      return done();
+    }
+    if (e.key === 'Enter') {
+      if (aim) putStamp(aim[0], aim[1], { shift: e.shiftKey, alt: false });
+      return done();
+    }
+    const k = e.key.toLowerCase();
+    if (k === 'r') turnStamp();
+    else if (k === 'x') flipStamp('x');
+    else if (k === 'y') flipStamp('y');
+    else if (e.key === '[') sizeStamp(0, -1);
+    else if (e.key === ']') sizeStamp(0, 1);
+    else if (e.key === '{') sizeStamp(1, -1);
+    else if (e.key === '}') sizeStamp(1, 1);
+    else if (e.key === ' ' && stampKind.random) rollStamp();
+    else if (k === 'j') seamStamp(!stampSeam);
+    else return false;
+    return done();
+  }
+
   function onKey(e: KeyboardEvent) {
     if (!here() || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
     if (app.paletteOpen || document.querySelector('dialog[open], [role=dialog]')) return;
@@ -790,6 +1098,7 @@
       // the card, the bar and the rail keep their own keys
       if (t.closest('#dd-inspector, #dd-top, #dd-rail, .pop')) return;
     }
+    if (stamping && stampKeys(e)) return;
     if (e.key === 'Escape') {
       if (scene?.carrying) scene.dropCarry();
       else if (countText) countText = '';
@@ -827,6 +1136,7 @@
     else if (k === 'u') building ? build(8, takeCount()) : walk(8);
     else if (k === 'd') building ? build(9, takeCount()) : walk(9);
     else if (k === 'b') setBuilding(!building);
+    else if (k === 's') void setStamping(!stamping);
     else if (k === '.' && building) {
       if (lastMove) build(lastMove.dir, lastMove.count);
     } else if ((e.key === 'Enter' || e.key === 'F2') && building) {
@@ -876,6 +1186,11 @@
       },
       build: (g: Ghost) => build(g.dir),
       move: (n, x, y) => moveRoom(n, x, y),
+      aim: (x, y) => {
+        aim = [x, y];
+        reghost();
+      },
+      stamp: (x, y, m) => putStamp(x, y, m),
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
@@ -893,6 +1208,15 @@
     };
     document.addEventListener('fullscreenchange', unfull);
     document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onMods);
+    document.addEventListener('keyup', onMods);
+    const letGo = () => {
+      if (mods.shift || mods.alt) {
+        mods = { shift: false, alt: false };
+        reghost();
+      }
+    };
+    window.addEventListener('blur', letGo);
     window.addEventListener('dd:wrote', written);
     window.addEventListener('dd:realm', written);
     // the names are drawn in the display font once it has loaded
@@ -903,6 +1227,9 @@
       dark.removeEventListener('change', retheme);
       document.removeEventListener('fullscreenchange', unfull);
       document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onMods);
+      document.removeEventListener('keyup', onMods);
+      window.removeEventListener('blur', letGo);
       window.removeEventListener('dd:wrote', written);
       window.removeEventListener('dd:realm', written);
       scene?.destroy();
@@ -990,6 +1317,16 @@
       title={building ? 'Done building (B or Esc)' : 'Build: dig, join and name rooms with the keys (B)'}
     >
       <Pickaxe size={15} /><span>Build</span>{#if countText}<b class="count tnum">{countText}×</b>{/if}
+    </button>
+    <button
+      type="button"
+      class="btn glass build-btn"
+      class:on={stamping}
+      aria-pressed={stamping}
+      onclick={() => void setStamping(!stamping)}
+      title={stamping ? 'Put the stamps away (S)' : 'Stamps: a shape of rooms put down at once (S)'}
+    >
+      <StampIcon size={15} /><span>Stamps</span>
     </button>
     {#if pending}<span class="pill lilac">Saving…</span>{:else if loading}<span class="pill lilac">Reading map…</span>{/if}
   </div>
@@ -1113,10 +1450,37 @@
     <canvas bind:this={mini} class="mini" aria-label="Overview of the whole map. Click or drag to look there."></canvas>
   </div>
 
+  {#if stamping && kit}
+    <kit.StampDrawer
+      kind={stampKind}
+      sizes={stampSizes}
+      seam={stampSeam}
+      keep={stampKeep || mods.shift}
+      overwrite={stampOverwrite || mods.alt}
+      touch={coarse}
+      brush={ghostBrush === null ? 'the room picked' : called(ghostBrush)}
+      said={ghostSaid}
+      colours={pal.stamp}
+      onpick={pickStamp}
+      onsize={sizeStamp}
+      onturn={turnStamp}
+      onflip={flipStamp}
+      onroll={rollStamp}
+      onseam={seamStamp}
+      onkeep={keepStamp}
+      onoverwrite={overwriteStamp}
+      onclose={() => void setStamping(false)}
+    />
+  {/if}
+
   {#if roomy}
     <div class="float hint map-hint glass" aria-hidden="true">
       {#if note}
         {note}
+      {:else if stampKind}
+        <b class="mode">Stamp</b> click to put it down <span class="kbd">R</span> turn <span class="kbd">X</span><span class="kbd">Y</span> mirror {#if stampKind.sizes.length}<span class="kbd">[</span><span class="kbd">]</span> size {/if}{#if stampKind.random}<span class="kbd">Space</span> roll {/if}<span class="kbd">J</span> join <span class="kbd">Esc</span> put away
+      {:else if stamping}
+        <b class="mode">Stamps</b> pick a shape <span class="kbd">1</span>…<span class="kbd">9</span> <span class="kbd">S</span> put them away
       {:else if building}
         <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
@@ -1169,6 +1533,7 @@
   }
   .map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
   .map:global(.panning), .map:global(.carrying) { cursor: grabbing; }
+  .map:global(.stamping) { cursor: crosshair; }
   .map:focus-visible { box-shadow: inset 0 0 0 3px var(--focus); }
 
   .float { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; }

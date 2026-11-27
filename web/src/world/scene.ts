@@ -6,11 +6,13 @@
 // Names are drawn once per run of rooms that share one, more of them as you zoom in.
 //
 // The camera holds still: new rooms from the server keep the view where it was. In Build mode
-// a room can be carried to a free cell; the page pins it there.
+// a room can be carried to a free cell; the page pins it there. A stamp being placed is drawn
+// over the map see-through, each cell and link tinted by what putting it down would do.
 
 import { cellKey, OPPOSITE, STEP, type Layout, layOut, type Spot } from './layout';
 import { biomeOf, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type Palette, type Tint } from './look';
 import type { MapExit, MapRoom } from './model';
+import type { LinkSort, Placed } from './stamps';
 
 /** A grid cell, in pixels at 100%. */
 export const S = 28;
@@ -97,6 +99,10 @@ export interface SceneEvents {
   build(ghost: Ghost): void;
   /** Build mode: a room carried to a free cell. */
   move(room: number, x: number, y: number): void;
+  /** A stamp is held: the pointer is over cell (x, y). */
+  aim(x: number, y: number): void;
+  /** A stamp is held: put it down with its first cell at (x, y). */
+  stamp(x: number, y: number, mods: { shift: boolean; alt: boolean }): void;
 }
 
 /** A room being carried, in Build mode: where it is held, and the cell under it. */
@@ -138,6 +144,12 @@ export class Scene {
   private pins: ReadonlyMap<number, Spot> = new Map();
   /** The room being carried to another cell. */
   private carry: Carry | null = null;
+  /** A stamp is held: a click puts it down, and the pointer moves it. */
+  private holding = false;
+  /** The stamp held, as it would go down where it is. */
+  private stamped: Placed | null = null;
+  /** The cell the held stamp was last aimed at. */
+  private aimed: string | null = null;
 
   private readonly ctx: CanvasRenderingContext2D;
   private readonly mctx: CanvasRenderingContext2D;
@@ -268,6 +280,48 @@ export class Scene {
     this.building = on;
     if (!on && this.hovered?.ghost) this.hovered = null;
     this.draw();
+  }
+
+  /** A stamp held (or put away): a click puts it down, and the pointer aims it. */
+  setHolding(on: boolean): void {
+    this.holding = on;
+    this.aimed = null;
+    if (on) {
+      this.hovered = null;
+      this.carry = null;
+      this.canvas.classList.remove('carrying');
+    }
+    this.canvas.classList.toggle('stamping', on);
+    this.draw();
+  }
+
+  /** The held stamp as it would go down, drawn see-through (or none). */
+  setStamp(p: Placed | null): void {
+    this.stamped = p;
+    this.draw();
+  }
+
+  /** The cell under a point of the canvas. */
+  cellAt(px: number, py: number): [number, number] {
+    const [wx, wy] = this.toWorld(px, py);
+    return [Math.floor(wx / S), Math.floor(wy / S)];
+  }
+
+  /** Brings a cell into view if it is near the edge or out of sight. */
+  showCell(x: number, y: number): void {
+    const px = this.sx(x);
+    const py = this.sy(y);
+    const w = this.W - this.cover;
+    const mx = Math.min(140, w * 0.22);
+    const my = Math.min(120, this.H * 0.22);
+    if (px < mx || px > w - mx || py < my || py > this.H - my) this.fly((x + 0.5) * S + this.cover / 2 / this.cam.z, (y + 0.5) * S, this.cam.z);
+    else this.draw();
+  }
+
+  /** Flies to zoom `z` with a cell at a point of the canvas: by default the middle of what the card leaves showing. */
+  lookAt(x: number, y: number, z: number, at?: [number, number]): void {
+    const [px, py] = at ?? [(this.W - this.cover) / 2, this.H / 2];
+    this.fly((x + 0.5) * S - (px - this.W / 2) / z, (y + 0.5) * S - (py - this.H / 2) / z, z);
   }
 
   /** The room being named (or none), whose pill the field takes the place of. */
@@ -618,7 +672,7 @@ export class Scene {
       const [x, y] = pos(e);
       this.land();
       // Build mode: a room pressed on is carried, not the map (a finger holds it a moment first)
-      const hit = this.building ? this.hitAt(x, y) : null;
+      const hit = this.building && !this.holding ? this.hitAt(x, y) : null;
       const room = hit?.room && !hit.stub && !hit.ghost && e.button === 0 ? hit.room.room : null;
       drag = { x, y, cx: this.cam.x, cy: this.cam.y, moved: false, room, touch: e.pointerType === 'touch', at: performance.now() };
     });
@@ -656,6 +710,11 @@ export class Scene {
         }
         return;
       }
+      if (this.holding) {
+        // the held stamp follows the pointer (a finger moves it by tapping)
+        if (e.pointerType !== 'touch') this.aimAt(x, y);
+        return;
+      }
       if (e.pointerType === 'mouse') this.setHover(this.hitAt(x, y), x, y);
     });
     const end = (e: PointerEvent, cancelled: boolean) => {
@@ -681,6 +740,14 @@ export class Scene {
       }
       if (!d || d.moved || cancelled) return;
       const [x, y] = pos(e);
+      if (this.holding) {
+        // a click puts the stamp down; a tap moves it there first, and a second tap puts it down
+        const [cx, cy] = this.cellAt(x, y);
+        const again = this.aimed === `${cx},${cy}`;
+        this.aimAt(x, y);
+        if (e.pointerType !== 'touch' || again) this.on.stamp(cx, cy, { shift: e.shiftKey, alt: e.altKey });
+        return;
+      }
       const hit = this.hitAt(x, y);
       if (hit?.ghost) this.on.build(hit.ghost);
       else if (hit?.stub) this.on.follow(hit.stub);
@@ -713,6 +780,7 @@ export class Scene {
       { passive: false },
     );
     add(cv, 'dblclick', (e) => {
+      if (this.holding) return;
       const [x, y] = pos(e);
       const hit = this.hitAt(x, y);
       if (hit?.ghost) return;
@@ -738,6 +806,15 @@ export class Scene {
     add(this.mini, 'pointermove', (e) => {
       if (e.buttons) look(e);
     });
+  }
+
+  /** The held stamp is over the cell at (px, py). */
+  private aimAt(px: number, py: number) {
+    const [x, y] = this.cellAt(px, py);
+    const k = `${x},${y}`;
+    if (k === this.aimed) return;
+    this.aimed = k;
+    this.on.aim(x, y);
   }
 
   private setHover(hit: Hit | null, x: number, y: number) {
@@ -944,7 +1021,7 @@ export class Scene {
 
     // Build mode: free cells to dig into around the selected room, and marks to join the rooms
     // drawn next to it
-    if (this.building && z >= GHOSTS && !carry) {
+    if (this.building && z >= GHOSTS && !carry && !this.holding) {
       for (const g of this.ghosts()) {
         const hot = this.hovered?.ghost?.dir === g.dir;
         if (g.to === null) {
@@ -1190,7 +1267,133 @@ export class Scene {
       }
     }
 
+    // a stamp held: the map behind it faded back, so it shows over any room's colour
+    if (this.stamped) {
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = P.bg;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+      this.drawStamp(this.stamped, half, rad, lw);
+    }
+
     this.drawMini();
+  }
+
+  /**
+   * A stamp as it would go down: its new rooms filled, the rooms it joins ringed, the cells it
+   * leaves alone hatched; its links drawn in what they would do (made, there already, left for
+   * an exit in the way, replacing one), one-way ones with an arrow, and the new rooms' numbers
+   * close up.
+   */
+  private drawStamp(p: Placed, half: number, rad: number, lw: number) {
+    const { ctx } = this;
+    const P = this.pal;
+    const z = this.cam.z;
+    const colour = (sort: LinkSort) => (sort === 'make' ? P.stamp.fresh : sort === 'have' ? P.stamp.join : sort === 'clash' ? P.stamp.clash : sort === 'replace' ? P.stamp.replace : P.stamp.kept);
+    const box = (x: number, y: number, grow = 0) => {
+      ctx.beginPath();
+      if (half < 2) ctx.rect(x - half - grow, y - half - grow, (half + grow) * 2, (half + grow) * 2);
+      else ctx.roundRect(x - half - grow, y - half - grow, (half + grow) * 2, (half + grow) * 2, rad + grow);
+    };
+    // the cells first, so the links show over them
+    for (const c of p.cells) {
+      const x = this.sx(c.x);
+      const y = this.sy(c.y);
+      if (c.sort === 'new') {
+        ctx.globalAlpha = 0.42;
+        ctx.fillStyle = P.stamp.fresh;
+        box(x, y);
+        ctx.fill();
+        ctx.globalAlpha = 0.95;
+        ctx.strokeStyle = P.stamp.fresh;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (c.sort === 'merge') {
+        ctx.globalAlpha = 0.22;
+        ctx.fillStyle = P.stamp.join;
+        box(x, y, 3);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = P.stamp.join;
+        ctx.lineWidth = 2.6;
+        ctx.stroke();
+      } else {
+        // left alone: hatched
+        ctx.save();
+        box(x, y, 2);
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = P.stamp.kept;
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([3, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.clip();
+        ctx.lineWidth = 1.4;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        const h = half + 2;
+        for (let k = -2 * h; k <= 2 * h; k += Math.max(4, h * 0.45)) {
+          ctx.moveTo(x - h + k, y + h);
+          ctx.lineTo(x + h + k, y - h);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+    for (const l of p.links) {
+      const [ax, ay, bx, by] = [this.sx(l.ax), this.sy(l.ay), this.sx(l.bx), this.sy(l.by)];
+      const c = colour(l.sort);
+      ctx.strokeStyle = c;
+      ctx.globalAlpha = l.sort === 'have' || l.sort === 'skip' ? 0.6 : 1;
+      ctx.lineWidth = l.sort === 'clash' ? lw * 1.5 : lw * 1.3;
+      ctx.setLineDash(l.dir > 7 || l.seam || l.sort === 'skip' ? [lw * 1.6, lw * 2.2] : l.sort === 'clash' ? [lw * 3, lw * 2] : []);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      if (l.dir > 7) {
+        // up and down: a curve, as the far exits are drawn
+        ctx.quadraticCurveTo((ax + bx) / 2 - (by - ay) * 0.3, (ay + by) / 2 + (bx - ax) * 0.3, bx, by);
+      } else ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const [mx, my] = [(ax + bx) / 2, (ay + by) / 2];
+      if (l.oneWay && z >= 0.5) this.arrow(mx, my, Math.atan2(by - ay, bx - ax), 4 * Math.min(z, 1.6) + 3, c);
+      if (l.sort === 'clash' && z >= 0.55) {
+        // an exit in the way: a mark on the link
+        const r = Math.max(5, 6 * Math.min(z, 1.6));
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = c;
+        ctx.strokeStyle = P.badge;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(mx, my, r, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = P.badge;
+        ctx.font = `900 ${r * 1.5}px Nunito, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('!', mx, my + 0.5);
+      }
+    }
+    ctx.globalAlpha = 1;
+    // the numbers the new rooms will take
+    if (z >= 1.1) {
+      ctx.font = `800 ${Math.min(11.5, 0.3 * S * z)}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      for (const c of p.cells) {
+        if (c.sort !== 'new' || c.room === null) continue;
+        const x = this.sx(c.x);
+        const y = this.sy(c.y);
+        ctx.strokeStyle = P.halo;
+        ctx.strokeText(String(c.room), x, y);
+        ctx.fillStyle = P.ink;
+        ctx.fillText(String(c.room), x, y);
+      }
+    }
   }
 
   /** A room being carried: its cell left as an outline, the cell under it, and the room itself. */
