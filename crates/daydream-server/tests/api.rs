@@ -1551,3 +1551,63 @@ async fn with_a_token_every_route_asks_for_it() {
         }
     }
 }
+
+#[tokio::test]
+async fn the_checks_read_the_world_and_keep_accepted_words() {
+    let dir = realm();
+    let (status, body) = get(dir.path(), "/api/checks").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<&str> = body["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["prices", "spelling", "placeholders", "spawns"]);
+    assert_eq!(body["total"], 0, "{body}");
+    let (status, body) = get(dir.path(), "/api/checks?check=prices&level=warn,ok&limit=5").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _) = get(dir.path(), "/api/checks?check=grammar").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = get(dir.path(), "/api/checks?level=dire").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = get(
+        dir.path(),
+        &format!(
+            "/api/checks/record?table=Races&key={}",
+            key(serde_json::json!([1]))
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["findings"], serde_json::json!([]));
+    // a word the world means is kept beside the working copy
+    let (status, body) = send(
+        dir.path(),
+        "POST",
+        "/api/checks/words",
+        serde_json::json!({ "word": "Exhange" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["words"], serde_json::json!(["exhange"]));
+    assert!(dir.path().join(".daydream/checks.json").exists());
+    let (_, body) = get(dir.path(), "/api/checks").await;
+    assert_eq!(body["words"], serde_json::json!(["exhange"]));
+    let (_, body) = send(
+        dir.path(),
+        "POST",
+        "/api/checks/words",
+        serde_json::json!({ "word": "exhange", "accept": false }),
+    )
+    .await;
+    assert_eq!(body["words"], serde_json::json!([]));
+    let (status, _) = send(
+        dir.path(),
+        "POST",
+        "/api/checks/words",
+        serde_json::json!({ "word": "two words" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

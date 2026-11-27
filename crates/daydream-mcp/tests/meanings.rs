@@ -265,3 +265,77 @@ fn previews_warn_of_what_would_point_at_nothing() {
         "{w:?}"
     );
 }
+
+#[test]
+fn check_world_reads_the_wiring() {
+    let tmp = tempfile::tempdir().unwrap();
+    empty_realm(tmp.path());
+    let server = Server::new(tmp.path(), Options::default());
+    let mut c = Client::new(&server);
+    let p = c.call("preview_edits", json!({ "edits": [
+        // a blank bundle where a blow would be told in the game's own words
+        { "op": "insert", "table": "Messages", "values": { "Number": 1 } },
+        { "op": "insert", "table": "Messages", "values": { "Number": 2, "Line 1": "It will cost you 50 gold to rest here." } },
+        { "op": "insert", "table": "Monsters", "values": {
+            "Number": 1, "Name": "cave newt", "Group": 6, "Index": 4,
+            "Attack Type 0": 1, "Attack % 0": 100, "Attack Hit Msg 0": 1, "Attack Miss Msg 0": 1 } },
+        { "op": "insert", "table": "Textblocks", "values": { "Number": 5, "Part #": 0, "Data": "rest:price 500 2:message 2\n" } },
+        { "op": "insert", "table": "Rooms", "values": {
+            "Map Number": 1, "Room Number": 1, "Name": "Grotto", "Command Text": 5,
+            "Mon Type": 6, "Min Index": 1, "Max Index": 10, "Max Regen": 2 } },
+        { "op": "insert", "table": "Rooms", "values": {
+            "Map Number": 1, "Room Number": 2, "Name": "Pit",
+            "Mon Type": 7, "Min Index": 1, "Max Index": 10, "Max Regen": 2 } }
+    ] }));
+    c.call("apply_edits", json!({ "token": p["token"] }));
+    let all = c.call("check_world", json!({}));
+    let says: Vec<String> = all["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            format!(
+                "{} {} {}",
+                f["check"],
+                f["about"]["key"],
+                f["says"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(
+        says,
+        [
+            "\"prices\" [5,0] Charges 5 gold, but its own words quote 50 gold: message 2 (It will cost you 50 gold to rest here.).",
+            "\"placeholders\" [1] Attack 1's hit and miss messages are message 1, which is blank, so players read an empty line for its blows. 0 tells them in the game's own words.",
+            "\"spawns\" [1,2] Spawns from group 7 at indexes 1 to 10, but no monster is in group 7, so it spawns nothing.",
+        ],
+        "{all}"
+    );
+    assert_eq!(all["counts"]["placeholders"]["warn"], 1);
+    let newt = c.call(
+        "check_world",
+        json!({ "table": "Monsters", "key": [1], "level": ["warn", "note", "ok"] }),
+    );
+    assert_eq!(newt["total"], 1, "{newt}");
+    assert_eq!(
+        newt["findings"][0]["fix"],
+        json!({ "Attack Hit Msg 0": 0, "Attack Miss Msg 0": 0 })
+    );
+    assert_eq!(newt["findings"][0]["column"], "Attack Hit Msg 0");
+    let prices = c.call("check_world", json!({ "check": "prices", "level": ["ok"] }));
+    assert_eq!(prices["total"], 0);
+    assert!(
+        c.fails("check_world", json!({ "check": "grammar" }))
+            .contains("prices")
+    );
+    // its fix, applied, is checked again
+    let p = c.call(
+        "preview_edits",
+        json!({ "edits": [
+        { "op": "update", "table": "Monsters", "key": [1], "values": newt["findings"][0]["fix"] }
+    ] }),
+    );
+    c.call("apply_edits", json!({ "token": p["token"] }));
+    let all = c.call("check_world", json!({}));
+    assert_eq!(all["counts"]["placeholders"]["warn"], 0, "{all}");
+}

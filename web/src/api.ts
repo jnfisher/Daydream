@@ -1,5 +1,6 @@
 // The server's editor API (crates/daydream-server/src/tables.rs).
 
+import type { Ref } from './library/script';
 import type { References } from './library/where';
 import type { Dig, MapAnswer, MapFile } from './world/model';
 
@@ -250,6 +251,49 @@ export interface PublishWarn {
 const t = (table: string) => `/api/tables/${encodeURIComponent(table)}`;
 const k = (key: Cell[]) => `?key=${encodeURIComponent(JSON.stringify(key))}`;
 
+/** One of the checks that read the wiring across the world (`/api/checks`). */
+export type CheckId = 'prices' | 'spelling' | 'placeholders' | 'spawns';
+
+/** A check, and how many of its findings are at each level. */
+export interface CheckInfo {
+  id: CheckId;
+  title: string;
+  /** What it reads, in a sentence. */
+  about: string;
+  warn: number;
+  note: number;
+  ok: number;
+}
+
+/**
+ * What a check found about one record: something players meet (`warn`), something worth a
+ * look (`note`), or what was checked and holds (`ok`), in words with the records it rests on.
+ */
+export interface Finding {
+  check: CheckId;
+  level: 'warn' | 'note' | 'ok';
+  about: { table: string; key: number[] };
+  column: string | null;
+  bits: (string | { ref: Ref })[];
+  refs: { table: string; key: number[] }[];
+  /** The values that put it right, when there is a sure one. */
+  fix: Record<string, string>;
+  /** Spelling: the word, and what it may be (likeliest first). */
+  word: string | null;
+  suggest: string[];
+  /** It all as plain text. */
+  text: string;
+}
+
+export interface Checks {
+  checks: CheckInfo[];
+  /** The findings the ask matched, of which `findings` is a page. */
+  total: number;
+  findings: Finding[];
+  /** The words the world uses on purpose, which spelling leaves alone. */
+  words: string[];
+}
+
 export const api = {
   realm: () => call<{ dir: string }>('GET', '/api/realm'),
   tables: () => call<{ tables: TableInfo[] }>('GET', '/api/tables').then((r) => r.tables),
@@ -273,6 +317,22 @@ export const api = {
   /** The rows of every table that name a record. */
   references: (table: string, key: Cell[]) =>
     call<References>('GET', `/api/references?table=${encodeURIComponent(table)}&key=${encodeURIComponent(JSON.stringify(key))}`),
+  /** The checks that read the wiring: each with its counts, and a page of findings, warnings first. */
+  checks: (q: { check?: CheckId; level?: Finding['level'][]; offset?: number; limit?: number } = {}) =>
+    call<Checks>(
+      'GET',
+      `/api/checks?${new URLSearchParams({
+        ...(q.check ? { check: q.check } : {}),
+        ...(q.level ? { level: q.level.join(',') } : {}),
+        offset: String(q.offset ?? 0),
+        limit: String(q.limit ?? 50),
+      })}`,
+    ),
+  /** The findings about one record, or resting on it. */
+  checksOf: (table: string, key: Cell[]) =>
+    call<{ findings: Finding[] }>('GET', `/api/checks/record?table=${encodeURIComponent(table)}&key=${encodeURIComponent(JSON.stringify(key))}`),
+  /** Spelling leaves a word alone from now on (or, with `accept` false, checks it again). */
+  acceptWord: (word: string, accept = true) => call<{ words: string[] }>('POST', '/api/checks/words', { word, accept }, true),
   save: (table: string, key: Cell[], values: Record<string, Cell>) =>
     call<Report>('PUT', `${t(table)}/row${k(key)}`, { values }),
   insert: (table: string, values: Record<string, Cell>) =>

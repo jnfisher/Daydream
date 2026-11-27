@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { Finding } from '../api.ts';
 import type { Grid } from '../layouts.ts';
 import {
   allFixes,
   byLevel,
   byteOf,
+  caseLike,
   checkValue,
   clampTo,
+  foundProblems,
   labelsOf,
   leftoverProblem,
   leftoverSlots,
   refOf,
+  replaceWord,
   storable,
   trailingSpaces,
   TWO_SPACES,
@@ -125,4 +129,41 @@ test("a card's columns are named as it names them", () => {
   assert.equal(labels.get('Attack % 0'), 'Attack 1 Attack %');
   // a grid not laid across slots keeps the columns' own names
   assert.equal(labels.get('Ability 2'), undefined);
+});
+
+test('a typo is put right in the case it was written in', () => {
+  assert.equal(caseLike('exchange', 'Exhange'), 'Exchange');
+  assert.equal(caseLike('exchange', 'EXHANGE'), 'EXCHANGE');
+  assert.equal(caseLike('exchange', 'exhange'), 'exchange');
+  assert.equal(replaceWord('Exhange it in exhange, not exhanged.', 'exhange', 'exchange'), 'Exchange it in exchange, not exhanged.');
+  assert.equal(replaceWord('␛[0mexhange', 'exhange', 'exchange'), '␛[0mexchange');
+});
+
+test('the checks across the world become the problems of the records they concern', () => {
+  const base = { refs: [], fix: {}, word: null, suggest: [], text: '' };
+  const found: Finding[] = [
+    { ...base, check: 'spelling', level: 'note', about: { table: 'Messages', key: [1459] }, column: 'Line 1', bits: ['“exhange” may be “exchange”.'], word: 'exhange', suggest: ['exchange'], text: 'typo' },
+    { ...base, check: 'placeholders', level: 'warn', about: { table: 'Messages', key: [1459] }, column: 'Line 2', bits: ['blank'], fix: { 'Line 2': '0' }, text: 'blank' },
+    { ...base, check: 'prices', level: 'warn', about: { table: 'Textblocks', key: [921, 0] }, column: 'Data', bits: ['Charges 200 gold, but ', { ref: { t: 'Messages', n: 1459 } }, ' says 2,000.'], text: 'price' },
+    { ...base, check: 'spawns', level: 'ok', about: { table: 'Messages', key: [1459] }, column: null, bits: ['fine'], text: 'fine' },
+  ];
+  const get = (c: string): Cell => (c === 'Line 1' ? 'He hands you the axe in exhange.' : '');
+  const ps = foundProblems(found, 'Messages', [1459], get);
+  assert.equal(ps.length, 3);
+  assert.deepEqual(ps[0], {
+    level: 'tidy',
+    text: 'typo',
+    cols: ['Line 1'],
+    bits: ['“exhange” may be “exchange”.'],
+    fix: { label: 'Make it “exchange”', set: { 'Line 1': 'He hands you the axe in exchange.' } },
+    accept: 'exhange',
+  });
+  assert.deepEqual(ps[1]!.fix, { label: "Use the game's own words", set: { 'Line 2': '0' } });
+  // one that rests on the record names what it is about, and fixes nothing here
+  assert.deepEqual(ps[2], {
+    level: 'warn',
+    text: 'price',
+    cols: [],
+    bits: [{ ref: { t: 'Textblocks', n: 921 } }, ': ', 'Charges 200 gold, but ', { ref: { t: 'Messages', n: 1459 } }, ' says 2,000.'],
+  });
 });

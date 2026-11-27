@@ -8,7 +8,9 @@
 // files whole, as node needs.
 
 import { ESC_SHOWN } from '../ansi.ts';
+import type { Finding } from '../api.ts';
 import type { Grid } from '../layouts.ts';
+import type { Ref } from './script.ts';
 import { slotCol, slotsInUse, type Cell, type Section } from './sections.ts';
 
 export type Get = (col: string) => Cell;
@@ -30,6 +32,10 @@ export interface Problem {
   cols: string[];
   /** Its fix: the button's words and the values to type. */
   fix?: { label: string; set: Record<string, string> };
+  /** What it says with records as chips, when it names some (a check across the world's). */
+  bits?: (string | { ref: Ref })[];
+  /** A word spelling can be told to leave alone. */
+  accept?: string;
 }
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -209,6 +215,70 @@ export function labelsOf(sections: Section[]): Map<string, string> {
     if (g?.across)
       for (let n = g.from; n <= g.to; n++)
         for (const c of g.columns) out.set(slotCol(c.template, n), `${g.across} ${n - g.from + 1} ${c.label ?? c.template.replace(' #', '')}`);
+  }
+  return out;
+}
+
+// ---- checks across the world --------------------------------------------------------------
+
+/** `by` in the case `like` is written in: `Exchange` for `Exhange`, `EXCHANGE` for `EXHANGE`. */
+export function caseLike(by: string, like: string): string {
+  if (like.length > 1 && like === like.toUpperCase()) return by.toUpperCase();
+  if (like[0] && like[0] === like[0].toUpperCase() && like[0] !== like[0].toLowerCase()) return by[0]!.toUpperCase() + by.slice(1);
+  return by;
+}
+
+/** A colour code, as stored or as an input shows it. */
+const CODE = /(?:\u241b|\x1b)\[[0-9;]*[A-Za-z]/g;
+
+/** `text` with each whole `word` (any case) made `by`, in the case it was written in: a word
+ * just after a colour code (`␛[0mexhange`) is a word all the same. */
+export function replaceWord(text: string, word: string, by: string): string {
+  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?<![A-Za-z])${esc}(?![A-Za-z])`, 'gi');
+  const fix = (s: string) => s.replace(re, (m) => caseLike(by, m));
+  let out = '';
+  let at = 0;
+  for (const m of text.matchAll(CODE)) {
+    out += fix(text.slice(at, m.index)) + m[0];
+    at = m.index + m[0].length;
+  }
+  return out + fix(text.slice(at));
+}
+
+const sameKey = (a: readonly Cell[], b: readonly Cell[]) => a.length === b.length && a.every((x, i) => Number(x) === Number(b[i]));
+
+/** A record a finding is about, as a chip. */
+function chipOf(about: Finding['about']): { ref: Ref } {
+  const t = about.table as Ref['t'];
+  return { ref: t === 'Rooms' ? { t, n: about.key[1]!, map: about.key[0]! } : { t, n: about.key[0]! } };
+}
+
+/**
+ * The checks across the world that concern a record (the server's), as its problems: what
+ * players meet is a warning, the rest is to tidy. One about the record names its field and
+ * its fix (the game's own words for a blank message, a likely typo put right); one that only
+ * rests on it starts with the record it is about. What was checked and holds is no problem.
+ */
+export function foundProblems(found: Finding[], table: string, key: readonly Cell[], get: Get): Problem[] {
+  const out: Problem[] = [];
+  for (const f of found) {
+    if (f.level === 'ok') continue;
+    const own = f.about.table === table && sameKey(f.about.key, key);
+    const p: Problem = {
+      level: f.level === 'warn' ? 'warn' : 'tidy',
+      text: f.text,
+      cols: own && f.column ? [f.column] : [],
+      bits: own ? f.bits : [chipOf(f.about), ': ', ...f.bits],
+    };
+    if (own && Object.keys(f.fix).length) p.fix = { label: "Use the game's own words", set: f.fix };
+    if (own && f.word && f.column && f.suggest[0]) {
+      const was = String(get(f.column) ?? '');
+      const fixed = replaceWord(was, f.word, f.suggest[0]);
+      if (fixed !== was) p.fix = { label: `Make it “${f.suggest[0]}”`, set: { [f.column]: fixed } };
+      p.accept = f.word;
+    }
+    out.push(p);
   }
   return out;
 }

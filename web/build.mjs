@@ -1,6 +1,7 @@
 // Bundles the UI into the server's sources (crates/daydream-server/src): app.js and app.css,
 // the code split from it in chunks/ (listed for the server in chunks.rs), the
-// two fonts in fonts/, and notices.txt, the licenses of every package the bundle holds.
+// two fonts in fonts/, and notices.txt, the licenses of every package the bundle holds (and
+// of the spelling check's word list, which the server holds).
 // The output is committed, so building the server needs no node; CI checks it is current
 // and within the size budget (budget.mjs).
 import { build } from 'esbuild';
@@ -63,9 +64,13 @@ const notices = [...packages].sort().map((pkg) => {
   const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim();
   return `== ${meta.name} ${meta.version} (${meta.license}) ==\n\n${text}\n`;
 });
+// the spelling check's dictionary is SCOWL's (crates/daydream-nmr/src/words, tools/words/build.mjs)
+const scowl = readFileSync(here('../crates/daydream-nmr/src/words/COPYRIGHT.txt'), 'utf8').replace(/\r\n/g, '\n').trim();
 writeFileSync(
   join(out, 'notices.txt'),
-  "Daydream's web UI is built from these packages, whose licenses follow.\n\n" + notices.join('\n'),
+  "Daydream's web UI is built from these packages, whose licenses follow. After them comes the notice of SCOWL, the word lists its spelling check reads.\n\n" +
+    notices.join('\n') +
+    `\n== SCOWL (Spell Checker Oriented Word Lists), as wordlist-english 1.2.1 ships it ==\n\n${scowl}\n`,
 );
 
 // the server serves each chunk by name (crates/daydream-server/src/chunks.rs)

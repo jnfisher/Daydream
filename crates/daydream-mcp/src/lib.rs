@@ -12,6 +12,7 @@
 //! | `list_tables` | every table: key columns, title column |
 //! | `describe_table` | a table's columns: types, sizes, choice lists, what they refer to, and notes on what the game does with them |
 //! | `find_references` | every row that names a record: refers to it, an exit's parameter, or spawns it |
+//! | `check_world` | the checks that read the wiring across the world: prices against what is said, spelling, placeholders, spawns nobody reaches |
 //! | `list_rows` | a table's rows: key and title, more columns on request, filtered and paged |
 //! | `get_row` | one row, every column |
 //! | `free_numbers` | record numbers not in use (rooms: within a map) |
@@ -60,6 +61,9 @@ pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05
 
 /// The most rows one `list_rows` call returns.
 pub const MAX_ROWS: usize = 500;
+
+/// The most findings `check_world` gives at once.
+pub const MAX_FINDINGS: usize = 200;
 
 /// How the server is set up.
 #[derive(Debug, Clone, Default)]
@@ -347,6 +351,19 @@ fn tool_list(silvermere: bool) -> Value {
             "annotations": { "readOnlyHint": true }
         },
         {
+            "name": "check_world",
+            "description": "The checks that read the wiring across the whole world, as Daydream's Home lists them. prices: what each script line charges (its price clauses added up) against the amounts its words quote, the lines beside it that do the same for another price, and the Cost of the item it gives. spelling: words in players' text the dictionary lacks, used once or twice, one letter from a word the world uses (with what they may be; the sysop's accepted words are left out). placeholders: blank messages where the game would tell a blow in its own words (a monster's attack, a weapon's verbs), and names left as placeholders. spawns: rooms whose spawn range has no monster of their group, monsters no room spawns, and what brings the rest (a room's NPC, a summoning spell and what casts it, a script). Each finding says what is wrong (warn: players meet it; note: worth a look) or what was checked and holds (ok), about one record, naming the records it rests on, with `fix` (values to set on it) when there is a sure one. `table` and `key` keep what is about one record or rests on it. Run it after a batch of edits. Paged by offset and limit (at most 200).",
+            "inputSchema": { "type": "object", "properties": {
+                "check": { "type": "string", "enum": ["prices", "spelling", "placeholders", "spawns"] },
+                "level": { "type": "array", "items": { "type": "string", "enum": ["warn", "note", "ok"] }, "description": "default [warn, note]" },
+                "table": table,
+                "key": key,
+                "offset": { "type": "integer", "minimum": 0 },
+                "limit": { "type": "integer", "minimum": 1, "maximum": MAX_FINDINGS }
+            } },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
             "name": "get_map",
             "description": "One map's rooms with their exits (direction, target room, exit type) and what NMR's map marks on them, plus every map number and its room count. `from` and `to` keep a range of room numbers; `columns` adds Rooms columns to each room (Type, Min Index, Max Index, Mon Type, ...).",
             "inputSchema": { "type": "object", "properties": {
@@ -614,6 +631,7 @@ impl Server {
             "list_tables" => Ok(self.list_tables()),
             "describe_table" => self.describe_table(args),
             "find_references" => self.find_references(args),
+            "check_world" => self.check_world(args),
             "list_rows" => self.list_rows(args),
             "get_row" => self.get_row(args),
             "free_numbers" => self.free_numbers(args),
@@ -667,6 +685,106 @@ impl Server {
             );
         }
         describe::find_references(&realm, &self.searched(), t, &key)
+    }
+
+    fn check_world(&self, args: &Map<String, Value>) -> Result<Value, ToolError> {
+        use daydream_nmr::wiring::{self, Check, Level, Rec};
+        let check =
+            match args.get("check") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(v.as_str().and_then(Check::parse).ok_or_else(|| {
+                    bad("check is one of prices, spelling, placeholders, spawns")
+                })?),
+            };
+        let levels: Vec<Level> = match args.get("level") {
+            None | Some(Value::Null) => vec![Level::Warn, Level::Note],
+            Some(Value::Array(ls)) => ls
+                .iter()
+                .map(|l| {
+                    [Level::Warn, Level::Note, Level::Ok]
+                        .into_iter()
+                        .find(|x| Some(x.id()) == l.as_str())
+                        .ok_or_else(|| bad("level is a list of warn, note, ok"))
+                })
+                .collect::<Result<_, _>>()?,
+            Some(_) => return Err(bad("level is a list of warn, note, ok")),
+        };
+        let about = match args.get("table") {
+            None | Some(Value::Null) => None,
+            Some(_) => {
+                let t = self.table(string_arg(args, "table")?)?;
+                let key: Vec<i64> = args
+                    .get("key")
+                    .and_then(Value::as_array)
+                    .and_then(|k| k.iter().map(Value::as_i64).collect())
+                    .ok_or_else(|| bad("key is required with table: the row's key, numbers"))?;
+                Some(Rec { table: t.name, key })
+            }
+        };
+        let offset = number_arg(args, "offset")?.unwrap_or(0).max(0) as usize;
+        let limit = (number_arg(args, "limit")?.unwrap_or(50).max(1) as usize).min(MAX_FINDINGS);
+        let report = wiring::report(&self.realm_dir)?;
+        let words = wiring::accepted(&self.realm_dir);
+        let live: Vec<&wiring::Finding> = report
+            .findings
+            .iter()
+            .filter(|f| wiring::stays(f, &words))
+            .collect();
+        let counts: Map<String, Value> = Check::ALL
+            .iter()
+            .map(|c| {
+                let n = |l: Level| {
+                    live.iter()
+                        .filter(|f| f.check == *c && f.level == l)
+                        .count()
+                };
+                (
+                    c.id().to_string(),
+                    json!({ "warn": n(Level::Warn), "note": n(Level::Note), "ok": n(Level::Ok) }),
+                )
+            })
+            .collect();
+        let mut matching: Vec<&&wiring::Finding> = live
+            .iter()
+            .filter(|f| check.is_none_or(|c| f.check == c) && levels.contains(&f.level))
+            .filter(|f| about.as_ref().is_none_or(|r| f.concerns(r)))
+            .collect();
+        matching.sort_by_key(|f| f.level);
+        let findings: Vec<Value> = matching
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|f| {
+                let mut v = json!({
+                    "check": f.check.id(),
+                    "level": f.level.id(),
+                    "about": { "table": f.about.table, "key": f.about.key },
+                    "says": report.text(f),
+                });
+                if let Some(c) = &f.column {
+                    v["column"] = json!(c);
+                }
+                if !f.fix.is_empty() {
+                    v["fix"] = f
+                        .fix
+                        .iter()
+                        .map(|(c, n)| (c.clone(), json!(n)))
+                        .collect::<Map<_, _>>()
+                        .into();
+                }
+                if let Some(w) = &f.word {
+                    v["word"] = json!(w);
+                    v["suggest"] = json!(f.suggest);
+                }
+                v
+            })
+            .collect();
+        Ok(json!({
+            "counts": counts,
+            "total": matching.len(),
+            "findings": findings,
+            "more": offset + limit < matching.len(),
+        }))
     }
 
     /// The tables searched for rows that name a record: those the agent may use.
