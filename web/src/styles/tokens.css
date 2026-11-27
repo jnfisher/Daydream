@@ -28,6 +28,10 @@
   --teal: #45cfc6;   --teal-2: #d5f6f3;   --teal-ink: #0d6a64;
 
   --accent: var(--pink);
+  /* chart marks: a record's peers, and the record itself (checked for contrast and colour
+     blindness against the surface, so stronger than the pastels) */
+  --dot: #2f8fd8;
+  --dot-me: #e2448c;
   --link: #5536c9;
   --select: #ece6ff;
   --focus: #8a6bff;
@@ -67,6 +71,7 @@
     --ink: #f2efff; --ink-2: #bdb6e6; --ink-3: #9790c4; --line: #332d5e; --line-2: #463f78;
     --outline: #0b0a1a; --shadow: #0b0a1a; --on-pastel: #241d45;
     --pink: #ff8dc4; --pink-2: #45203f; --pink-ink: #ffb6d9;
+    --dot: #4f9fe4; --dot-me: #f0609d;
     --lilac: #b8a5ff; --lilac-2: #2d2660; --lilac-ink: #d3c7ff;
     --sky: #7fcbff; --sky-2: #17334f; --sky-ink: #ace0ff;
     --mint: #72e6b9; --mint-2: #163d34; --mint-ink: #a2f3d2;
@@ -90,6 +95,7 @@
   --ink: #f2efff; --ink-2: #bdb6e6; --ink-3: #9790c4; --line: #332d5e; --line-2: #463f78;
   --outline: #0b0a1a; --shadow: #0b0a1a; --on-pastel: #241d45;
   --pink: #ff8dc4; --pink-2: #45203f; --pink-ink: #ffb6d9;
+  --dot: #4f9fe4; --dot-me: #f0609d;
   --lilac: #b8a5ff; --lilac-2: #2d2660; --lilac-ink: #d3c7ff;
   --sky: #7fcbff; --sky-2: #17334f; --sky-ink: #ace0ff;
   --mint: #72e6b9; --mint-2: #163d34; --mint-ink: #a2f3d2;

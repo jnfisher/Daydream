@@ -46,6 +46,9 @@ export interface Section {
    * fields and grid still say which columns it shows.
    */
   custom?: 'attacks' | 'wired' | 'spawns';
+  /** Two of its numbers drawn against its peers' (a weapon's Max Hit against its Speed). Both
+   * must be among the list's columns. */
+  scatter?: { x: string; y: string; xLabel?: string; yLabel?: string; note?: string };
   /** Only for the records this says yes to (an item's fight, for a weapon). */
   when?: (get: (col: string) => Cell) => boolean;
   /** Closed until opened. */
