@@ -34,6 +34,7 @@ pub mod reports;
 pub mod rows;
 pub mod schema;
 pub mod script;
+pub mod scripted;
 pub mod text;
 pub mod wiring;
 

@@ -297,6 +297,270 @@ fn a_map_view_has_its_rooms_exits_and_the_maps() {
 }
 
 #[test]
+fn a_map_view_has_the_links_scripts_and_spells_make() {
+    use daydream_nmr::map::map_view;
+    use daydream_nmr::scripted::When;
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    let rows = [
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(1)),
+            ("Name", t("Square")),
+            ("Command Text", l(10)),
+            ("Spell", l(5)),
+            // a Remote Action east: message 7's words work the south exit of room 2
+            ("Exit 2", l(2)),
+            ("Type 2", l(12)),
+            ("Para1 2", l(7)),
+            ("Para2 2", l(31)),
+        ],
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(2)),
+            ("Name", t("Road")),
+            // a Cast exit north, whose spell teleports to a room rolled from 20 to 25
+            ("Exit 0", l(1)),
+            ("Type 0", l(22)),
+            ("Para1 0", l(6)),
+        ],
+        vec![
+            ("Map Number", l(2)),
+            ("Room Number", l(5)),
+            ("Command Text", l(13)),
+        ],
+        vec![
+            ("Map Number", l(3)),
+            ("Room Number", l(9)),
+            ("Command Text", l(12)),
+        ],
+    ];
+    let refs: Vec<&[(&str, Value)]> = rows.iter().map(|r| r.as_slice()).collect();
+    put(&realm, "Rooms", &refs);
+    put(
+        &realm,
+        "Textblocks",
+        &[
+            &[
+                ("Number", l(10)),
+                ("Part #", l(0)),
+                (
+                    "Data",
+                    t(
+                        "pull lever:teleport 2 1:message 4\nsay hi|hello:random 11\nlook:text 11:teleport_slums:teleport 0 1\n",
+                    ),
+                ),
+            ],
+            &[
+                ("Number", l(11)),
+                ("Part #", l(0)),
+                ("Data", t("50:teleport 9 3\n100:remoteaction 3 0 0 4\n")),
+            ],
+            &[
+                ("Number", l(12)),
+                ("Part #", l(0)),
+                ("Data", t("go home:teleport 1 1\n")),
+            ],
+            &[
+                ("Number", l(13)),
+                ("Part #", l(0)),
+                ("Data", t("go:teleport 6 2\n")),
+            ],
+        ],
+    );
+    put(
+        &realm,
+        "Spells",
+        &[
+            &[
+                ("Number", l(5)),
+                ("Name", t("pit")),
+                ("Ability 0", l(140)),
+                ("Ability Value 0", l(3)),
+                ("Ability 1", l(141)),
+                ("Ability Value 1", l(1)),
+            ],
+            &[
+                ("Number", l(6)),
+                ("Name", t("scatter")),
+                ("Min", l(20)),
+                ("Max", l(25)),
+                ("Ability 0", l(140)),
+                ("Ability Value 0", l(0)),
+                ("Ability 1", l(141)),
+                ("Ability Value 1", l(1)),
+            ],
+        ],
+    );
+    put(
+        &realm,
+        "Messages",
+        &[&[
+            ("Number", l(7)),
+            ("Line 1", t("pull lever")),
+            ("Line 2", t("yank lever")),
+        ]],
+    );
+    let s = map_view(&realm, Dos, 1).unwrap().scripts;
+    let said = |w: &When| match w {
+        When::Typed { words } => format!("typed {words}"),
+        When::Here => "here".into(),
+        When::Walking { dir } => format!("walking {dir}"),
+        When::Words { dir, words } => format!("words {dir} {}", words.join("/")),
+    };
+    let uses: Vec<_> = s
+        .uses
+        .iter()
+        .map(|u| {
+            let src = &s.sources[u.source];
+            let to: Vec<_> = src
+                .targets
+                .iter()
+                .map(|t| (t.kind, t.to_map, t.to_room, t.to_last, t.exit))
+                .collect();
+            (u.map, u.room, said(&u.when), src.table, to)
+        })
+        .collect();
+    // map 2's own teleport is not map 1's; map 3's leads onto it
+    assert_eq!(
+        uses,
+        [
+            (
+                1,
+                1,
+                "typed pull lever".to_string(),
+                "Textblocks",
+                vec![("teleport", 1, 2, None, None)]
+            ),
+            (
+                1,
+                1,
+                "typed say hi|hello".to_string(),
+                "Textblocks",
+                vec![
+                    ("teleport", 3, 9, None, None),
+                    ("remote", 0, 3, None, Some(4))
+                ]
+            ),
+            (
+                1,
+                1,
+                "here".to_string(),
+                "Spells",
+                vec![("spell", 1, 3, None, None)]
+            ),
+            (
+                1,
+                1,
+                "words 2 pull lever/yank lever".to_string(),
+                "Rooms",
+                vec![("remote", 0, 2, None, Some(1))]
+            ),
+            (
+                1,
+                2,
+                "walking 0".to_string(),
+                "Spells",
+                vec![("spell", 1, 20, Some(25), None)]
+            ),
+            (
+                3,
+                9,
+                "typed go home".to_string(),
+                "Textblocks",
+                vec![("teleport", 1, 1, None, None)]
+            ),
+        ]
+    );
+    // what each is: the clause, or the spell's name; a command line's place in its block
+    let what: Vec<_> = s
+        .sources
+        .iter()
+        .map(|x| (x.line, x.name.as_str(), x.targets[0].what.as_str()))
+        .collect();
+    assert_eq!(
+        what,
+        [
+            (Some((0, 1)), "", "teleport 2 1"),
+            (Some((0, 2)), "", "teleport 9 3"),
+            (None, "pit", "pit"),
+            (None, "", "Remote Action exit E"),
+            (None, "scatter", "scatter"),
+            (Some((0, 1)), "", "teleport 1 1"),
+        ]
+    );
+    // those of room 2: its own, and those leading to it (a teleport, a remote action)
+    let two = s.within(1, 2, 2);
+    let rooms: Vec<_> = two
+        .uses
+        .iter()
+        .map(|u| (u.room, two.sources[u.source].targets[0].what.as_str()))
+        .collect();
+    assert_eq!(
+        rooms,
+        [
+            (1, "teleport 2 1"),
+            (1, "Remote Action exit E"),
+            (2, "scatter")
+        ]
+    );
+    assert_eq!(two.sources.len(), 3);
+    // map 2 has its own, and map 3's leads away
+    assert_eq!(map_view(&realm, Dos, 2).unwrap().scripts.uses.len(), 1);
+    assert_eq!(map_view(&realm, Dos, 3).unwrap().scripts.uses.len(), 2);
+}
+
+/// The stock world's links no exit draws: the small statue's words working the ways out of its
+/// tree, and the Island of Bones' portal (its command lines and its room spell) scattering
+/// players over the lake.
+#[test]
+fn the_stock_world_s_scripted_links() {
+    use daydream_nmr::map::map_view;
+    use daydream_nmr::scripted::When;
+    use std::collections::HashSet;
+    let realm = Realm::open(&crate::support::stock_realm()).unwrap();
+    let nine = map_view(&realm, Dos, 9).unwrap().scripts;
+    let statue: HashSet<_> = nine
+        .uses
+        .iter()
+        .filter(|u| (u.map, u.room) == (9, 1412))
+        .flat_map(|u| {
+            let first = match &u.when {
+                When::Words { words, .. } => words.first().cloned().unwrap_or_default(),
+                _ => String::new(),
+            };
+            nine.sources[u.source]
+                .targets
+                .iter()
+                .filter(|t| t.kind == "remote")
+                .map(move |t| (first.clone(), t.to_room, t.exit))
+        })
+        .collect();
+    assert_eq!(statue.len(), 9, "{statue:?}");
+    assert!(statue.contains(&("turn statue".to_string(), 1343, Some(1))));
+    assert!(statue.contains(&("push violet eye".to_string(), 666, Some(0))));
+    let lake = map_view(&realm, Dos, 17).unwrap().scripts;
+    let isle: Vec<_> = lake
+        .uses
+        .iter()
+        .filter(|u| (u.map, u.room) == (17, 1753))
+        .collect();
+    assert!(isle.iter().any(|u| u.when == When::Here));
+    assert!(isle.iter().any(|u| u.when
+        == When::Typed {
+            words: "go portal".into()
+        }));
+    let rooms: HashSet<i64> = isle
+        .iter()
+        .flat_map(|u| &lake.sources[u.source].targets)
+        .filter(|t| t.kind == "teleport" && t.to_map == 17)
+        .map(|t| t.to_room)
+        .collect();
+    assert_eq!(rooms.len(), 90);
+}
+
+#[test]
 fn the_map_editor_digs_new_rooms_and_joins_old_ones() {
     use daydream_nmr::map::{Dig, dig};
     use daydream_nmr::modify::apply;

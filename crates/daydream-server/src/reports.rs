@@ -144,7 +144,7 @@ pub(crate) async fn map(
     read(s, move |realm, layout| {
         let view = daydream_nmr::map::map_view(realm, layout, map).map_err(failed)?;
         let pins = crate::pins::of_map(realm.dir(), map);
-        Ok(json!({ "map": map, "maps": view.maps, "names": view.names, "rooms": view.rooms, "links": view.links, "pins": pins }))
+        Ok(json!({ "map": map, "maps": view.maps, "names": view.names, "rooms": view.rooms, "links": view.links, "scripts": view.scripts, "pins": pins }))
     })
     .await
 }

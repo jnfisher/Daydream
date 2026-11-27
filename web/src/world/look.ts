@@ -3,6 +3,7 @@
 
 import { ICONS, type IconNode } from './icons';
 import type { MapExit, MapRoom } from './model';
+import type { WireKind } from './wires';
 import { LIGHT_WORDS } from './light';
 
 // ---- colours -------------------------------------------------------------------------
@@ -30,6 +31,8 @@ export interface Palette {
   plain: string;
   biome: Record<Biome, string>;
   exit: Record<ExitSort, string>;
+  /** The links no exit draws (wires.ts): a script's teleport, a spell's, a remote action, a death, hang-up and control room. */
+  wire: Record<WireKind, string>;
   /** A stamp being placed: new rooms and exits, rooms joined, exits in the way, exits replaced, cells left alone. */
   stamp: { fresh: string; join: string; clash: string; replace: string; kept: string };
 }
@@ -46,6 +49,7 @@ const DAY: Palette = {
     lock: '#b07a00', door: '#9a5a1c', hidden: '#7d76a3', trap: '#d22c63', words: '#7a55ff',
     gated: '#0f948a', guard: '#d4581c', timed: '#19679f', toll: '#b07a00', spell: '#b0216a',
   },
+  wire: { teleport: '#a82ad1', spell: '#c2186b', remote: '#c26a00', death: '#c0245e', hangup: '#2d6fb8', control: '#0f8a7e' },
 };
 
 const NIGHT: Palette = {
@@ -60,6 +64,7 @@ const NIGHT: Palette = {
     lock: '#ffd25e', door: '#ffb98a', hidden: '#9790c4', trap: '#ff8dc4', words: '#c4b0ff',
     gated: '#5fe0d6', guard: '#ffae88', timed: '#7fcbff', toll: '#ffd25e', spell: '#ffb6d9',
   },
+  wire: { teleport: '#e7a6ff', spell: '#ff9ccf', remote: '#ffc46b', death: '#ff8fa8', hangup: '#8ec5ff', control: '#6fe6d8' },
 };
 
 /** The palette of the theme showing now. */

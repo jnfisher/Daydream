@@ -3,7 +3,9 @@
 // its symbol on it when it is more than a plain way through, and an arrow when it is one-way. An
 // exit to a room drawn somewhere else, to another map or to a room the map does not have is a
 // short stub in its direction ending in a chip; up and down exits are triangles on the room.
-// Names are drawn once per run of rooms that share one, more of them as you zoom in.
+// Names are drawn once per run of rooms that share one, more of them as you zoom in. Over them,
+// dotted wires: the links no exit draws (a script's teleport, a spell's, a remote action, a
+// death, hang-up or control room; wires.ts), for the selected rooms or for every room.
 //
 // The camera holds still: new rooms from the server keep the view where it was. In Build mode
 // a room can be carried to a free cell; the page pins it there. A free cell or a join mark beside
@@ -16,6 +18,7 @@ import { alongWay, lineTo, reachJoin, reachLine, type Reach } from './build';
 import { cellKey, OPPOSITE, STEP, type Layout, layOut, type Spot } from './layout';
 import { biomeOf, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type Palette, type Tint } from './look';
 import type { MapExit, MapRoom } from './model';
+import type { Wire, WireKind } from './wires';
 
 /** A grid cell, in pixels at 100%. */
 export const S = 28;
@@ -75,6 +78,9 @@ export interface Stub {
 export interface Hit {
   room: MapRoom | null;
   stub: Stub | null;
+  /** A wire, or the chip at its end on another map; and how many wires share that chip. */
+  wire?: Wire;
+  wires?: number;
   /** Build mode: a way from the selected room to dig (`to` null), or to join to the room drawn there. */
   ghost?: Ghost;
 }
@@ -98,6 +104,8 @@ export interface SceneEvents {
   pick(room: MapRoom | null): void;
   /** A stub or an up or down mark clicked. */
   follow(stub: Stub): void;
+  /** A wire clicked. */
+  wire?(w: Wire): void;
   /** The wheel (or the zoom out key) went on zooming out with all the map small in view: all
    * the maps' turn. */
   out?(): void;
@@ -168,6 +176,43 @@ export interface MapTool {
   /** Draws over the overview. */
   mini?(p: MiniPen): void;
 }
+
+/** Where a wire is drawn on the canvas: from (ax, ay) to (bx, by), bowed through (cx, cy), its
+ * line from `t0` to `t1` of the way (clear of what is at each end); and the chip of an end on
+ * another map (or a room the map lacks), beside the room at the other end. */
+interface WirePath {
+  w: Wire;
+  /** How many wires it stands for: a room's of one kind to (or from) one other map, or to rooms the map lacks, share one chip. */
+  n: number;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  cx: number;
+  cy: number;
+  t0: number;
+  t1: number;
+  chip: { x: number; y: number; r: number; label: string; missing: boolean } | null;
+}
+
+/** The ways a wire's chip may sit beside its room, in turn: SE, SW, NE, NW, E, S, W, N. */
+const CHIP_WAYS = [6, 7, 4, 5, 2, 1, 3, 0];
+/** A fan of wires (of one kind, out of a room or into one) wider than this is drawn lighter, and without halos. */
+const SCATTER = 12;
+/** The symbol on each kind of wire. */
+const WIRE_ICON: Record<WireKind, IconName> = { teleport: 'wand', spell: 'sparkles', remote: 'radio', death: 'skull', hangup: 'log-out', control: 'crosshair' };
+/** An arrowhead at (x, y) pointing at angle `a`, `s` long, added to `p`. */
+const arrowTo = (p: Path2D, x: number, y: number, a: number, s: number) => {
+  p.moveTo(x + Math.cos(a) * s, y + Math.sin(a) * s);
+  p.lineTo(x + Math.cos(a + 2.5) * s, y + Math.sin(a + 2.5) * s);
+  p.lineTo(x + Math.cos(a - 2.5) * s, y + Math.sin(a - 2.5) * s);
+  p.closePath();
+};
+/** A point `t` of the way along the curve from (ax, ay) through (cx, cy) to (bx, by). */
+const along = (p: WirePath, t: number): [number, number] => {
+  const u = 1 - t;
+  return [u * u * p.ax + 2 * u * t * p.cx + t * t * p.bx, u * u * p.ay + 2 * u * t * p.cy + t * t * p.by];
+};
 
 /** A room being carried, in Build mode: where it is held, and the cell under it. */
 interface Carry {
@@ -241,6 +286,12 @@ export class Scene {
   private pointer: [number, number] | null = null;
   /** The tool on the map, if one is on. */
   private tool: MapTool | null = null;
+  /** The wires drawn, the map they are drawn on, and whether they are every room's (fainter). */
+  private wires: Wire[] = [];
+  private wireMap = 0;
+  private wiresAll = false;
+  /** The wires' paths as worked out for these wires, rooms and zoom, and where cell (0, 0) was then: panning only moves them. */
+  private wireCache: { wires: Wire[]; layout: Layout; z: number; ox: number; oy: number; paths: WirePath[] } | null = null;
   /** Space held down: a drag pans the map, even with a tool on. */
   private panKey = false;
 
@@ -371,6 +422,15 @@ export class Scene {
 
   setLayers(l: Layers): void {
     this.layers = { ...l };
+    this.draw();
+  }
+
+  /** The wires to draw on map `map` (none: the layer is off), and whether they are every room's. */
+  setWires(wires: Wire[], map: number, all: boolean): void {
+    this.wires = wires;
+    this.wireMap = map;
+    this.wiresAll = all;
+    if (this.hovered?.wire && !wires.includes(this.hovered.wire)) this.hovered = null;
     this.draw();
   }
 
@@ -559,7 +619,8 @@ export class Scene {
         }
         const q = at.get(t.room)!;
         const step = STEP[e.dir];
-        if (!step || q.x !== p.x + step[0] || q.y !== p.y + step[1]) {
+        // a remote action is no way through, whatever room it works
+        if (!step || q.x !== p.x + step[0] || q.y !== p.y + step[1] || e.kind === 12) {
           stub(r, e, 'here', String(e.to));
           continue;
         }
@@ -823,9 +884,16 @@ export class Scene {
       }
       if (best) return { room: best.room, stub: best };
     }
-    // the whole cell around a room counts, so small rooms are easy to hit
+    // the whole cell around a room counts, so small rooms are easy to hit; a wire over it only
+    // off the room's own square
     const [wx, wy] = this.toWorld(px, py);
-    const n = l.cell.get(cellKey(Math.floor(wx / S), Math.floor(wy / S)));
+    const [gx, gy] = [Math.floor(wx / S), Math.floor(wy / S)];
+    const n = l.cell.get(cellKey(gx, gy));
+    if (this.wires.length && z >= 0.2) {
+      const inside = n !== undefined && Math.abs(wx - (gx + 0.5) * S) <= HALF * S && Math.abs(wy - (gy + 0.5) * S) <= HALF * S;
+      const w = this.wireAt(px, py, inside);
+      if (w) return { room: null, stub: null, wire: w.w, wires: w.n };
+    }
     return n === undefined ? null : { room: this.by.get(n)!, stub: null };
   }
 
@@ -1014,6 +1082,7 @@ export class Scene {
       const hit = this.hitAt(x, y);
       if (hit?.ghost) this.on.build(hit.ghost);
       else if (hit?.stub) this.on.follow(hit.stub);
+      else if (hit?.wire) this.on.wire?.(hit.wire);
       else this.on.pick(hit?.room ?? null);
     };
     add(cv, 'pointerup', (e) => end(e, false));
@@ -1080,7 +1149,7 @@ export class Scene {
   private setHover(hit: Hit | null, x: number, y: number) {
     const was = this.hovered;
     this.hovered = hit;
-    if (was?.room !== hit?.room || was?.stub !== hit?.stub || was?.ghost?.dir !== hit?.ghost?.dir) this.draw();
+    if (was?.room !== hit?.room || was?.stub !== hit?.stub || was?.wire !== hit?.wire || was?.ghost?.dir !== hit?.ghost?.dir) this.draw();
     // in Build mode a room can be picked up and carried
     this.canvas.style.cursor = !hit || this.tool ? '' : this.building && hit.room && !hit.stub && !hit.ghost ? 'grab' : 'pointer';
     this.on.hover(hit, x, y);
@@ -1458,11 +1527,15 @@ export class Scene {
       ctx.globalAlpha = 1;
     }
 
-    // where the selected (or hovered) room's far exits lead
+    // the wires: links no exit draws
+    if (this.wires.length && z >= 0.2 && !carry) this.drawWires(this.wirePaths());
+
+    // where the selected (or hovered) room's far exits lead (a remote action's, its wire)
     const curves: Stub[] = [];
-    if (this.selected !== null) for (const s of this.stubsOf.get(this.selected) ?? []) if (s.sort === 'here') curves.push(s);
+    const far = (s: Stub) => s.sort === 'here' && !(s.exit.kind === 12 && this.wires.length);
+    if (this.selected !== null) for (const s of this.stubsOf.get(this.selected) ?? []) if (far(s)) curves.push(s);
     const hs = this.hovered?.stub;
-    if (hs && hs.sort === 'here' && !curves.includes(hs)) curves.push(hs);
+    if (hs && far(hs) && !curves.includes(hs)) curves.push(hs);
     for (const s of curves) {
       const a = l.at.get(s.room.room)!;
       const b = l.at.get(s.exit.to);
@@ -1732,6 +1805,246 @@ export class Scene {
     ctx.stroke();
     const icon: IconName | null = r.room_type === 1 || r.shop ? 'store' : r.room_type === 2 || r.room_type === 5 ? 'swords' : r.room_type === 3 ? 'crown' : null;
     if (icon && half >= 5) this.icon(icon, c.px, c.py, (half + grow) * 1.1, P.line, 2.2);
+  }
+
+  /** Where each wire is drawn, offset by (dx, dy) since the map was last panned. */
+  private wirePaths(): { paths: WirePath[]; dx: number; dy: number } {
+    const l = this.layout;
+    if (!l || !this.wires.length) return { paths: [], dx: 0, dy: 0 };
+    const z = this.cam.z;
+    const [ox, oy] = [this.sx(0), this.sy(0)];
+    const c = this.wireCache;
+    if (c && c.wires === this.wires && c.layout === l && c.z === z) return { paths: c.paths, dx: ox - c.ox, dy: oy - c.oy };
+    const half = HALF * S * z;
+    const cr = Math.max(3, Math.min(11, 0.2 * S * z));
+    // the chips beside a room sit the ways it has neither a room next door nor an exit, from its
+    // bottom right (its name is above it); then round it
+    const slots = new Map<number, number>();
+    const chipBy = (n: number, p: Spot): [number, number] => {
+      const k = slots.get(n) ?? 0;
+      slots.set(n, k + 1);
+      const exits = this.by.get(n)?.exits ?? [];
+      const free = CHIP_WAYS.filter((d) => !l.cell.has(cellKey(p.x + STEP[d]![0], p.y + STEP[d]![1])) && !exits.some((e) => e.dir === d));
+      const d = free[k];
+      const a = d === undefined ? Math.PI / 4 + k * 0.62 : Math.atan2(STEP[d]![1], STEP[d]![0]);
+      return [this.sx(p.x) + Math.cos(a) * 0.95 * S * z, this.sy(p.y) + Math.sin(a) * 0.95 * S * z];
+    };
+    const out: WirePath[] = [];
+    /** The paths to chips, by the room, the kind and the other map. */
+    const shared = new Map<string, WirePath>();
+    for (const w of this.wires) {
+      const pa = w.from.map === this.wireMap ? l.at.get(w.from.room) : undefined;
+      const pb = w.to.map === this.wireMap ? l.at.get(w.to.room) : undefined;
+      if (!pa && !pb) continue;
+      const key = pa && pb ? '' : pa ? `${w.kind}>${w.from.room}>${w.to.map === this.wireMap ? 'x' : w.to.map}` : `${w.kind}<${w.to.room}<${w.from.map}`;
+      const was = key ? shared.get(key) : undefined;
+      if (was) {
+        was.n++;
+        continue;
+      }
+      let [ax, ay, bx, by] = [0, 0, 0, 0];
+      let [ra, rb] = [half + 2, half + 3];
+      let chip: WirePath['chip'] = null;
+      if (pa) [ax, ay] = [this.sx(pa.x), this.sy(pa.y)];
+      if (pb) {
+        [bx, by] = [this.sx(pb.x), this.sy(pb.y)];
+        if (w.exit !== undefined) {
+          // the exit it works: midway to the next cell, or the up or down mark
+          const step = STEP[w.exit];
+          if (step) [bx, by] = [bx + step[0] * 0.5 * S * z, by + step[1] * 0.5 * S * z];
+          else [bx, by] = [bx - half - 1, by + (w.exit === 8 ? -half : half) * 0.4];
+          rb = 3;
+        }
+      }
+      if (!pa) {
+        [ax, ay] = chipBy(w.to.room, pb!);
+        chip = { x: ax, y: ay, r: cr, label: String(w.from.map), missing: false };
+        ra = cr + 1;
+      } else if (!pb) {
+        [bx, by] = chipBy(w.from.room, pa);
+        const missing = w.to.map === this.wireMap;
+        chip = { x: bx, y: by, r: cr, label: missing ? '✕' : String(w.to.map), missing };
+        rb = cr + 2;
+      }
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len < 1) continue;
+      // bowed to its left, so a wire each way is two
+      const k = Math.min(0.22 * len + 6, 90);
+      const p: WirePath = { w, n: 1, ax, ay, bx, by, cx: (ax + bx) / 2 + ((by - ay) / len) * k, cy: (ay + by) / 2 - ((bx - ax) / len) * k, t0: 0, t1: 1, chip };
+      if (key) shared.set(key, p);
+      // clear of what is at each end, with room for the arrowhead
+      const head = 3 + 2.2 * Math.min(z, 1.6);
+      const clear = (t: number, x: number, y: number, r: number) => {
+        const [px, py] = along(p, t);
+        return Math.hypot(px - x, py - y) >= r;
+      };
+      while (p.t0 < 0.5 && !clear(p.t0, ax, ay, ra)) p.t0 += 1 / 64;
+      while (p.t1 > 0.5 && !clear(p.t1, bx, by, rb + head)) p.t1 -= 1 / 64;
+      out.push(p);
+    }
+    this.wireCache = { wires: this.wires, layout: l, z, ox, oy, paths: out };
+    return { paths: out, dx: 0, dy: 0 };
+  }
+
+  /** The line of a wire's path, from its `t0` to its `t1`, added to `to`. */
+  private wireLine(p: WirePath, to: CanvasPath) {
+    const { t0, t1 } = p;
+    const [x0, y0] = along(p, t0);
+    const [x1, y1] = along(p, t1);
+    // the curve's control point between the two (de Casteljau)
+    const [u0, u1] = [1 - t0, 1 - t1];
+    const m = (a: number, c: number, b: number) => u1 * u0 * a + (u1 * t0 + t1 * u0) * c + t1 * t0 * b;
+    to.moveTo(x0, y0);
+    to.quadraticCurveTo(m(p.ax, p.cx, p.bx), m(p.ay, p.cy, p.by), x1, y1);
+  }
+
+  /** The wires: dotted, each with its arrowhead and, where there is room, its symbol; then the chips at their far ends. */
+  private drawWires({ paths, dx, dy }: { paths: WirePath[]; dx: number; dy: number }) {
+    const { ctx, pal: P } = this;
+    // the paths' own place on the canvas, before the latest pans
+    const [W, H] = [this.W - dx, this.H - dy];
+    ctx.save();
+    ctx.translate(dx, dy);
+    const z = this.cam.z;
+    const hot = this.hovered?.wire ?? null;
+    const near = this.hovered?.room?.room ?? this.selected;
+    const width = Math.max(1.6, 2 * Math.min(z, 1.4));
+    const touches = (w: Wire) => near !== null && ((w.from.map === this.wireMap && w.from.room === near) || (w.to.map === this.wireMap && w.to.room === near));
+    const strong = (w: Wire) => !this.wiresAll || w === hot || touches(w);
+    const seen = paths.filter((p) => Math.max(p.ax, p.bx, p.cx) > -20 - dx && Math.min(p.ax, p.bx, p.cx) < W + 20 && Math.max(p.ay, p.by, p.cy) > -20 - dy && Math.min(p.ay, p.by, p.cy) < H + 20);
+    // fainter first, so the strong ones lie on top
+    seen.sort((a, b) => Number(strong(a.w)) - Number(strong(b.w)) || Number(a.w === hot) - Number(b.w === hot));
+    // the fans of one kind out of a room or into one: how many, and the longest
+    const length = (p: WirePath) => Math.hypot(p.bx - p.ax, p.by - p.ay);
+    const ends = (p: WirePath) => [`${p.w.kind}>${p.w.from.map}/${p.w.from.room}`, `${p.w.kind}<${p.w.to.map}/${p.w.to.room}`];
+    const fans = new Map<string, { n: number; longest: WirePath; most: number }>();
+    for (const p of seen) {
+      const d = length(p);
+      for (const k of ends(p)) {
+        const f = fans.get(k);
+        if (!f) fans.set(k, { n: 1, longest: p, most: d });
+        else {
+          f.n++;
+          if (d > f.most) [f.longest, f.most] = [p, d];
+        }
+      }
+    }
+    /** A wire of a fan so wide (a room scattering players over many) that one more says little. */
+    const scatter = (p: WirePath) => ends(p).some((k) => fans.get(k)!.n > SCATTER);
+    ctx.lineCap = 'round';
+    const head = 3 + 2.2 * Math.min(z, 1.6);
+    // the wires in layers, each stroked at once kind by kind (a map full of them draws quickly)
+    const layer = (list: WirePath[], alpha: number, lw: number, halo: boolean) => {
+      if (!list.length) return;
+      if (halo) {
+        // under the dots, to keep them clear of the rooms they cross
+        const h = new Path2D();
+        for (const p of list) this.wireLine(p, h);
+        ctx.globalAlpha = 0.75;
+        ctx.strokeStyle = P.halo;
+        ctx.lineWidth = lw + 3;
+        ctx.stroke(h);
+      }
+      const kinds = new Map<WireKind, [Path2D, Path2D]>();
+      for (const p of list) {
+        let k = kinds.get(p.w.kind);
+        if (!k) kinds.set(p.w.kind, (k = [new Path2D(), new Path2D()]));
+        this.wireLine(p, k[0]);
+        const [ex, ey] = along(p, p.t1);
+        const [qx, qy] = along(p, Math.max(p.t0, p.t1 - 0.02));
+        arrowTo(k[1], ex, ey, Math.atan2(ey - qy, ex - qx), head);
+      }
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = lw;
+      ctx.setLineDash([0.1, lw * 2.2]);
+      for (const [kind, [line, heads]] of kinds) {
+        ctx.strokeStyle = ctx.fillStyle = P.wire[kind];
+        ctx.stroke(line);
+        ctx.fill(heads);
+      }
+      ctx.setLineDash([]);
+    };
+    // the faint; one of many (a room rolled from a range, or of a wide scatter), lighter; the
+    // strong; and the one pointed at
+    const drawn = seen.filter((p) => p.t1 > p.t0 && p.w !== hot);
+    const many = (p: WirePath) => !!p.w.among || scatter(p);
+    layer(drawn.filter((p) => !strong(p.w)), 0.45, width, false);
+    layer(drawn.filter((p) => strong(p.w) && many(p)), 0.6, width, false);
+    layer(drawn.filter((p) => strong(p.w) && !many(p)), 1, width, true);
+    layer(seen.filter((p) => p.t1 > p.t0 && p.w === hot), 1, width * 1.6, true);
+    // each one's symbol, midway, where it is long enough to have one; a fan has a single symbol,
+    // on its longest
+    const br = 6 * Math.min(Math.max(z, 0.8), 1.6);
+    const marked = (p: WirePath) => p.w === hot || ends(p).every((k) => fans.get(k)!.n <= 3 || fans.get(k)!.longest === p);
+    for (const p of seen) {
+      const s = strong(p.w);
+      if (z < 0.55 || (!s && z < 1) || length(p) < br * 7 || !marked(p)) continue;
+      const [mx, my] = along(p, 0.5);
+      const colour = P.wire[p.w.kind];
+      ctx.globalAlpha = s ? 1 : 0.6;
+      ctx.fillStyle = P.badge;
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = p.w === hot ? 2.4 : 1.5;
+      ctx.beginPath();
+      ctx.arc(mx, my, br, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+      this.icon(WIRE_ICON[p.w.kind], mx, my, br * 1.3, colour, 2.4);
+    }
+    // the chips: another map's number on the wire's colour, or a cross for a room the map lacks
+    for (const p of seen) {
+      const c = p.chip;
+      if (!c) continue;
+      const colour = P.wire[p.w.kind];
+      ctx.globalAlpha = strong(p.w) ? 1 : 0.6;
+      ctx.font = `800 ${Math.min(11, c.r * 1.05)}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+      const text = c.r >= 5;
+      const w = text ? Math.max(c.r * 2, ctx.measureText(c.label).width + 6) : c.r * 2;
+      ctx.fillStyle = c.missing ? P.badge : colour;
+      ctx.strokeStyle = c.missing ? P.missing : p.w === hot ? P.sel : P.line;
+      ctx.lineWidth = p.w === hot ? 2.4 : 1.3;
+      ctx.beginPath();
+      ctx.roundRect(c.x - w / 2, c.y - c.r, w, c.r * 2, c.r);
+      ctx.fill();
+      ctx.stroke();
+      if (text) {
+        ctx.fillStyle = c.missing ? P.missing : P.badge;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(c.label, c.x, c.y + 0.5);
+      }
+    }
+    ctx.restore();
+  }
+
+  /** The wire under a point: a chip at its end, else its line (not where a room is drawn under it). */
+  private wireAt(px: number, py: number, overRoom: boolean): WirePath | null {
+    let best: WirePath | null = null;
+    let bestD = Infinity;
+    const { paths, dx, dy } = this.wirePaths();
+    [px, py] = [px - dx, py - dy];
+    for (const p of paths) {
+      const c = p.chip;
+      if (!c) continue;
+      const d = Math.hypot(c.x - px, c.y - py) - c.r;
+      if (d <= 4 && d < bestD) [best, bestD] = [p, d];
+    }
+    if (best || overRoom) return best;
+    const reach = 6;
+    for (const p of paths) {
+      if (p.t1 <= p.t0) continue;
+      if (px < Math.min(p.ax, p.bx, p.cx) - reach || px > Math.max(p.ax, p.bx, p.cx) + reach || py < Math.min(p.ay, p.by, p.cy) - reach || py > Math.max(p.ay, p.by, p.cy) + reach) continue;
+      let [x0, y0] = along(p, p.t0);
+      for (let i = 1; i <= 16; i++) {
+        const [x1, y1] = along(p, p.t0 + ((p.t1 - p.t0) * i) / 16);
+        const [dx, dy] = [x1 - x0, y1 - y0];
+        const t = Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy || 1)));
+        const d = Math.hypot(x0 + t * dx - px, y0 + t * dy - py);
+        if (d <= reach && d < bestD) [best, bestD] = [p, d];
+        [x0, y0] = [x1, y1];
+      }
+    }
+    return best;
   }
 
   private drawStub(s: Stub, c: { x: number; y: number; r: number }, hot: boolean) {

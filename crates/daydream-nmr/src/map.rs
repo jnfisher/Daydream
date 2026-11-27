@@ -82,6 +82,9 @@ pub struct MapView {
     /// Every pair of maps a map change exit leads between, one way, by `from` and `to` (a map
     /// change onto its own map is left out).
     pub links: Vec<MapLink>,
+    /// The links no exit draws that start or end on the map: where its rooms' scripts and
+    /// spells send players, and the exits remote actions work ([`crate::scripted`]).
+    pub scripts: crate::scripted::Scripts,
 }
 
 /// Every room of `map`, and the realm's maps.
@@ -191,11 +194,13 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
             Some(MapName { map, name, rooms })
         })
         .collect();
+    let scripts = crate::scripted::of_realm(realm, layout, &rows)?.of_map(map);
     Ok(MapView {
         maps: maps.into_iter().collect(),
         names,
         rooms: out,
         links: links.into_values().collect(),
+        scripts,
     })
 }
 

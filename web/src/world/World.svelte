@@ -39,7 +39,6 @@
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
-  import Download from '@lucide/svelte/icons/download';
   import Footprints from '@lucide/svelte/icons/footprints';
   import LayersIcon from '@lucide/svelte/icons/layers';
   import LocateFixed from '@lucide/svelte/icons/locate-fixed';
@@ -49,11 +48,9 @@
   import Minus from '@lucide/svelte/icons/minus';
   import Pickaxe from '@lucide/svelte/icons/pickaxe';
   import Plus from '@lucide/svelte/icons/plus';
-  import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Scan from '@lucide/svelte/icons/scan';
   import SquareDashedMousePointer from '@lucide/svelte/icons/square-dashed-mouse-pointer';
   import StampIcon from '@lucide/svelte/icons/stamp';
-  import Upload from '@lucide/svelte/icons/upload';
   import Waypoints from '@lucide/svelte/icons/waypoints';
   import X from '@lucide/svelte/icons/x';
   import { api, type Cell } from '../api';
@@ -62,14 +59,15 @@
   import { app, closeInspector, dropLocalStep, inspect, localStep, realmChanged, undo, type LocalStep } from '../shell/state.svelte';
   import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
   import { dug, joined, moveFrom, reachCount, reached, reachLinks, renamed, type Reach } from './build';
-  import { ICONS } from './icons';
-  import { COLOUR_BY, EXIT_LEGEND, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName } from './look';
+  import { COLOUR_BY, palette, type ColourBy } from './look';
+  import { SPRAY, wiresOf, type End, type Wire, type WireKind, type WiresFor } from './wires';
   import type { Host } from './host';
   import { cellKey, cellsOf, OPPOSITE, STEP, type Spot } from './layout';
-  import { DIR_WORDS, KEY_DIR, kindName, mapName, type MapFile, type MapLink, type MapName, type MapRoom, type PinCells } from './model';
+  import { DIR_WORDS, KEY_DIR, kindName, mapName, type MapFile, type MapLink, type MapName, type MapRoom, type PinCells, type Scripts, type When } from './model';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
   import type { Selector } from './selector.svelte';
   import type { Stamper } from './stamper.svelte';
+  import type ShowMenuKind from './ShowMenu.svelte';
   import type WorldViewKind from './WorldView.svelte';
 
   let canvas: HTMLCanvasElement;
@@ -81,6 +79,11 @@
   /** Each map's commonest room name, and the map change exits between maps (for All maps). */
   let names = $state.raw<MapName[]>([]);
   let links = $state.raw<MapLink[]>([]);
+  /** The links no exit draws (scripts, spells, remote actions), and for which rooms they show as wires. */
+  let scripts = $state.raw<Scripts | undefined>(undefined);
+  let wiresFor = $state<WiresFor>(wiresFrom(read('dd-map-wires', 'selected')));
+  /** Bumped when the map's rooms change (read, or an edit shown): the wires follow them. */
+  let roomsAt = $state(0);
   const namesOf = $derived(new Map(names.map((n) => [n.map, n])));
   let count = $state(0);
   let loading = $state(false);
@@ -155,6 +158,9 @@
   let WorldView = $state.raw<typeof WorldViewKind | null>(null);
   let worldView = $state<ReturnType<typeof WorldViewKind>>();
   let worldShown = $state(false);
+  /** The Show menu (what the map shows, and what its marks mean): its code loads once the map is first drawn, or when the menu opens. */
+  let ShowMenu = $state.raw<typeof ShowMenuKind | null>(null);
+  let showFailed = $state('');
   let walker = $state<ReturnType<typeof PlayPanel>>();
   /** The room the walk started from. */
   let walkStart = $state.raw<{ table: string; key: Cell[] } | null>(null);
@@ -166,6 +172,10 @@
 
   function colourFrom(v: string): ColourBy {
     return COLOUR_BY.some((c) => c.id === v) ? (v as ColourBy) : 'place';
+  }
+
+  function wiresFrom(v: string): WiresFor {
+    return v === 'all' || v === 'off' ? v : 'selected';
   }
 
   function layersFrom(v: string): Layers {
@@ -225,6 +235,7 @@
       maps = a.maps;
       names = a.names ?? [];
       links = a.links ?? [];
+      scripts = a.scripts;
       count = a.rooms.length;
       write(lastKey(), String(map));
       scene.setEdited(edited);
@@ -234,6 +245,7 @@
         pinCount = pins.size;
       }
       scene.setRooms(a.rooms, pins);
+      roomsAt++;
       startRoom = scene.start;
       stale = false;
       failed = '';
@@ -251,6 +263,8 @@
       if (had !== undefined && !selected && !moved) gone(had);
       legend = scene.legend();
       toolsChanged(moved);
+      // the Show menu's code, once the map is drawn
+      if (!ShowMenu) setTimeout(loadShow, 800);
     } catch (e) {
       failed = messageOf(e);
     } finally {
@@ -374,9 +388,68 @@
     else choose(e.to, 'centre');
   }
 
+  /** A wire clicked: to its far end from the rooms whose wires these are. */
+  function followWire(w: Wire) {
+    const mine = (e: End) => e.map === map && wired.has(e.room);
+    const to = mine(w.to) && !mine(w.from) ? w.from : w.to;
+    if (to.map === map && !scene?.by.has(to.room)) {
+      sfx('nope');
+      say(`Map ${map} has no room ${to.room}.`);
+    } else if (walking) walker?.put(to.map, to.room);
+    else go(to.map, to.room);
+  }
+
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+  /** A command's words as a player types them: the first of its `|` alternatives, and how many more. */
+  function typed(words: string[]): string {
+    const all = words.flatMap((w) => w.split('|')).map((w) => w.trim()).filter(Boolean);
+    if (!all.length) return 'its words';
+    return `“${all[0]}”${all.length > 1 ? ` (or ${all.length - 1} other way${all.length > 2 ? 's' : ''} of saying it)` : ''}`;
+  }
+
+  /** How a wire's room sets it off, in words. */
+  function setOff(w: When | undefined, from: string): string {
+    switch (w?.by) {
+      case 'typed':
+        return `Typing ${typed([w.words])} in ${from}`;
+      case 'words':
+        return `Typing ${typed(w.words)} in ${from}`;
+      case 'walking':
+        return `Walking ${DIR_WORDS[w.dir]} from ${from}`;
+      default:
+        return `The spell of ${from}, on whoever is there,`;
+    }
+  }
+
+  const WIRE_NAMES: Record<WireKind, string> = { teleport: 'Teleport', spell: 'Spell teleport', remote: 'Remote action', death: 'Death room', hangup: 'Hang-up room', control: 'Control room' };
+
+  /** What a wire says when pointed at; `n` of them share a chip, to rooms of another map (or rooms this map lacks), or from one. */
+  function wireTip(w: Wire, n = 1): { title: string; sub: string } {
+    if (n > 1) {
+      const out = w.to.map !== map || !scene?.by.has(w.to.room);
+      const e = out ? w.to : w.from;
+      const rooms = e.map === map ? `${n} rooms map ${map} lacks` : `${n} rooms of map ${e.map}`;
+      return { title: `${WIRE_NAMES[w.kind]} ${out ? 'to' : 'from'} ${rooms}`, sub: `The first: ${wireTip(w).sub}` };
+    }
+    const at = (e: End) => (e.map === map ? called(e.room) : `room ${e.map}/${e.room}`);
+    const [a, b] = [at(w.from), at(w.to)];
+    const go = w.to.map === map && !scene?.by.has(w.to.room) ? ` Map ${map} has no room ${w.to.room}.` : ' Click to go there.';
+    if (w.kind === 'death') return { title: `Death room: ${b}`, sub: `Whoever dies in ${a} wakes in ${b} (its Death Room).${go}` };
+    if (w.kind === 'hangup') return { title: `Hang-up room: ${b}`, sub: `Whoever leaves the game in ${a}, or hangs up, comes back in ${b} (its Exit Room).${go}` };
+    if (w.kind === 'control') return { title: `Control room: ${b}`, sub: `Its Max Area caps the monsters ${a} and the other rooms it controls spawn between them.${go}` };
+    const t = w.target;
+    const by = w.source?.table === 'Spells' ? `spell ${w.source.key[0]}, ${w.source.name || 'unnamed'}` : t?.table === 'Textblocks' ? `text block ${t.record}: ${t.what}` : 'its Remote Action exit';
+    const how = setOff(w.when, a);
+    // one of more than are drawn
+    const of = w.fan ? ` One of ${w.fan.toLocaleString()} ${WIRE_NAMES[w.kind].toLowerCase()}s from ${a}: the map draws ${SPRAY}.` : '';
+    if (w.kind === 'remote') return { title: `${WIRE_NAMES.remote} on the ${DIR_WORDS[w.exit ?? 0]} exit of ${b}`, sub: `${how} works that exit (${by}).${of}${go}` };
+    const where = w.among && t ? `a room rolled from ${t.to_room} to ${t.to_last} of map ${t.to_map}, ${b} among them` : b;
+    return { title: `${WIRE_NAMES[w.kind]} to ${w.among ? `one of ${w.among} rooms` : b}`, sub: `${how} ${w.kind === 'spell' ? 'casts a spell that teleports them' : 'teleports them'} to ${where} (${by}).${of}${go}` };
+  }
+
   function tipFor(h: Hit): { title: string; sub: string } {
+    if (h.wire) return wireTip(h.wire, h.wires);
     if (h.ghost) {
       const from = named(selected?.room ?? 0);
       const way = DIR_WORDS[h.ghost.dir] ?? '';
@@ -607,6 +680,7 @@
     if (!scene) return;
     edits++;
     scene.setRooms(rooms);
+    roomsAt++;
     count = rooms.length;
     maps = maps.map(([m, c]) => [m, m === map ? rooms.length : c]);
     selected = selected ? (scene.by.get(selected.room) ?? null) : null;
@@ -711,7 +785,6 @@
   /** Saves of them sent and not yet answered: a read of the map meanwhile keeps these. */
   let pinsPending = 0;
   let pinChain: Promise<unknown> = Promise.resolve();
-  let importer = $state<HTMLInputElement | undefined>();
 
   const pinsFrom = (c: PinCells | undefined) => new Map(Object.entries(c ?? {}).map(([k, [x, y]]) => [Number(k), { x, y }]));
 
@@ -936,6 +1009,16 @@
     else if (selected?.room !== n) choose(n, 'keep', false);
   }
 
+  /** Loads the Show menu's code, if it has not been. */
+  function loadShow() {
+    if (ShowMenu) return;
+    showFailed = '';
+    import('./ShowMenu.svelte').then(
+      (m) => (ShowMenu = m.default),
+      (e) => (showFailed = messageOf(e)),
+    );
+  }
+
   // ---- all maps ------------------------------------------------------------------------
 
   /** All maps: every map as a disc, joined by their map changes, over the map. */
@@ -992,30 +1075,6 @@
       if (h && selected) scene?.keepInView(selected.room);
     });
   });
-
-  /** The export's name: the world's, as a file name. */
-  const fileStem = () => (app.current?.label ?? 'world').split('(')[0]!.trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'world';
-
-  async function exportLayouts() {
-    try {
-      const f = await api.mapFile();
-      const rooms = Object.values(f.maps).reduce((a, p) => a + Object.keys(p.pins).length, 0);
-      if (!rooms) {
-        toast('No map has been laid out by hand yet, so there is nothing to export.');
-        return;
-      }
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([JSON.stringify(f, null, 1)], { type: 'application/json' }));
-      a.download = `${fileStem()}-map-layouts.json`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-      const maps = Object.keys(f.maps).length;
-      toast(`Exported the layouts of ${maps === 1 ? 'one map' : `${maps} maps`} (${rooms.toLocaleString()} rooms).`);
-    } catch (e) {
-      sfx('nope');
-      toast(messageOf(e), { kind: 'error' });
-    }
-  }
 
   async function importLayouts(file: File) {
     try {
@@ -1075,6 +1134,13 @@
     sfx('toggle');
   }
 
+  function setWiresFor(v: WiresFor) {
+    if (v === wiresFor) return;
+    wiresFor = v;
+    write('dd-map-wires', v);
+    sfx('toggle');
+  }
+
   function toggleSpot(key: string) {
     spot = spot.includes(key) ? spot.filter((k) => k !== key) : [...spot, key];
     scene?.setSpot(spot);
@@ -1103,6 +1169,19 @@
       if (!scene) return;
       scene.setEdited(e);
       if (colourBy === 'edits') legend = scene.legend();
+    });
+  });
+
+  /** The rooms whose wires show: those picked, or the room selected. */
+  const wired = $derived<ReadonlySet<number>>(picking && selector?.picked.size ? selector.picked : selected ? new Set([selected.room]) : new Set());
+
+  // the wires follow the rooms they are for, the map's rooms, and the layer's choice
+  $effect(() => {
+    const [mode, s, rooms] = [wiresFor, scripts, wired];
+    void roomsAt;
+    untrack(() => {
+      if (!scene) return;
+      scene.setWires(mode === 'off' ? [] : wiresOf(map, scene.by, s, rooms, mode === 'all').wires, map, mode === 'all');
     });
   });
 
@@ -1265,6 +1344,7 @@
         }
       },
       follow,
+      wire: followWire,
       out: () => void openWorld(),
       hover: (h, x, y) => (tip = h ? { x, y, ...tipFor(h) } : null),
       moved: (c) => {
@@ -1336,14 +1416,7 @@
   });
 
   const pct = $derived(`${Math.round(zoom * 100)}%`);
-  const exitColour = (l: ExitLook) => (l.sort ? pal.exit[l.sort] : pal.path);
 </script>
-
-{#snippet glyph(name: IconName)}
-  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    {#each ICONS[name] as [tag, attrs], i (i)}<svelte:element this={tag} {...attrs} />{/each}
-  </svg>
-{/snippet}
 
 <div class="world" class:focus class:walking class:narrow={!wideTop} style:--card="{card}px" style:--view="{viewWidth}px" bind:clientWidth={width}>
   <canvas
@@ -1463,79 +1536,28 @@
         <button type="button" role="radio" aria-checked={colourBy === c.id} class:on={colourBy === c.id} onclick={() => setColour(c.id)}>{c.label}</button>
       {/each}
     </div>
-    <Popover.Root>
+    <Popover.Root onOpenChange={(open) => open && loadShow()}>
       <Popover.Trigger class="btn glass" aria-label="What the map shows"><LayersIcon size={15} /><span class="wide-only">Show</span></Popover.Trigger>
       <Popover.Portal>
         <Popover.Content class="pop layers-pop" sideOffset={8} align="end" collisionPadding={8}>
-          <div class="eyebrow head">Colour rooms by</div>
-          <div class="seg in-pop" role="radiogroup" aria-label="Colour rooms by">
-            {#each COLOUR_BY as c (c.id)}
-              <button type="button" role="radio" aria-checked={colourBy === c.id} class:on={colourBy === c.id} onclick={() => setColour(c.id)}>{c.label}</button>
-            {/each}
-          </div>
-          <div class="menu-sep"></div>
-          <div class="eyebrow head">Show on the map</div>
-          {#each [['labels', 'Place names', 'One name for each run of rooms that share it'], ['symbols', 'Exit symbols and room marks', 'Doors, keys, traps, shops, NPCs and where far exits lead'], ['grid', 'Grid dots', 'The cells rooms sit on']] as [k, label, sub] (k)}
-            <label class="menu-item">
-              <span>{label}<span class="sub">{sub}</span></span>
-              <span class="end"><input class="switch" type="checkbox" role="switch" checked={layers[k as keyof Layers]} onchange={(e) => setLayer(k as keyof Layers, e.currentTarget.checked)} /></span>
-            </label>
-          {/each}
-          <div class="menu-sep"></div>
-          <div class="eyebrow head">Layout</div>
-          <p class="lay">
-            {#if pinCount}
-              Map {map} is laid out by hand: rooms stay where they are drawn, and new rooms join them by their exits.
-            {:else}
-              Laid out by the exits, from room {startRoom}. In Build mode, drag a room (or press Shift and an arrow) to move it; the map then keeps its layout.
-            {/if}
-          </p>
-          <div class="lay-acts">
-            {#if pinCount}
-              <button type="button" class="btn sm" onclick={layOutAfresh}><RotateCcw size={13} />Lay out by exits</button>
-            {/if}
-            <button type="button" class="btn sm" onclick={exportLayouts} title="Every map's layout, as a file another builder can import"><Download size={13} />Export</button>
-            <button type="button" class="btn sm" onclick={() => importer?.click()} title="Layouts exported from Daydream: each map in the file takes its layout"><Upload size={13} />Import</button>
-            <input
-              bind:this={importer}
-              type="file"
-              accept=".json,application/json"
-              hidden
-              onchange={(e) => {
-                const f = e.currentTarget.files?.[0];
-                e.currentTarget.value = '';
-                if (f) void importLayouts(f);
-              }}
+          {#if ShowMenu}
+            <ShowMenu
+              {map}
+              {colourBy}
+              {layers}
+              {wiresFor}
+              {pinCount}
+              {startRoom}
+              {pal}
+              oncolour={setColour}
+              onlayer={setLayer}
+              onwires={setWiresFor}
+              onlayout={layOutAfresh}
+              onimport={(f) => void importLayouts(f)}
             />
-          </div>
-          <div class="menu-sep"></div>
-          <div class="eyebrow head">What the marks mean</div>
-          <ul class="key">
-            {#each ROOM_LEGEND as m (m.label)}
-              <li><span class="mark room">{@render glyph(m.icon)}</span>{m.label}</li>
-            {/each}
-            <li>
-              <span class="mark"><svg viewBox="0 0 28 14" width="28" height="14" aria-hidden="true"><path d="M2 7h24" stroke={pal.oneway} stroke-width="2" /><path d="M17 3l5 4-5 4z" fill={pal.oneway} /></svg></span>One-way exit
-            </li>
-            <li>
-              <span class="mark"><svg viewBox="0 0 28 14" width="28" height="14" aria-hidden="true"><path d="M2 7h10" stroke={pal.path} stroke-width="2" /><rect x="12" y="2.5" width="14" height="9" rx="4.5" fill={pal.badge} stroke={pal.path} stroke-width="1.4" /></svg></span>Exit to a room drawn elsewhere
-            </li>
-            <li>
-              <span class="mark"><svg viewBox="0 0 28 14" width="28" height="14" aria-hidden="true"><path d="M2 7h10" stroke={pal.portal} stroke-width="2" /><rect x="12" y="2.5" width="14" height="9" rx="4.5" fill={pal.portal} /></svg></span>Exit to another map
-            </li>
-            <li>
-              <span class="mark"><svg viewBox="0 0 28 14" width="28" height="14" aria-hidden="true"><path d="M9 2l5 8H4z" fill={pal.ink} /><path d="M19 12l5-8H14z" fill={pal.ink} /></svg></span>Up and down
-            </li>
-            {#each EXIT_LEGEND as x (x.label)}
-              <li>
-                <span class="mark" style:color={exitColour(x.look)}>
-                  {#if x.look.icon}{@render glyph(x.look.icon)}{:else}<svg viewBox="0 0 28 14" width="28" height="14" aria-hidden="true"
-                      ><path d="M2 7h24" stroke="currentColor" stroke-width="2" />{#each Array(x.look.bars ?? 0) as _, i (i)}<path d="M{12 + i * 4} 2v10" stroke="currentColor" stroke-width="2.4" />{/each}</svg
-                    >{/if}
-                </span>{x.label}
-              </li>
-            {/each}
-          </ul>
+          {:else}
+            <p class="lay">{showFailed || 'Reading the menu…'}</p>
+          {/if}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
@@ -1696,19 +1718,15 @@
     font: 800 13px var(--font-body, Nunito, sans-serif); text-align: center; box-shadow: 0 3px 0 var(--shadow);
   }
   .name-field:focus { outline: 3px solid var(--focus); outline-offset: 1px; }
-  .lay { margin: 0 10px 8px; font-size: 12.5px; line-height: 1.4; color: var(--ink-2); max-width: 290px; }
-  .lay-acts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 10px 8px; }
-  .lay-acts .btn { gap: 5px; }
+  .lay { margin: 10px; font-size: 12.5px; color: var(--ink-3); }
 
   .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; }
   .seg button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; font-size: 12.5px; color: var(--ink-2); box-shadow: none; }
   .seg button:hover:not(.on) { background: var(--surface-3); }
   .seg button.on { background: var(--lilac-2); color: var(--lilac-ink); box-shadow: 0 0 0 1px var(--line-2); }
-  .seg.in-pop { display: flex; flex-wrap: wrap; margin: 0 6px 6px; background: var(--surface-2); border: 1px solid var(--line); }
-  .seg.in-pop button { flex: 1 1 auto; }
 
   :global(.maps-pop) { width: min(300px, calc(100vw - 16px)); }
-  :global(.maps-pop) .head, :global(.layers-pop) .head { padding: 8px 10px 6px; }
+  :global(.maps-pop) .head { padding: 8px 10px 6px; }
   :global(.maps-pop) .list { max-height: min(360px, 50vh); overflow: auto; }
   :global(.maps-pop) .find { margin: 0 6px 6px; width: calc(100% - 12px); }
   :global(.maps-pop) .num { min-width: 30px; height: 22px; padding: 0 6px; border-radius: 8px; display: inline-grid; place-items: center; background: var(--mint-2); color: var(--mint-ink); font: 700 12px var(--font-mono); }
@@ -1716,10 +1734,6 @@
   :global(.maps-pop) .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   :global(.maps-pop) .all .num { background: var(--lilac-2); color: var(--lilac-ink); }
   :global(.layers-pop) { width: min(360px, calc(100vw - 16px)); max-height: min(78vh, 640px); overflow: auto; }
-  .key { list-style: none; margin: 0; padding: 0 8px 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
-  .key li { display: flex; align-items: center; gap: 7px; min-width: 0; line-height: 1.25; }
-  .mark { flex: none; width: 28px; height: 18px; display: grid; place-items: center; }
-  .mark.room { width: 22px; height: 18px; border-radius: 6px; background: var(--surface-3); color: var(--ink); margin-inline: 3px; }
 
   /* the legend sits under the colours it explains */
   .legend {

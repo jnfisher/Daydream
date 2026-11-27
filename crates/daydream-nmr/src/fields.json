@@ -773,10 +773,14 @@
      "source": "silvermere-engine/src/monsters/generate.rs"
     },
     "Death Room": {
-     "links": "Rooms"
+     "links": "Rooms",
+     "note": "Where a player who dies in this room wakes, on the same map; 0 is the realm's reincarnation room on map 1 (the evil one for an outlaw).",
+     "source": "silvermere-engine/src/combat/kill_user.rs"
     },
     "Exit Room": {
-     "links": "Rooms"
+     "links": "Rooms",
+     "note": "Where a player who leaves the game in this room, or hangs up, comes back on entering again, on the same map; 0 is this room.",
+     "source": "silvermere-engine/src/state/login/leave.rs"
     },
     "Exit #": {
      "note": "The room this exit leads to, on the same map (a Map Change exit's Para1 names the map); 0 is no exit. By number: 0 N, 1 S, 2 E, 3 W, 4 NE, 5 NW, 6 SE, 7 SW, 8 U, 9 D.",

@@ -373,7 +373,7 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "get_map",
-            "description": "One map's rooms with their exits (direction, target room, exit type) and what NMR's map marks on them, plus every map number and its room count, each map's commonest room name (`names`, what the map mostly is), and the map change exits between maps (`links`: from, to, how many, and the first one's room and the room it leads to). `from` and `to` keep a range of room numbers; `columns` adds Rooms columns to each room (Type, Min Index, Max Index, Mon Type, ...).",
+            "description": "One map's rooms with their exits (direction, target room, exit type) and what NMR's map marks on them, plus every map number and its room count, each map's commonest room name (`names`, what the map mostly is), the map change exits between maps (`links`: from, to, how many, and the first one's room and the room it leads to), and the links no exit draws (`scripts`: `sources`, a command line, spell or Remote Action exit with its `targets`, the teleports, spell teleports and remote actions it does; `uses`, the rooms that set each source off and how). `from` and `to` keep a range of room numbers, and the scripts that start or end in it; `columns` adds Rooms columns to each room (Type, Min Index, Max Index, Mon Type, ...).",
             "inputSchema": { "type": "object", "properties": {
                 "map": { "type": "integer" },
                 "from": { "type": "integer" },
@@ -963,11 +963,13 @@ impl Server {
         let map = number_arg(args, "map")?.ok_or_else(|| bad("map is required"))?;
         let realm = self.realm()?;
         let layout = daydream_nmr::layout_of_realm(&realm);
-        let view = daydream_nmr::map::map_view(&realm, layout, map)
+        let mut view = daydream_nmr::map::map_view(&realm, layout, map)
             .map_err(|e| ToolError::Io(e.to_string()))?;
-        let mut v = serde_json::to_value(view).map_err(|e| ToolError::Io(e.to_string()))?;
         let from = number_arg(args, "from")?.unwrap_or(i64::MIN);
         let to = number_arg(args, "to")?.unwrap_or(i64::MAX);
+        // the scripts of the rooms kept
+        view.scripts = view.scripts.within(map, from, to);
+        let mut v = serde_json::to_value(view).map_err(|e| ToolError::Io(e.to_string()))?;
         if let Some(rooms) = v.get_mut("rooms").and_then(Value::as_array_mut) {
             rooms.retain(|r| r["room"].as_i64().is_some_and(|n| n >= from && n <= to));
         }
