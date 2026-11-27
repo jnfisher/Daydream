@@ -23,6 +23,9 @@ function room(n: number, name: string, ...exits: [number, number][]): MapRoom {
     exit_room: 0,
     room_type: 0,
     mon_type: 3,
+    min_index: 0,
+    max_index: 0,
+    max_regen: 0,
     light: -20,
   };
 }

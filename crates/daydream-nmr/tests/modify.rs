@@ -54,6 +54,7 @@ fn math_in_range_and_only_if() {
             from: numbers[10],
             to: numbers[19],
         }),
+        only: vec![],
         only_if: vec![Condition::Column {
             column: "Type".into(),
             cmp: Cmp::Eq,
@@ -94,6 +95,83 @@ fn math_in_range_and_only_if() {
     }
 }
 
+/// `only` narrows the range to the records listed: the rooms picked on the World map.
+#[test]
+fn only_the_records_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    random_realm(dir.path(), 30, 23);
+    let realm = Realm::open(dir.path()).unwrap();
+    let before = items(&realm);
+    let (num, weight) = (
+        before.position("Number").unwrap(),
+        before.position("Weight").unwrap(),
+    );
+    let numbers: Vec<i64> = before.rows.iter().map(|r| n(&r[num]) as i64).collect();
+    let picked = vec![numbers[3], numbers[7], numbers[21]];
+    let set = |only: Vec<i64>| Modify {
+        table: "Items".into(),
+        action: Action::Set {
+            values: vec![("Weight".into(), Value::Long(4321))],
+        },
+        range: Some(Range {
+            table: "Items".into(),
+            map: None,
+            from: numbers[0],
+            to: numbers[29],
+        }),
+        only,
+        only_if: vec![],
+    };
+    let plan = modify::plan(&realm, &set(picked.clone()), Dos).unwrap();
+    let planned: Vec<i64> = plan.changes.iter().map(|c| n(&c.key[0]) as i64).collect();
+    assert_eq!(planned, picked);
+    assert_eq!(plan.records(), 3);
+    assert_eq!(plan.unchanged, 0);
+    // none listed: the whole range
+    assert_eq!(
+        modify::plan(&realm, &set(vec![]), Dos).unwrap().records(),
+        30
+    );
+
+    modify::apply(&realm, &plan, Dos).unwrap();
+    let after = items(&realm);
+    for (a, b) in before.rows.iter().zip(&after.rows) {
+        let mine = picked.contains(&(n(&a[num]) as i64));
+        assert_eq!(b[weight] == Value::Long(4321), mine, "{:?}", a[num]);
+    }
+}
+
+/// A set refuses a number its column's record element cannot hold, rather than cut it short.
+#[test]
+fn a_set_keeps_to_what_the_record_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    random_realm(dir.path(), 4, 24);
+    let realm = Realm::open(dir.path()).unwrap();
+    let set = |v: Value| Modify {
+        table: "Items".into(),
+        action: Action::Set {
+            values: vec![("Weight".into(), v)],
+        },
+        range: None,
+        only: vec![],
+        only_if: vec![],
+    };
+    for bad in [
+        Value::Long(40_000),
+        Value::Long(-40_000),
+        Value::Double(2.5),
+    ] {
+        let e = modify::plan(&realm, &set(bad.clone()), Dos).unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("Items.Weight holds whole numbers from -32768 to 32767"),
+            "{bad:?}: {e}"
+        );
+    }
+    assert!(modify::plan(&realm, &set(Value::Long(-32_768)), Dos).is_ok());
+    assert!(modify::plan(&realm, &set(Value::Double(32_767.0)), Dos).is_ok());
+}
+
 #[test]
 fn abilities_are_given_taken_and_changed() {
     let dir = tempfile::tempdir().unwrap();
@@ -119,6 +197,7 @@ fn abilities_are_given_taken_and_changed() {
                 limit: None,
             },
             range: None,
+            only: vec![],
             only_if: vec![],
         };
         let p = modify::plan(&realm, &take_all, Dos).unwrap();
@@ -131,6 +210,7 @@ fn abilities_are_given_taken_and_changed() {
                 table: "Items".into(),
                 action,
                 range: None,
+                only: vec![],
                 only_if: vec![],
             },
             Dos,
@@ -171,6 +251,7 @@ fn abilities_are_given_taken_and_changed() {
             clear_value: true,
         },
         range: None,
+        only: vec![],
         only_if: vec![Condition::HasAbility {
             ability: 22,
             cmp: Cmp::Ge,
@@ -195,6 +276,7 @@ fn bad_runs_are_refused() {
             limit: None,
         },
         range: None,
+        only: vec![],
         only_if: vec![],
     };
     assert!(modify::plan(&realm, &math(&["Weight"], Op::Div), Dos).is_err());
@@ -207,6 +289,7 @@ fn bad_runs_are_refused() {
             value: 1,
         },
         range: None,
+        only: vec![],
         only_if: vec![],
     };
     assert!(modify::plan(&realm, &give, Dos).is_err());
@@ -249,6 +332,7 @@ fn set_fills_in_rooms_like_the_mass_room_editor() {
             from: 2,
             to: 3,
         }),
+        only: vec![],
         only_if: vec![],
     };
     let plan = modify::plan(&realm, &m, Dos).unwrap();

@@ -38,8 +38,12 @@ pub struct MapRoom {
     pub exit_room: i64,
     /// The room type (`Type`: shop, arena, lair...).
     pub room_type: i64,
-    /// Which monsters come (`Mon Type`).
+    /// Which monsters come (`Mon Type`), and which of the group (`Min Index` to `Max Index`) and
+    /// how many at most (`Max Regen`).
     pub mon_type: i64,
+    pub min_index: i64,
+    pub max_index: i64,
+    pub max_regen: i64,
     pub light: i64,
 }
 
@@ -67,6 +71,7 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
         at("Exit Room")?,
     );
     let (room_type, mon_type, light) = (at("Type")?, at("Mon Type")?, at("Light")?);
+    let (min_index, max_index, max_regen) = (at("Min Index")?, at("Max Index")?, at("Max Regen")?);
     let exits = rows.family("Exit", 10, "")?;
     let kinds = rows.family("Type", 10, "")?;
     let p1 = rows.family("Para1", 10, "")?;
@@ -102,6 +107,9 @@ pub fn map_view(realm: &Realm, layout: LayoutSet, map: i64) -> Result<MapView, R
             exit_room: n(&r[exit_room]),
             room_type: n(&r[room_type]),
             mon_type: n(&r[mon_type]),
+            min_index: n(&r[min_index]),
+            max_index: n(&r[max_index]),
+            max_regen: n(&r[max_regen]),
             light: n(&r[light]),
         })
         .collect();
@@ -709,6 +717,94 @@ pub fn stamp(
         rows: out,
     });
     Ok((plan, done))
+}
+
+/// The most rooms one set from the World map reaches.
+pub const MAX_BULK_ROOMS: usize = 50_000;
+/// The most columns one set changes.
+pub const MAX_BULK_COLUMNS: usize = 64;
+
+/// Fields set on rooms picked on the World map, together, as one step: its bulk bar. Planned
+/// as NMR's Mass Room Editor sets them, on those rooms alone.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Bulk {
+    pub map: i64,
+    pub rooms: Vec<i64>,
+    /// Each column and its value (text or a number).
+    pub values: Vec<(String, crate::schema::Value)>,
+    /// What is set, for the history ("Light", "Monsters"); left out, the columns.
+    #[serde(default)]
+    pub what: String,
+}
+
+impl Bulk {
+    /// The history's label: "Set Light on 14 rooms of map 1".
+    pub fn label(&self) -> String {
+        let what: String = match self.what.trim() {
+            "" => self
+                .values
+                .iter()
+                .map(|(c, _)| c.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            w => w.to_string(),
+        };
+        let what: String = what.chars().take(60).collect();
+        match self.rooms.as_slice() {
+            [r] => format!("Set {what} on room {}/{r}", self.map),
+            rooms => format!("Set {what} on {} rooms of map {}", rooms.len(), self.map),
+        }
+    }
+}
+
+/// Plans a [`Bulk`] set: every changed value, on the rooms named alone.
+pub fn bulk(realm: &Realm, layout: LayoutSet, b: &Bulk) -> Result<crate::modify::Plan, DigError> {
+    if !(1..=i64::from(u16::MAX)).contains(&b.map) {
+        return Err(DigError::Bad(format!("no map {}", b.map)));
+    }
+    if b.rooms.is_empty() {
+        return Err(DigError::Bad("pick the rooms to set".into()));
+    }
+    if b.rooms.len() > MAX_BULK_ROOMS {
+        return Err(DigError::Bad(format!(
+            "a set reaches at most {MAX_BULK_ROOMS} rooms"
+        )));
+    }
+    if b.values.is_empty() {
+        return Err(DigError::Bad("name the fields to set".into()));
+    }
+    if b.values.len() > MAX_BULK_COLUMNS {
+        return Err(DigError::Bad(format!(
+            "a set changes at most {MAX_BULK_COLUMNS} fields"
+        )));
+    }
+    let on_map: std::collections::BTreeSet<i64> = map_view(realm, layout, b.map)?
+        .rooms
+        .iter()
+        .map(|r| r.room)
+        .collect();
+    if let Some(r) = b.rooms.iter().find(|r| !on_map.contains(r)) {
+        return Err(DigError::Bad(format!("map {} has no room {r}", b.map)));
+    }
+    let (from, to) = (
+        *b.rooms.iter().min().expect("not empty"),
+        *b.rooms.iter().max().expect("not empty"),
+    );
+    let m = crate::modify::Modify {
+        table: "Rooms".into(),
+        action: crate::modify::Action::Set {
+            values: b.values.clone(),
+        },
+        range: Some(crate::import::Range {
+            table: "Rooms".into(),
+            map: Some(b.map),
+            from,
+            to,
+        }),
+        only: b.rooms.clone(),
+        only_if: Vec::new(),
+    };
+    crate::modify::plan(realm, &m, layout).map_err(|e| DigError::Bad(e.to_string()))
 }
 
 /// `text` with its first letter a capital.

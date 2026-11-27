@@ -372,6 +372,9 @@ export const api = {
   /** A stamp from the World map: its rooms and exits as one step of the history, which it answers. */
   stamp: (s: StampRequest) =>
     call<{ notes: string[]; stamp: { rooms: number; exits: number; joined: number; left: number }; step: number | null }>('POST', '/api/map/stamp', s),
+  /** Sets fields on rooms picked on the World map, as one step of the history: NMR's Mass Room Editor, on those rooms alone. */
+  mapSet: (b: { map: number; rooms: number[]; values: [string, string | number][]; what: string }) =>
+    call<{ changed: number; records: number; unchanged: number; notes: string[] }>('POST', '/api/map/set', b),
   /**
    * Where rooms of one map moved by hand are drawn (`null`: where the layout puts them; `replace`
    * puts the map's others back too). Kept beside the working copy, not in the realm. Answers the

@@ -3,6 +3,7 @@
 
 import { ICONS, type IconNode } from './icons';
 import type { MapExit, MapRoom } from './model';
+import { LIGHT_WORDS } from './picks';
 
 // ---- colours -------------------------------------------------------------------------
 
@@ -136,12 +137,6 @@ export interface Tint {
   colour: string;
 }
 
-const LIGHTS: [number, string][] = [
-  [0, 'Normal light'],
-  [-1, 'Dim'],
-  [-100, 'Dark'],
-  [-175, 'Very dark'],
-];
 
 export function tintOf(r: MapRoom, by: ColourBy, p: Palette, biome: Biome, edited: boolean): Tint {
   switch (by) {
@@ -156,10 +151,11 @@ export function tintOf(r: MapRoom, by: ColourBy, p: Palette, biome: Biome, edite
         ? { key: `m${r.mon_type}`, label: monsterGroup(r.mon_type), colour: swatch(r.mon_type * 7 + 3, p) }
         : { key: 'none', label: 'Lair group 0', colour: p.plain };
     case 'light': {
-      if (r.light >= 0) return { key: 'l0', label: r.light > 0 ? 'Normal or brighter' : 'Normal light', colour: p.plain };
-      const step = LIGHTS.filter(([v]) => r.light <= v).pop()!;
-      const k = Math.min(1, -r.light / 200);
-      return { key: `l${step[0]}`, label: step[1], colour: mix(p.plain, p === NIGHT ? '#05040d' : '#3a2f7a', 0.25 + k * 0.6) };
+      // the game's own bands: blinding, daylight, regular, dimly lit, barely visible, very dark, pitch black
+      const band = LIGHT_WORDS.findIndex(([from]) => r.light >= from);
+      const colour =
+        band < 2 ? mix(p.plain, p === NIGHT ? '#e3c461' : '#ffd25e', band ? 0.45 : 0.85) : band === 2 ? p.plain : mix(p.plain, p === NIGHT ? '#05040d' : '#3a2f7a', [0.3, 0.5, 0.68, 0.85][band - 3]!);
+      return { key: `l${band}`, label: LIGHT_WORDS[band]![1], colour };
     }
     case 'edits':
       return edited ? { key: 'edited', label: 'Changed since publishing', colour: p === NIGHT ? '#e3c461' : '#ffd25e' } : { key: 'none', label: 'Not changed', colour: p.plain };
