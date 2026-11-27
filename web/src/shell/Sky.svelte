@@ -1,4 +1,6 @@
 <!-- Clouds by day and stars by night behind a friendly header; decoration only. -->
+<svelte:options css="injected" />
+
 <script lang="ts">
   let { clouds = 3, stars = 18, seed = 5 }: { clouds?: number; stars?: number; seed?: number } = $props();
 
