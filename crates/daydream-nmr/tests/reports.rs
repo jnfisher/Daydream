@@ -251,17 +251,29 @@ fn a_map_view_has_its_rooms_exits_and_the_maps() {
             ("Room Number", l(9)),
             ("Name", t("Far")),
         ],
+        vec![
+            ("Map Number", l(1)),
+            ("Room Number", l(3)),
+            ("Name", t("Road")),
+        ],
     ];
     let refs: Vec<&[(&str, Value)]> = rows.iter().map(|r| r.as_slice()).collect();
     put(&realm, "Rooms", &refs);
     let view = map_view(&realm, Dos, 1).unwrap();
-    assert_eq!(view.maps, [(1, 2), (3, 1)]);
+    assert_eq!(view.maps, [(1, 3), (3, 1)]);
     let names: Vec<_> = view
         .rooms
         .iter()
         .map(|r| (r.room, r.name.as_str()))
         .collect();
-    assert_eq!(names, [(1, "Square"), (2, "Road")]);
+    assert_eq!(names, [(1, "Square"), (2, "Road"), (3, "Road")]);
+    // what each map mostly is: two of map 1's rooms are Road
+    let common: Vec<_> = view
+        .names
+        .iter()
+        .map(|m| (m.map, m.name.as_str(), m.rooms))
+        .collect();
+    assert_eq!(common, [(1, "Road", 2), (3, "Far", 1)]);
     let square = &view.rooms[0];
     assert_eq!(square.shop, 4);
     assert_eq!(
@@ -274,6 +286,13 @@ fn a_map_view_has_its_rooms_exits_and_the_maps() {
         .map(|e| (e.dir, e.to, e.kind, e.para1, e.para4))
         .collect();
     assert_eq!(exits, [(0, 2, 0, 0, 0), (6, 9, 8, 3, 5)]);
+    // the map change from 1/1 to 3/9 joins map 1 to map 3
+    let links: Vec<_> = view
+        .links
+        .iter()
+        .map(|l| (l.from, l.to, l.exits, l.room, l.to_room))
+        .collect();
+    assert_eq!(links, [(1, 3, 1, 1, 9)]);
     assert!(map_view(&realm, Dos, 7).unwrap().rooms.is_empty());
 }
 

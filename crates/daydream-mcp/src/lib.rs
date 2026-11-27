@@ -373,7 +373,7 @@ fn tool_list(silvermere: bool) -> Value {
         },
         {
             "name": "get_map",
-            "description": "One map's rooms with their exits (direction, target room, exit type) and what NMR's map marks on them, plus every map number and its room count. `from` and `to` keep a range of room numbers; `columns` adds Rooms columns to each room (Type, Min Index, Max Index, Mon Type, ...).",
+            "description": "One map's rooms with their exits (direction, target room, exit type) and what NMR's map marks on them, plus every map number and its room count, each map's commonest room name (`names`, what the map mostly is), and the map change exits between maps (`links`: from, to, how many, and the first one's room and the room it leads to). `from` and `to` keep a range of room numbers; `columns` adds Rooms columns to each room (Type, Min Index, Max Index, Mon Type, ...).",
             "inputSchema": { "type": "object", "properties": {
                 "map": { "type": "integer" },
                 "from": { "type": "integer" },

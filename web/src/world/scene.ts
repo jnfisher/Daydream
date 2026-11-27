@@ -27,6 +27,10 @@ const HALF = 0.34;
 const CHIP = 0.46;
 /** How far a chip moves to the side when a room is in the next cell, in cells. */
 const ASIDE = 0.2;
+/** Where a map change's portal sits when the next cell is free, in cells from its room's middle,
+ * and the least zoom portals show at. */
+const PORTAL = 0.62;
+const PORTALS = 0.6;
 /** The least zoom Build mode's free cells and join marks show at. */
 const GHOSTS = 0.4;
 /** What a fit leaves clear for the controls over the map, in pixels: the map's name and its colours along the top, the hint along the bottom. */
@@ -94,6 +98,9 @@ export interface SceneEvents {
   pick(room: MapRoom | null): void;
   /** A stub or an up or down mark clicked. */
   follow(stub: Stub): void;
+  /** The wheel (or the zoom out key) went on zooming out with all the map small in view: all
+   * the maps' turn. */
+  out?(): void;
   /** What the pointer is over, for the tooltip (null: nothing), at the pointer's place on the canvas. */
   hover(hit: Hit | null, x: number, y: number): void;
   /** The camera moved. */
@@ -189,6 +196,8 @@ interface Press {
 }
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** A map change beside its room (up and down ones are marks on the room). */
+const portal = (s: Stub) => s.sort === 'map' && s.exit.dir < 8;
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
 
 export class Scene {
@@ -211,6 +220,9 @@ export class Scene {
    * brought into view between them. */
   private over = 0;
   private under = 0;
+  /** How far the wheel has gone on zooming out past the whole map, and when it last did. */
+  private beyond = 0;
+  private beyondAt = 0;
   /** Build mode: the ways the selected room can be dug or joined are drawn. */
   private building = false;
   /** The room being named: its name pill is left to the field over it. */
@@ -659,6 +671,11 @@ export class Scene {
     const [px, py] = at ?? [(this.W - this.cover) / 2, this.H / 2];
     // a zoom while one is under way goes on from where that one was going
     const base = this.goal ?? this.cam;
+    // zoomed out past the whole map already: all the maps
+    if (f < 1 && this.on.out && !this.tool && base.z <= this.outZoom() * 1.001) {
+      this.on.out();
+      return;
+    }
     const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, base.z * f));
     // the point under (px, py) stays there
     const bx = (px - this.W / 2) / base.z + base.x;
@@ -688,6 +705,42 @@ export class Scene {
   fit(animate = true): void {
     const b = this.layout?.bounds;
     if (b) this.frame(b.x0, b.y0, b.x1, b.y1, 1.6, animate);
+  }
+
+  /** The zoom below which all the map is small in view: zooming out on from there asks for all
+   * the maps. */
+  private outZoom(): number {
+    const b = this.layout?.bounds;
+    if (!b) return MIN_ZOOM;
+    const w = Math.max(1, this.W - this.cover - SIDE * 2);
+    const h = Math.max(1, this.H - TOP - BOTTOM);
+    return Math.max(MIN_ZOOM, Math.min(w / ((b.x1 - b.x0 + 1) * S), h / ((b.y1 - b.y0 + 1) * S)) * 0.6);
+  }
+
+  /** Counts a wheel's zoom out past the whole map; once it has gone far enough, all the maps'
+   * turn (true: the wheel's zoom is spent). */
+  private pastWhole(f: number): boolean {
+    if (!this.on.out || this.tool || this.carry || f >= 1) {
+      this.beyond = 0;
+      return false;
+    }
+    const now = performance.now();
+    if (now - this.beyondAt > 600) this.beyond = 0;
+    this.beyondAt = now;
+    if (this.cam.z > this.outZoom() * 1.001) {
+      this.beyond = 0;
+      return false;
+    }
+    this.beyond -= Math.log(f);
+    if (this.beyond < 0.5) return false;
+    this.beyond = 0;
+    this.on.out();
+    return true;
+  }
+
+  /** Every room in view again, if the camera was zoomed out past them (back from all the maps). */
+  fitIfPast(animate = true): void {
+    if (this.cam.z < this.outZoom() * 1.2) this.fit(animate);
   }
 
   /** The rooms joined to the start room, in view (the islands below may be cut off). */
@@ -749,8 +802,8 @@ export class Scene {
       const g = ghosts.find((h) => h.to === null && h.x === gx && h.y === gy);
       if (g) return { room: null, stub: null, ghost: g };
     }
-    // chips and marks first: they sit on and beside rooms
-    if (this.layers.symbols && z >= 0.9) {
+    // chips and marks first: they sit on and beside rooms (portals show sooner)
+    if (this.layers.symbols && z >= PORTALS) {
       const [wx, wy] = this.toWorld(px, py);
       const gx = Math.floor(wx / S);
       const gy = Math.floor(wy / S);
@@ -761,6 +814,7 @@ export class Scene {
           const n = l.cell.get(cellKey(x, y));
           if (n === undefined) continue;
           for (const s of this.stubsOf.get(n) ?? []) {
+            if (z < 0.9 && !portal(s)) continue;
             const c = this.stubSpot(s, x, y);
             const d = Math.hypot(c.x - px, c.y - py);
             if (d <= c.r + 4 && d < bestD) [best, bestD] = [s, d];
@@ -793,6 +847,9 @@ export class Scene {
       const len = Math.hypot(dx, dy);
       ox -= (dy / len) * ASIDE;
       oy += (dx / len) * ASIDE;
+    } else if (s.sort === 'map') {
+      // the next cell free: a map change's portal, larger and further out
+      return { x: x + dx * PORTAL * S * z, y: y + dy * PORTAL * S * z, r: Math.max(2.5, Math.min(13, 0.22 * S * z)) };
     }
     return { x: x + ox * S * z, y: y + oy * S * z, r: Math.max(2.5, 0.17 * S * z) };
   }
@@ -985,7 +1042,9 @@ export class Scene {
           return;
         }
         // the wheel zooms where the pointer is; a pinch (Ctrl and the wheel) a little faster
-        this.zoomNow(this.cam.z * Math.exp(-e.deltaY * unit * (e.ctrlKey ? 0.01 : 0.0018)), x, y);
+        const f = Math.exp(-e.deltaY * unit * (e.ctrlKey ? 0.01 : 0.0018));
+        if (this.pastWhole(f)) return;
+        this.zoomNow(this.cam.z * f, x, y);
       },
       { passive: false },
     );
@@ -1328,9 +1387,9 @@ export class Scene {
       }
       ctx.globalAlpha = 1;
     }
-    if (chipsShown) {
+    if (chipsShown || (symbols && z >= PORTALS)) {
       for (const s of this.stubs) {
-        if (!inView(s.room.room)) continue;
+        if (!inView(s.room.room) || (!chipsShown && !portal(s))) continue;
         const p = l.at.get(s.room.room)!;
         ctx.globalAlpha = this.faded(s.room.room) ? 0.25 : 1;
         this.drawStub(s, this.stubSpot(s, p.x, p.y), s === this.hovered?.stub);
@@ -1701,9 +1760,37 @@ export class Scene {
       }
       return;
     }
-    const fill = s.sort === 'map' ? P.portal : P.badge;
-    const ring = s.sort === 'missing' ? P.missing : s.sort === 'map' ? P.line : s.look.sort ? P.exit[s.look.sort] : P.path;
-    const ink = s.sort === 'map' ? P.badge : s.sort === 'missing' ? P.missing : P.ink;
+    if (s.sort === 'map') {
+      // a portal: its map's number on a disc (a pill for a long number), once there is room
+      const label = String(s.exit.para1);
+      const text = c.r >= 5.5;
+      ctx.font = `800 ${Math.min(12, c.r * 1.1)}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+      const w = text ? Math.max(c.r * 2, ctx.measureText(label).width + 6) : c.r * 2;
+      ctx.fillStyle = P.portal;
+      ctx.strokeStyle = P.line;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.roundRect(c.x - w / 2, c.y - c.r, w, c.r * 2, c.r);
+      ctx.fill();
+      ctx.stroke();
+      if (hot) {
+        ctx.strokeStyle = P.sel;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(c.x - w / 2 - 3, c.y - c.r - 3, w + 6, c.r * 2 + 6, c.r + 3);
+        ctx.stroke();
+      }
+      if (text) {
+        ctx.fillStyle = P.badge;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, c.x, c.y + 0.5);
+      }
+      return;
+    }
+    const fill = P.badge;
+    const ring = s.sort === 'missing' ? P.missing : s.look.sort ? P.exit[s.look.sort] : P.path;
+    const ink = s.sort === 'missing' ? P.missing : P.ink;
     const text = z >= 2;
     ctx.font = `800 ${Math.min(10.5, 6.4 * z)}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
     const w = text ? Math.max(c.r * 2, ctx.measureText(s.label).width + 8) : c.r * 2;

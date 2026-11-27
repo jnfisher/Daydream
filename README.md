@@ -150,8 +150,9 @@ opens its card beside the map, and the keys walk its exits from there. Rooms are
 place (guessed from their names), area, monsters, light (in the game's words, from daylight
 to pitch black) or your own edits; a click on a colour in the legend picks its rooms out. An exit that takes something to pass (a door, a
 key, a toll, a trap) carries its symbol, a one-way exit an arrow, and an exit to a room drawn
-elsewhere, to another map (a click goes there) or to a room the map does not have ends in a
-chip. **Show** turns names, symbols and grid dots on and off and says what the marks mean.
+elsewhere (a click goes there) or to a room the map does not have ends in a chip. A map change
+ends in a portal with its map's number, which a click follows; the browser's Back comes back.
+**Show** turns names, symbols and grid dots on and off and says what the marks mean.
 
 **Build** (or `B`) digs with the same keys, as NMR's map editor does. From the selected room,
 a way with an exit is walked, a way into a room drawn next door joins the two (an exit each
@@ -239,13 +240,24 @@ there, `H` puts them in the start room, and the player's level, class, race, coi
 are under their name. Esc (or `P`) goes back to editing at the room reached, its card open.
 Nothing is written: a walk changes only the pretend player.
 
+**All maps** (`W`, the top of the maps list, or zooming out past a map) shows the whole world:
+every map as a disc, sized by its rooms and named by the name most of its rooms share
+(MajorMUD's maps have only numbers), and the map change exits between maps as lines, thicker
+for more exits, with an arrow where they go one way only. Pointing at a disc says which maps
+it joins, and at a line how many exits go each way and where the first is. A click on a disc
+opens its map, and a click on a line opens the room its first exit is in, on the map nearer
+the click; scrolling in over a disc opens it too. The arrow keys go from disc to disc and
+Enter opens one; `W` or Esc go back into the map. The maps list names each map the same way,
+and finds one by its number or its name.
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
 | `U` `D` | Walk up or down |
 | `H` | The start room |
 | `P` | Walk: playtest from the room, the arrows and `U` `D` walking its exits; a click puts the player in a room, Esc goes back to editing at the room reached |
-| `+` `-` | Zoom in or out |
+| `W` | All maps: every map as a disc and the map changes between them; the arrows go from map to map, Enter opens one, `W` or Esc go back |
+| `+` `-` | Zoom in or out (out past the whole map: all maps) |
 | Shift+1, Shift+2 | Every room in view; close up on the room |
 | `F` | Full screen (Esc comes back) |
 | `B` | Build mode: the arrows and `U` `D` dig, join or walk; digits first for a line, `.` again, Enter to name the room, Esc when done |
