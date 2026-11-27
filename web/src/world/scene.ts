@@ -20,7 +20,7 @@
 
 import { alongWay, lineTo, reachJoin, reachLine, type Reach } from './build';
 import { cellKey, OPPOSITE, STEP, type Layout, layOut, layOutLevels, type Levels, type Spot } from './layout';
-import { biomeOf, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type Palette, type Tint } from './look';
+import { biomeOf, contrast, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type MapStyle, type Palette, type Tint } from './look';
 import type { MapExit, MapRoom } from './model';
 import type { Wire, WireKind } from './wires';
 
@@ -352,6 +352,10 @@ export class Scene {
   private H = 0;
   private dpr = 1;
   private pal: Palette = palette();
+  /** The map's style: the theme's colours, or its own. */
+  private style: MapStyle = 'theme';
+  /** The colour a room's marks take on each room colour (the outline's, unless it is lost on it). */
+  private marks = new Map<string, string>();
   private edges: Edge[] = [];
   private stubs: Stub[] = [];
   private stubsOf = new Map<number, Stub[]>();
@@ -571,8 +575,27 @@ export class Scene {
 
   /** The theme changed. */
   retheme(): void {
-    this.pal = palette();
+    this.pal = palette(this.style);
+    this.marks.clear();
     this.retint();
+  }
+
+  /** The map drawn in another style. */
+  setStyle(s: MapStyle): void {
+    if (s === this.style) return;
+    this.style = s;
+    this.retheme();
+  }
+
+  /** The colour of the marks on a room of this colour: the outline's, or else what shows on it. */
+  private markOn(fill: string): string {
+    let c = this.marks.get(fill);
+    if (!c) {
+      const P = this.pal;
+      c = contrast(P.line, fill) >= 3 ? P.line : contrast('#ffffff', fill) >= contrast('#1a1636', fill) ? '#ffffff' : '#1a1636';
+      this.marks.set(fill, c);
+    }
+    return c;
   }
 
   select(n: number | null): void {
@@ -1407,19 +1430,41 @@ export class Scene {
       return !!p && p.x >= gx0 && p.x <= gx1 && p.y >= gy0 && p.y <= gy1;
     };
     const half = HALF * S * z;
-    const rad = Math.min(7, 5 * z);
+    const rad = Math.min(7, 5 * z) * P.round;
     const lw = Math.max(1, 2.2 * Math.min(z, 1.5));
     const symbols = this.layers.symbols;
     const pen: Pen = { ctx, pal: P, W, H, z, cell: S * z, half, rad, lw, inView, layout: l, at: (n) => l.at.get(n), sx: (gx) => this.sx(gx), sy: (gy) => this.sy(gy) };
 
-    // dots between the cells
-    if (this.layers.grid && z >= 0.45) {
+    // dots between the cells (or lines along them, every fifth stronger)
+    if (this.layers.grid && P.grid === 'dots' && z >= 0.45) {
       ctx.fillStyle = P.dot;
       const d = Math.max(1.5, 2.4 * Math.min(z, 1.4));
       for (let gx = gx0; gx <= gx1; gx++) {
         const x = (gx * S - cam.x) * z + W / 2 - d / 2;
         for (let gy = gy0; gy <= gy1; gy++) ctx.fillRect(x, (gy * S - cam.y) * z + H / 2 - d / 2, d, d);
       }
+    } else if (this.layers.grid && P.grid === 'lines' && z >= 0.2) {
+      ctx.strokeStyle = P.dot;
+      ctx.lineWidth = 1;
+      for (const major of [false, true]) {
+        if (!major && z < 0.45) continue;
+        ctx.globalAlpha = major ? 0.13 : 0.06;
+        ctx.beginPath();
+        for (let gx = gx0; gx <= gx1; gx++) {
+          if (major !== (gx % 5 === 0)) continue;
+          const x = Math.round((gx * S - cam.x) * z + W / 2) + 0.5;
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+        }
+        for (let gy = gy0; gy <= gy1; gy++) {
+          if (major !== (gy % 5 === 0)) continue;
+          const y = Math.round((gy * S - cam.y) * z + H / 2) + 0.5;
+          ctx.moveTo(0, y);
+          ctx.lineTo(W, y);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
     }
 
     // in levels, the level below, faint: what lies under this one, and where the ways down lead
@@ -1436,7 +1481,7 @@ export class Scene {
         left = Math.min(left, p.x);
       }
       if (top >= gy0 && top <= gy1 + 2) {
-        ctx.font = `800 ${Math.min(13, 11 * Math.max(z, 0.8))}px Nunito, sans-serif`;
+        ctx.font = `800 ${Math.min(13, 11 * Math.max(z, 0.8))}px ${P.ui}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
         ctx.fillStyle = P.ink;
@@ -1593,9 +1638,10 @@ export class Scene {
         const x = this.sx(p.x);
         const y = this.sy(p.y);
         ctx.globalAlpha = this.faded(r.room) ? 0.25 : 1;
-        if (r.room_type === 1 || r.shop) this.icon('store', x, y, ic, P.line, 2.2);
-        else if (r.room_type === 2 || r.room_type === 5) this.icon('swords', x, y, ic, P.line, 2.2);
-        else if (r.room_type === 3) this.icon('crown', x, y, ic, P.line, 2.2);
+        const ink = this.markOn(this.tints.get(r.room)?.colour ?? P.plain);
+        if (r.room_type === 1 || r.shop) this.icon('store', x, y, ic, ink, 2.2);
+        else if (r.room_type === 2 || r.room_type === 5) this.icon('swords', x, y, ic, ink, 2.2);
+        else if (r.room_type === 3) this.icon('crown', x, y, ic, ink, 2.2);
         if (r.npc) this.badge(x - half, y - half, 'user-round', P.badge, P.ink);
         if (r.command || r.spell) this.badge(x + half, y - half, 'sparkles', '#ffe08a', '#2e2650');
       }
@@ -1740,7 +1786,7 @@ export class Scene {
       const x = this.sx(p.x);
       const y = this.sy(p.y);
       const label = sel.name.trim() || `Room ${sel.room}`;
-      ctx.font = '800 12.5px Nunito, sans-serif';
+      ctx.font = `800 12.5px ${P.ui}`;
       const num = String(sel.room);
       const tw = ctx.measureText(label).width;
       ctx.font = '700 11px ui-monospace, "Cascadia Mono", Consolas, monospace';
@@ -1755,11 +1801,10 @@ export class Scene {
       ctx.roundRect(x - w / 2, py - 11, w, 22, 11);
       ctx.fill();
       ctx.stroke();
-      const ink = this.pal.sel === '#ffe27a' ? '#1a1636' : '#ffffff';
-      ctx.fillStyle = ink;
+      ctx.fillStyle = P.selInk;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.font = '800 12.5px Nunito, sans-serif';
+      ctx.font = `800 12.5px ${P.ui}`;
       ctx.fillText(label, x - w / 2 + 10, py + 0.5);
       ctx.globalAlpha = 0.75;
       ctx.font = '700 11px ui-monospace, "Cascadia Mono", Consolas, monospace';
@@ -1787,7 +1832,7 @@ export class Scene {
         if (n !== undefined && this.faded(n)) continue;
         if (near && lb.text === said && Math.abs(lb.x - near.x) <= 2 && Math.abs(lb.y - near.y) <= 2) continue;
         const fs = lb.size >= 60 ? 17 : lb.size >= 18 ? 14.5 : 12.5;
-        ctx.font = `${lb.size >= 18 ? 600 : 500} ${fs}px Fredoka, Nunito, sans-serif`;
+        ctx.font = `${lb.size >= 18 ? 600 : 500} ${fs}px ${P.font}`;
         const x = this.sx(lb.x);
         const y = this.sy(lb.y) - (z >= 1 ? half + 10 : 0);
         const w = ctx.measureText(lb.text).width + 8;

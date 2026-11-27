@@ -61,7 +61,7 @@
   import { app, closeInspector, dropLocalStep, inspect, localStep, realmChanged, undo, type LocalStep } from '../shell/state.svelte';
   import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
   import { dug, joined, moveFrom, reachCount, reached, reachLinks, renamed, type Reach } from './build';
-  import { COLOUR_BY, palette, type ColourBy } from './look';
+  import { COLOUR_BY, palette, styleFrom, type ColourBy, type MapStyle } from './look';
   import { SPRAY, wiresOf, type End, type Wire, type WireKind, type WiresFor } from './wires';
   import type { Host } from './host';
   import { cellKey, cellsOf, OPPOSITE, spotsOf, STEP, type Spot } from './layout';
@@ -117,7 +117,11 @@
   let level = $state(0);
   let levelList = $state.raw<[number, number, string][]>([]);
   let levelsOpen = $state(false);
-  let pal = $state(palette());
+  /** The map's style (its own colours, or the theme's), its palette, and the theme's (All maps keeps the theme's). */
+  const styleRead = styleFrom(read('dd-map-style', 'theme'));
+  let mapStyle = $state<MapStyle>(styleRead);
+  let pal = $state(palette(styleRead));
+  let themePal = $state(palette());
   // Build mode
   let building = $state(false);
   /** Digits typed before a direction key: how many times to go. */
@@ -1243,6 +1247,16 @@
     if (!quiet) sfx('toggle');
   }
 
+  function setStyle(s: MapStyle) {
+    if (s === mapStyle) return;
+    mapStyle = s;
+    write('dd-map-style', s);
+    pal = palette(s);
+    scene?.setStyle(s);
+    legend = scene?.legend() ?? [];
+    sfx('toggle');
+  }
+
   function setLayer(k: keyof Layers, on: boolean) {
     layers = { ...layers, [k]: on };
     write('dd-map-layers', JSON.stringify(layers));
@@ -1491,8 +1505,10 @@
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
+    scene.setStyle(mapStyle);
     const retheme = () => {
-      pal = palette();
+      pal = palette(mapStyle);
+      themePal = palette();
       scene?.retheme();
       legend = scene?.legend() ?? [];
     };
@@ -1696,7 +1712,10 @@
               {startRoom}
               {levels}
               {pal}
+              {mapStyle}
+              {themePal}
               oncolour={setColour}
+              onstyle={setStyle}
               onlayer={setLayer}
               onwires={setWiresFor}
               onlayout={layOutAfresh}
@@ -1789,7 +1808,7 @@
   {/if}
 
   {#if worldShown && WorldView}
-    <WorldView bind:this={worldView} {maps} {names} {links} current={map} {pal} onopen={fromWorld} onclose={closeWorld} />
+    <WorldView bind:this={worldView} {maps} {names} {links} current={map} pal={themePal} onopen={fromWorld} onclose={closeWorld} />
   {/if}
 
   {#if roomy && !walking}
