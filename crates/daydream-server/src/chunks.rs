@@ -6,7 +6,7 @@
 pub(crate) fn get(name: &str) -> Option<&'static str> {
     Some(match name {
         "Grid-6OGEMXXX.js" => include_str!("chunks/Grid-6OGEMXXX.js"),
-        "Library-H7VXXAHH.js" => include_str!("chunks/Library-H7VXXAHH.js"),
+        "Library-BGFZGKHA.js" => include_str!("chunks/Library-BGFZGKHA.js"),
         "World-UQCAZRN6.js" => include_str!("chunks/World-UQCAZRN6.js"),
         "chunk-6HIFS5IG.js" => include_str!("chunks/chunk-6HIFS5IG.js"),
         "chunk-C2RVLTJG.js" => include_str!("chunks/chunk-C2RVLTJG.js"),

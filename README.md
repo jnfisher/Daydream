@@ -195,7 +195,9 @@ them back. **All fields** lays out every column as NMR's forms do, and **Copy** 
 record from the open one, as NMR's Insert does. **Grid** shows the whole table as a
 spreadsheet, with a link of its own (`#/items?grid`): the rows the search and chips leave,
 the columns you pick under the card's headings (remembered in this browser), sorted by a
-header's click; **CSV** writes what it shows, numbers as the records hold them. A monster's card plays its attacks as a fight
+header's click; **CSV** writes what it shows, numbers as the records hold them. On a phone
+the card is the page and the list a sheet at its foot: its arrows step to the record before
+or after, and a tap or a drag up raises it to find another. A monster's card plays its attacks as a fight
 does: how often each is picked (the Attack % add up), how many blows its Energy buys, the
 lines each outcome sends to the player hit and to the room, and **Roll another round** for a
 round drawn as the game draws one. It also shows where the monster spawns (the rooms that
