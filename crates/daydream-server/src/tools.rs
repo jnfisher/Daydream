@@ -412,7 +412,8 @@ pub(crate) async fn renumber(
     .await
 }
 
-/// Plans a run, writes it unless `dry_run`, and answers with what changes.
+/// Plans a run, writes it unless `dry_run`, and answers with what changes and the step of the
+/// history it made (none for a dry run).
 async fn run_plan(
     s: Arc<AppState>,
     dry_run: bool,
@@ -425,7 +426,7 @@ async fn run_plan(
     + 'static,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (_writing, dir) = s.lock_write(dry_run, &label)?;
+        let (writing, dir) = s.lock_write(dry_run, &label)?;
         let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         let plan = plan(&realm, layout)?;
@@ -436,7 +437,10 @@ async fn run_plan(
                 .map_err(|e| bad(e.to_string()))?;
             Some(daydream_nmr::rows::report_json(&r))
         };
-        Ok(Json(plan_json(&plan, dry_run, report)))
+        let step = writing.finish();
+        let mut out = plan_json(&plan, dry_run, report);
+        out["step"] = json!(step);
+        Ok(Json(out))
     })
     .await
 }

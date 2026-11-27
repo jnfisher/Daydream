@@ -449,6 +449,14 @@ pub struct Stamp {
     /// What was stamped, for the history (`a ring`).
     #[serde(default)]
     pub what: String,
+    /// Dug out of a room by hand (a corridor dragged out on the map): the history says "Dig",
+    /// not "Stamp".
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dug: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// An exit a stamp makes: from room `from` in `dir` to room `to`, both on the stamp's map, and
@@ -477,16 +485,18 @@ pub struct Stamped {
 }
 
 impl Stamp {
-    /// What the stamp does, for the history (`Stamp a ring: 8 rooms on map 1`).
+    /// What the stamp does, for the history (`Stamp a ring: 8 rooms on map 1`, or `Dig a
+    /// corridor east of 1/4: 3 rooms on map 1`).
     pub fn label(&self) -> String {
         let what = match self.what.trim() {
             "" => "a stamp",
             w => w,
         };
+        let verb = if self.dug { "Dig" } else { "Stamp" };
         match self.rooms.as_slice() {
-            [] => format!("Stamp {what} on map {}", self.map),
-            [one] => format!("Stamp {what}: room {}/{one}", self.map),
-            more => format!("Stamp {what}: {} rooms on map {}", more.len(), self.map),
+            [] => format!("{verb} {what} on map {}", self.map),
+            [one] => format!("{verb} {what}: room {}/{one}", self.map),
+            more => format!("{verb} {what}: {} rooms on map {}", more.len(), self.map),
         }
     }
 }

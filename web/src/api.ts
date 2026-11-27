@@ -367,8 +367,8 @@ export const api = {
   changes: () => call<ChangeList>('GET', '/api/changes'),
   /** One map's rooms, and the realm's maps. */
   map: (map: number) => call<MapAnswer>('GET', `/api/map?map=${map}`),
-  /** NMR's map editor's dig: a new room (or a line of them), or a room joined, an exit each way. */
-  dig: (dig: Dig) => call<{ notes: string[] }>('POST', '/api/map/dig', dig),
+  /** NMR's map editor's dig: a new room (or a line of them), or a room joined, an exit each way; answers the step of the history it made. */
+  dig: (dig: Dig) => call<{ notes: string[]; step: number | null }>('POST', '/api/map/dig', dig),
   /** A stamp from the World map: its rooms and exits as one step of the history, which it answers. */
   stamp: (s: StampRequest) =>
     call<{ notes: string[]; stamp: { rooms: number; exits: number; joined: number; left: number }; step: number | null }>('POST', '/api/map/stamp', s),

@@ -10,7 +10,7 @@ pub(crate) fn get(name: &str) -> Option<&'static str> {
         "Library-WFKOHPCU.js" => include_str!("chunks/Library-WFKOHPCU.js"),
         "PlayPanel-7P5WPUXY.js" => include_str!("chunks/PlayPanel-7P5WPUXY.js"),
         "Story-U5MMAA56.js" => include_str!("chunks/Story-U5MMAA56.js"),
-        "World-KOLC4DW4.js" => include_str!("chunks/World-KOLC4DW4.js"),
+        "World-GIVTKBIR.js" => include_str!("chunks/World-GIVTKBIR.js"),
         "chunk-2327SQW3.js" => include_str!("chunks/chunk-2327SQW3.js"),
         "chunk-3BBDZJKT.js" => include_str!("chunks/chunk-3BBDZJKT.js"),
         "chunk-3GXRZI2C.js" => include_str!("chunks/chunk-3GXRZI2C.js"),

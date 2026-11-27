@@ -159,12 +159,18 @@ way), and a way into a free cell digs a new room there: a copy of the room it is
 without its exits, items, coins and permanent NPC, numbered after the map's highest room.
 Digits first dig a line (`5` then an arrow: five rooms, as far as the cells stay free), `.`
 does the last move again, and Enter names the room in place. Free cells and joins are marked
-around the room for the mouse too. Each edit shows at once and is written in turn, and its
+around the room for the mouse too: a click on one does what its key would, and a drag out of
+it digs a corridor as long as the drag, walking the exits already that way and joining a room
+it runs into (one-way when that room's way back is taken). Let go over a room off the line,
+the drag joins that room instead, and Shift and a click digs a straight line from the room to
+the cell clicked, along any of the eight ways. The hint bar says what it will make before it
+is let go, and Esc lets go of it. Each edit shows at once and is written in turn, and its
 toast (or Ctrl+Z) undoes it.
 
 In Build mode a room can also be dragged to a free cell, or moved a cell at a time with
 Shift and an arrow. The first move on a map keeps every room where it is drawn, so the map
-holds still from then on, and rooms dug later join it by their exits. MajorMUD keeps no
+holds still from then on, and rooms dug later join it by their exits. So does the first join
+dragged across the map, whose exit is not the way its rooms are drawn from each other. MajorMUD keeps no
 places for its rooms, so the layout is kept beside the working copy (`.daydream/map.json`),
 never in the game's files: it is not published, and Ctrl+Z takes a move back like an edit.
 **Show** exports every map's layout to a file another builder can import, and lays a map
@@ -229,6 +235,7 @@ answers the same at `/api/map/stamps`).
 | `F` | Full screen (Esc comes back) |
 | `B` | Build mode: the arrows and `U` `D` dig, join or walk; digits first for a line, `.` again, Enter to name the room, Esc when done |
 | Shift+arrows | In Build mode, move the room a cell (or drag it) |
+| Shift+click | In Build mode, dig a line from the room to the cell clicked |
 | `S` | Stamps: `1` to `9` pick one; `R` turn, `X` `Y` mirror, `[` `]` `{` `}` size, Space roll, `J` join what it touches, arrows and Enter aim and put it down, Shift and Alt held leave rooms alone or replace exits, Esc puts it away |
 | `V` | Select: `1` to `4` box, lasso, brush, wand; Shift adds, Alt takes away, `[` `]` size the brush, Space and a drag moves the map, Ctrl+A picks every room, Esc lets go of them, then puts it away |
 | `5` | In Select, Paint: a drag paints the field onto rooms, `[` `]` size it, Alt and a click takes a room's value, Esc puts the pipette back, then lets go of the rooms picked |

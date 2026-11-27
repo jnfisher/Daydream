@@ -48,13 +48,13 @@
   import X from '@lucide/svelte/icons/x';
   import { api } from '../api';
   import { read, sfx, write } from '../shell/prefs.svelte';
-  import { app, closeInspector, dropLocalStep, inspect, localStep, undo, type LocalStep } from '../shell/state.svelte';
+  import { app, closeInspector, dropLocalStep, inspect, localStep, realmChanged, undo, type LocalStep } from '../shell/state.svelte';
   import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
-  import { dug, joined, moveFrom, renamed } from './build';
+  import { dug, joined, moveFrom, reachCount, reached, reachLinks, renamed, type Reach } from './build';
   import { ICONS } from './icons';
   import { COLOUR_BY, EXIT_LEGEND, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName } from './look';
   import type { Host } from './host';
-  import { cellKey, cellsOf, STEP, type Spot } from './layout';
+  import { cellKey, cellsOf, OPPOSITE, STEP, type Spot } from './layout';
   import { DIR_WORDS, KEY_DIR, kindName, type MapFile, type MapRoom, type PinCells } from './model';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
   import type { Selector } from './selector.svelte';
@@ -81,8 +81,13 @@
   let focus = $state(false);
   let live = $state('');
   let note = $state('');
+  /** What a corridor dragged out of the selected room (or a Shift line) would make, for the hint bar (`Dig`, `3 rooms east…`), and whether it is being dragged. */
+  let reachNote = $state<[string, string] | null>(null);
+  let reachDrag = $state(false);
   let card = $state(0);
   let width = $state(0);
+  /** The width of the view's buttons at the top right: the tools at the top left wrap short of them. */
+  let viewWidth = $state(0);
   let mapsOpen = $state(false);
   let mapFilter = $state('');
   let pal = $state(palette());
@@ -147,6 +152,8 @@
 
   /** Whether the hint fits along the bottom, between the map's edge and the overview. */
   const roomy = $derived(width - card >= 900);
+  /** Whether the colourings fit along the top beside the tools (else they are under Show alone, as on a small screen). */
+  const wideTop = $derived(width - card >= 1000);
   /** How many of the legend's colours show before "more" (none on a phone: they would cover the map). */
   const legendShown = $derived(width && width < 700 ? 0 : 7);
 
@@ -340,8 +347,8 @@
     if (h.ghost) {
       const from = named(selected?.room ?? 0);
       const way = DIR_WORDS[h.ghost.dir] ?? '';
-      if (h.ghost.to === null) return { title: `Dig a room ${way}`, sub: `A copy of ${from}, with an exit each way.` };
-      return { title: `Join ${way} to ${named(h.ghost.to)}`, sub: `An exit each way between ${from} and room ${map}/${h.ghost.to}.` };
+      if (h.ghost.to === null) return { title: `Dig a room ${way}`, sub: `A copy of ${from}, with an exit each way. Drag it out for a corridor, or onto a room to join that one.` };
+      return { title: `Join ${way} to ${named(h.ghost.to)}`, sub: `An exit each way between ${from} and room ${map}/${h.ghost.to}. Drag it onto another room to join that one instead.` };
     }
     if (h.stub && !picking) {
       const e = h.stub.exit;
@@ -443,14 +450,71 @@
     patch(dug(scene.rooms, from, dir, rooms));
     const m = map;
     send(() => api.dig({ map: m, room: from, dir, to_map: m, to_room: rooms[0]!, count: rooms.length }), what);
-    // a new room is drawn beside the room it is dug from, not where an old room of its number was
+    unpinNew(m, rooms);
+  }
+
+  /** New rooms are drawn beside the rooms they are dug from, not where old rooms of their numbers were. */
+  function unpinNew(m: number, rooms: number[]) {
     const old = rooms.filter((n) => pins.has(n));
-    if (old.length) {
-      const next = new Map(pins);
-      for (const n of old) next.delete(n);
-      showPins(m, next);
-      void savePins(m, Object.fromEntries(old.map((n) => [String(n), null])), false).catch(() => {});
+    if (!old.length) return;
+    const next = new Map(pins);
+    for (const n of old) next.delete(n);
+    showPins(m, next);
+    void savePins(m, Object.fromEntries(old.map((n) => [String(n), null])), false).catch(() => {});
+  }
+
+  /** What a corridor or join reached out of a room makes, for the hint bar: `Dig`, `3 rooms east, 1/3464–3466 · joins Field 1/12`. */
+  function reachSaid(r: Reach): [string, string] {
+    const way = DIR_WORDS[r.dir] ?? '';
+    if (r.kind === 'join') return ['Join', `${way} to ${called(r.to)}${r.oneWay ? `, one-way: it has an exit ${DIR_WORDS[OPPOSITE[r.dir]!]} already` : ''}`];
+    const c = reachCount(r);
+    const list = c.joined.length === 1 ? called(c.joined[0]!) : `${c.joined.length} rooms`;
+    const parts: string[] = [];
+    if (c.made.length === 1) parts.push(`a room ${way}, ${map}/${c.made[0]}`);
+    else if (c.made.length) parts.push(`${c.made.length} rooms ${way}, ${map}/${c.made[0]}–${c.made.at(-1)}`);
+    if (c.joined.length) parts.push(c.made.length ? `joins ${list}` : `${way} to ${list}`);
+    const oneWay = r.links.filter((l) => l.out && l.back === 'taken').map((l) => l.to);
+    if (oneWay.length) parts.push(`one-way into ${oneWay.length === 1 ? called(oneWay[0]!) : `${oneWay.length} rooms`}: ${oneWay.length === 1 ? 'it has' : 'they have'} an exit ${DIR_WORDS[OPPOSITE[r.dir]!]} already`);
+    if (r.stop) parts.push(`stops short: ${r.stop.why}`);
+    else if (!parts.length) parts.push(`the way ${way} is there already`);
+    return [c.made.length || !c.joined.length ? 'Dig' : 'Join', parts.join(' · ')];
+  }
+
+  /** A corridor dragged out of the selected room (or a Shift line) made as one step, or a join onto the room it was let go over; the room it ends at is picked. */
+  function reachOut(r: Reach) {
+    if (!scene) return;
+    const from = scene.by.get(r.from);
+    if (!from) return;
+    const way = DIR_WORDS[r.dir] ?? '';
+    if (r.kind === 'join') {
+      joinAcross(r.from, r.dir, r.to);
+      sfx('pop');
+      choose(r.to, 'keep', false);
+      return;
     }
+    const c = reachCount(r);
+    const end = r.cells.at(-1)?.room;
+    if (!c.exits) {
+      // nothing to make: the ways are there already, or it stops at once
+      if (r.stop) {
+        sfx('nope');
+        say(r.stop.why);
+      }
+      if (end !== undefined) choose(end, 'keep', false);
+      return;
+    }
+    const m = map;
+    const list = c.joined.length === 1 ? called(c.joined[0]!) : `${c.joined.length} rooms`;
+    const what = c.made.length
+      ? `Dug ${c.made.length === 1 ? `room ${m}/${c.made[0]}` : `${c.made.length} rooms`} ${way} of ${named(r.from)}${c.made.length > 1 ? `, ${m}/${c.made[0]} to ${m}/${c.made.at(-1)}` : ''}${c.joined.length ? `, joining ${list}` : ''}`
+      : `Joined ${called(r.from)} ${way} to ${list}`;
+    patch(reached(scene.rooms, r, from));
+    const req = { map: m, brush: r.from, rooms: c.made, links: reachLinks(r), overwrite: false, what: `a corridor ${way} of ${m}/${r.from}`, dug: true };
+    send(() => api.stamp(req), what);
+    unpinNew(m, c.made);
+    sfx('pop');
+    if (r.stop) say(r.stop.why, true);
+    if (end !== undefined) choose(end, 'keep', false);
   }
 
   function joinRooms(from: number, dir: number, to: number) {
@@ -459,6 +523,44 @@
     patch(joined(scene.rooms, from, dir, to).rooms);
     const m = map;
     send(() => api.dig({ map: m, room: from, dir, to_map: m, to_room: to, existing: true }), what);
+  }
+
+  /**
+   * A join dragged onto a room across the map. Its exit is not the way the rooms are drawn from
+   * each other, so a map drawn by its exits alone would be laid out again around it: first every
+   * room keeps the place it is drawn in, as the first stamp or move on a map does. Ctrl+Z (or its
+   * toast) takes back both.
+   */
+  function joinAcross(from: number, dir: number, to: number) {
+    const l = scene?.layout;
+    if (!scene || !l) return;
+    if (pins.size) return joinRooms(from, dir, to);
+    const m = map;
+    const before = pins;
+    const next = new Map([...l.at].map(([n, s]) => [n, { ...s }]));
+    const label = `Join ${called(from)} ${DIR_WORDS[dir]} to ${called(to)}`;
+    patch(joined(scene.rooms, from, dir, to).rooms);
+    showPins(m, next);
+    send(
+      async () => {
+        const out = await api.dig({ map: m, room: from, dir, to_map: m, to_room: to, existing: true });
+        await savePins(m, cellsOf(next), true);
+        const step = out.step;
+        if (step !== null) {
+          const back = async (places: ReadonlyMap<number, Spot>, redo: boolean) => {
+            dismiss(buildToast);
+            await (redo ? api.redo(step) : api.undo(step));
+            showPins(m, places);
+            await savePins(m, cellsOf(places), true);
+            realmChanged();
+          };
+          localStep({ label, after: step, undo: () => back(before, false), redo: () => back(next, true) });
+        }
+        return out;
+      },
+      `Joined ${called(from)} ${DIR_WORDS[dir]} to ${called(to)}. The map keeps this layout now: rooms stay where they are drawn`,
+      () => showPins(m, before),
+    );
   }
 
   /** Shows the map's rooms as an edit leaves them, before the server has them. */
@@ -920,6 +1022,7 @@
     if (picking && selector?.keys(e)) return;
     if (e.key === 'Escape') {
       if (scene?.carrying) scene.dropCarry();
+      else if (scene?.reachingOut) scene.dropReach();
       else if (countText) countText = '';
       else if (building) setBuilding(false);
       else if (focus) setFocus(false);
@@ -1006,6 +1109,11 @@
       },
       build: (g: Ghost) => build(g.dir),
       move: (n, x, y) => moveRoom(n, x, y),
+      reach: (r) => reachOut(r),
+      reaching: (r) => {
+        reachNote = r ? reachSaid(r) : null;
+        reachDrag = !!scene?.reachingOut;
+      },
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
@@ -1023,7 +1131,10 @@
     };
     // Shift and Alt change what a stamp held would do; Space and Ctrl+A are the Select tool's
     const onMods = (e: KeyboardEvent) => {
-      if (here()) stamper?.held(e);
+      if (!here()) return;
+      stamper?.held(e);
+      // Build mode: Shift and a click digs a line to the cell
+      if (e.key === 'Shift') scene?.setShift(e.type === 'keydown');
     };
     const onPickKeys = (e: KeyboardEvent) => selector?.onKey(e, here());
     document.addEventListener('fullscreenchange', unfull);
@@ -1035,6 +1146,7 @@
     const letGo = () => {
       selector?.letGo();
       stamper?.letGo();
+      scene?.setShift(false);
     };
     window.addEventListener('blur', letGo);
     window.addEventListener('dd:wrote', written);
@@ -1069,7 +1181,7 @@
   </svg>
 {/snippet}
 
-<div class="world" class:focus style:--card="{card}px" bind:clientWidth={width}>
+<div class="world" class:focus class:narrow={!wideTop} style:--card="{card}px" style:--view="{viewWidth}px" bind:clientWidth={width}>
   <canvas
     bind:this={canvas}
     class="map"
@@ -1163,7 +1275,7 @@
     {#if pending}<span class="pill lilac">Saving…</span>{:else if loading}<span class="pill lilac">Reading map…</span>{/if}
   </div>
 
-  <div class="float tr">
+  <div class="float tr" bind:clientWidth={viewWidth}>
     <div class="seg glass wide-only" role="radiogroup" aria-label="Colour rooms by">
       {#each COLOUR_BY as c (c.id)}
         <button type="button" role="radio" aria-checked={colourBy === c.id} class:on={colourBy === c.id} onclick={() => setColour(c.id)}>{c.label}</button>
@@ -1304,8 +1416,10 @@
         {:else}
           <b class="mode">Select</b> <span class="kbd">1</span>…<span class="kbd">5</span> how {#if selector.tool === 'brush'}<span class="kbd">[</span><span class="kbd">]</span> size {/if}<span class="kbd">Shift</span> add <span class="kbd">Alt</span> take away <span class="kbd">Space</span> pan <span class="kbd">Esc</span> {selector.picked.size ? 'let go' : 'done'}
         {/if}
+      {:else if building && reachNote}
+        <b class="mode">{reachNote[0]}</b> {reachNote[1]} {#if reachDrag}<span class="kbd">Esc</span> cancel{:else}· click to make it{/if}
       {:else if building}
-        <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
+        <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">Shift</span> click a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
         <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down <span class="kbd">Shift 2</span> close up
       {:else}
@@ -1364,6 +1478,7 @@
   }
   .map:global(.pan-key) { cursor: grab; }
   .map:global(.panning), .map:global(.carrying) { cursor: grabbing; }
+  .map:global(.reaching) { cursor: crosshair; }
   .map:focus-visible { box-shadow: inset 0 0 0 3px var(--focus); }
 
   .float { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; }
@@ -1374,7 +1489,7 @@
     box-shadow: 0 2px 0 color-mix(in srgb, var(--shadow) 12%, transparent), var(--float);
   }
   .float :global(.btn.glass) { border: 1px solid var(--line-2); }
-  .tl { top: var(--edge); left: var(--edge); flex-wrap: wrap; max-width: calc(100% - var(--card) - 2 * var(--edge)); }
+  .tl { top: var(--edge); left: var(--edge); flex-wrap: wrap; max-width: calc(100% - var(--card) - 2 * var(--edge) - var(--view) - 4px); }
   .tr { top: var(--edge); right: calc(var(--edge) + var(--card)); }
   :global(.map-chip) { gap: 8px !important; padding: 0 12px 0 6px !important; border-radius: 999px !important; }
   :global(.map-chip) .ic { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--mint-2); color: var(--mint-ink); }
@@ -1457,6 +1572,7 @@
   :global(body.world-focus .dd-app) { grid-template-columns: 0 minmax(0, 1fr); grid-template-rows: 0 minmax(0, 1fr); }
   :global(body.world-focus #dd-top), :global(body.world-focus #dd-rail) { display: none; }
 
+  .narrow .wide-only { display: none !important; }
   @media (max-width: 1100px) {
     .wide-only { display: none !important; }
   }
