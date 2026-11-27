@@ -1,14 +1,17 @@
 // Picking rooms on the World map with the Select tool: the rooms a box or a lasso holds, the
 // region the wand takes (the rooms joined to one by exits, through rooms of its colour), how
 // a pick changes the rooms picked, and what those rooms share, for the bar that sets their
-// fields together (`POST /api/map/set`).
+// fields together (`POST /api/map/set`); and Paint, which puts a field straight onto the
+// rooms a stroke goes over.
 //
 // Pure: no DOM, so `node --test` runs its tests (picks.test.ts); its imports name their
 // files whole, as node needs.
 
+import type { ColourBy } from './look.ts';
 import type { MapRoom } from './model.ts';
 
-export type PickTool = 'box' | 'lasso' | 'brush' | 'wand';
+/** The ways the Select tool works: four that pick rooms, and Paint, which sets a field on them. */
+export type PickTool = 'box' | 'lasso' | 'brush' | 'wand' | 'paint';
 
 /** How a pick changes the rooms picked: replaces them, adds to them, takes from them, or (a click) flips one. */
 export type PickHow = 'set' | 'add' | 'drop' | 'flip';
@@ -30,6 +33,7 @@ export const PICK_TOOLS: { id: PickTool; name: string; about: string }[] = [
   { id: 'lasso', name: 'Lasso', about: 'Draw around rooms' },
   { id: 'brush', name: 'Brush', about: 'Paint over rooms' },
   { id: 'wand', name: 'Wand', about: 'Click a room for the rooms joined to it in its colour' },
+  { id: 'paint', name: 'Paint', about: 'Paint light, monsters or a control room onto rooms' },
 ];
 
 /** How a pick's modifier keys change it: Shift adds, Alt takes away. */
@@ -144,6 +148,19 @@ export function mapValue(r: MapRoom, column: string): string | number | undefine
   return k ? r[k] : undefined;
 }
 
+/** Whether a room holds these values already. */
+export const holds = (r: MapRoom, values: readonly (readonly [string, string | number])[]) => values.every(([c, v]) => mapValue(r, c) === (typeof v === 'string' ? v.trim() : v));
+
+/** The rooms of `rooms` that a set of these values changes (those that hold them already are left out), in room order. */
+export function changing(by: ReadonlyMap<number, MapRoom>, rooms: Iterable<number>, values: readonly (readonly [string, string | number])[]): number[] {
+  const out: number[] = [];
+  for (const n of rooms) {
+    const r = by.get(n);
+    if (r && !holds(r, values)) out.push(n);
+  }
+  return out.sort((a, b) => a - b);
+}
+
 /** A map room with the columns the map reads set (the rest wait for the map to be read again). */
 export function withValues(r: MapRoom, values: readonly (readonly [string, string | number])[]): MapRoom {
   const out = { ...r };
@@ -160,3 +177,14 @@ export function sharedOf(rooms: readonly MapRoom[], f: PickField): { one: (strin
   const s = shared(rooms.map((r) => JSON.stringify(f.columns.map((c) => mapValue(r, c) ?? null))));
   return s && s !== 'mixed' ? { one: JSON.parse(s.one) as (string | number)[] } : s;
 }
+
+/** The fields Paint puts on rooms. */
+export type PaintField = 'light' | 'monsters' | 'control';
+
+export const PAINT_FIELDS: PaintField[] = ['light', 'monsters', 'control'];
+
+/** How the map is coloured while each field is painted, so the paint shows as it goes on. */
+export const PAINT_COLOUR: Record<PaintField, ColourBy> = { light: 'light', monsters: 'monsters', control: 'area' };
+
+/** A room's values in a field's columns, as numbers (for the fields Paint puts on rooms). */
+export const valuesOf = (r: MapRoom, f: PickField): number[] => f.columns.map((c) => Number(mapValue(r, c) ?? 0));

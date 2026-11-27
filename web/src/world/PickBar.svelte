@@ -3,7 +3,8 @@
   are picked (a box, a lasso, the brush or the wand: keys 1 to 4), whether a pick starts afresh,
   adds to the rooms picked or takes from them (Shift and Alt for a moment), how many are picked,
   and the fields to set on them all at once (name, light, monsters, control room and room type),
-  each showing what the rooms share or that they differ.
+  each showing what the rooms share or that they differ. Paint (key 5) puts light, monsters or a
+  control room onto the rooms a stroke goes over instead: the panel holds what it puts on them.
 -->
 <svelte:options css="injected" />
 
@@ -15,7 +16,9 @@
   import House from '@lucide/svelte/icons/house';
   import Lasso from '@lucide/svelte/icons/lasso';
   import Minus from '@lucide/svelte/icons/minus';
+  import PaintRoller from '@lucide/svelte/icons/paint-roller';
   import Pencil from '@lucide/svelte/icons/pencil';
+  import Pipette from '@lucide/svelte/icons/pipette';
   import Plus from '@lucide/svelte/icons/plus';
   import Skull from '@lucide/svelte/icons/skull';
   import SquareDashed from '@lucide/svelte/icons/square-dashed';
@@ -26,7 +29,7 @@
   import type { Component } from 'svelte';
   import { MONSTER_GROUP, ROOM_TYPE } from '../layouts';
   import { LIGHT_PICKS, lightWord } from './light';
-  import { BRUSH_SIZES, mapValue, PICK_FIELDS, PICK_MODES, PICK_TOOLS, sharedOf, type PickField, type PickTool } from './picks';
+  import { BRUSH_SIZES, mapValue, PAINT_FIELDS, PICK_FIELDS, PICK_MODES, PICK_TOOLS, sharedOf, type PaintField, type PickField, type PickTool } from './picks';
   import type { Selector } from './selector.svelte';
 
   let { selector: sel, onclose }: { selector: Selector; onclose: () => void } = $props();
@@ -46,13 +49,21 @@
   const brush = $derived(sel.brush);
   const nameMax = $derived(sel.host.nameMax);
   /** A room of this map for a person ("Town square 1/245"), or null when the map has no such room. */
-  const named = (n: number) => (sel.host.scene.by.has(n) ? sel.host.called(n) : null);
+  const named = (n: number) => sel.named(n);
+  /** Paint: the field it puts on rooms, what it puts in each column, and whether the pipette is out. */
+  const paintField = $derived(sel.paintField);
+  const paintDef = $derived(sel.paintDef);
+  const paint = $derived(sel.paints[paintField]);
+  const dropper = $derived(sel.dropper);
+  const paintProblem = $derived(sel.problemOf(paintDef, paint));
 
-  const TOOL_ICONS: Record<PickTool, Component<{ size?: number }>> = { box: SquareDashed, lasso: Lasso, brush: Brush, wand: WandSparkles };
+  const TOOL_ICONS: Record<PickTool, Component<{ size?: number }>> = { box: SquareDashed, lasso: Lasso, brush: Brush, wand: WandSparkles, paint: PaintRoller };
   const FIELD_ICONS: Record<PickField['id'], Component<{ size?: number }>> = { name: Type, light: SunDim, monsters: Skull, control: Flag, type: House };
+  /** Paint's fields, by the words the map's colours use. */
+  const PAINT_NAMES: Record<PaintField, string> = { light: 'Light', monsters: 'Monsters', control: 'Area' };
 
   /** What each way of picking does, for a mouse and for a finger. */
-  const HOW: Record<PickTool, [string, string]> = {
+  const HOW: Record<Exclude<PickTool, 'paint'>, [string, string]> = {
     box: ['Drag a box around rooms; a click picks one.', 'Drag a box around rooms; a tap picks one.'],
     lasso: ['Draw around rooms; a click picks one.', 'Draw around rooms; a tap picks one.'],
     brush: ['Paint over rooms to pick them.', 'Paint over rooms to pick them.'],
@@ -62,26 +73,12 @@
     ],
   };
 
-  const group = (g: number) => MONSTER_GROUP[g] ?? `Mon Type ${g}`;
-
   /** What the rooms picked share in a field, for a person; `mixed` when they differ. */
   function said(f: PickField): { text: string; mixed: boolean } {
     const s = sharedOf(rooms, f);
     if (s === null) return { text: '', mixed: false };
     if (s === 'mixed') return { text: 'Mixed', mixed: true };
-    const [a, b, c, d] = s.one as [number, number, number, number];
-    switch (f.id) {
-      case 'name':
-        return { text: s.one[0] ? `“${s.one[0]}”` : 'No name', mixed: false };
-      case 'light':
-        return { text: `${a}, ${lightWord(a).toLowerCase()}`, mixed: false };
-      case 'monsters':
-        return { text: c === 0 || d === 0 ? `${group(a)}, none come` : `${group(a)} ${b} to ${c}, up to ${d}`, mixed: false };
-      case 'control':
-        return { text: a ? (named(a) ?? `room ${map}/${a}, not on this map`) : 'None', mixed: false };
-      case 'type':
-        return { text: ROOM_TYPE[a] ?? `Type ${a}`, mixed: false };
-    }
+    return { text: sel.words(f.id, s.one), mixed: false };
   }
 
   /** The field being set, and what it is set to. */
@@ -104,20 +101,7 @@
   }
 
   /** What is wrong with the values typed, if anything. */
-  const problem = $derived.by(() => {
-    const f = editing;
-    if (!f || f.id === 'name') return '';
-    for (const [i, c] of f.columns.entries()) {
-      const v = nums[i];
-      if (typeof v !== 'number' || !Number.isInteger(v)) return `${c} takes a whole number.`;
-      const r = ranges[c];
-      if (r && (v < r[0] || v > r[1])) return `${c} goes from ${r[0]} to ${r[1]}.`;
-    }
-    const [a, b, c] = nums as number[];
-    if (f.id === 'control' && a && named(a) === null) return `Map ${map} has no room ${a}.`;
-    if (f.id === 'monsters' && c && b! > c) return 'Min Index is over Max Index.';
-    return '';
-  });
+  const problem = $derived(editing ? sel.problemOf(editing, nums) : '');
 
   function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -131,10 +115,62 @@
   const range = (c: string) => ranges[c] ?? [-32768, 32767];
 </script>
 
+<!-- The boxes for a field's values (all but the name): `nums` holds what is typed, a box to a column. -->
+{#snippet editor(f: PickField, nums: (number | null)[], focus: boolean)}
+  {#if f.id === 'light'}
+    <label class="line">
+      <span>Light</span>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input type="number" class="num" bind:value={nums[0]} min={range('Light')[0]} max={range('Light')[1]} step="1" autofocus={focus} />
+      <span class="faint">{typeof nums[0] === 'number' ? lightWord(nums[0]) : ''}</span>
+    </label>
+    <div class="picks">
+      {#each LIGHT_PICKS as v (v)}
+        <button type="button" class="chip" class:on={nums[0] === v} onclick={() => (nums[0] = v)}>{lightWord(v)} <span class="tnum">{v}</span></button>
+      {/each}
+    </div>
+  {:else if f.id === 'monsters'}
+    <label class="line">
+      <span>Mon Type</span>
+      <select bind:value={nums[0]}>
+        {#each Object.entries(MONSTER_GROUP) as [v, label] (v)}<option value={Number(v)}>{label}</option>{/each}
+      </select>
+    </label>
+    <div class="line">
+      <label><span>Min Index</span><input type="number" class="num" bind:value={nums[1]} min={range('Min Index')[0]} max={range('Min Index')[1]} step="1" /></label>
+      <label><span>Max Index</span><input type="number" class="num" bind:value={nums[2]} min={range('Max Index')[0]} max={range('Max Index')[1]} step="1" /></label>
+    </div>
+    <label class="line">
+      <span>Max Regen</span>
+      <input type="number" class="num" bind:value={nums[3]} min={range('Max Regen')[0]} max={range('Max Regen')[1]} step="1" />
+      <span class="faint">at a time</span>
+    </label>
+    <p class="note">Monsters of the group with an index from Min to Max come, up to Max Regen in each room; a Max Index or Max Regen of 0 brings none.</p>
+  {:else if f.id === 'control'}
+    <label class="line">
+      <span>Control Room</span>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input type="number" class="num" bind:value={nums[0]} min="0" max={range('Control Room')[1]} step="1" autofocus={focus} />
+      <button type="button" class="btn sm ghost" onclick={() => (nums[0] = 0)}>None</button>
+    </label>
+    <p class="note">
+      {#if typeof nums[0] === 'number' && nums[0] > 0}{named(nums[0]) ? `${named(nums[0])}.` : `Map ${map} has no room ${nums[0]}.`}{:else}No control room.{/if}
+      Its Max Area caps how many monsters the rooms it controls bring between them.
+    </p>
+  {:else}
+    <label class="line">
+      <span>Type</span>
+      <select bind:value={nums[0]}>
+        {#each Object.entries(ROOM_TYPE) as [v, label] (v)}<option value={Number(v)}>{label}</option>{/each}
+      </select>
+    </label>
+  {/if}
+{/snippet}
+
 <section class="drawer" aria-label="Select rooms">
   <header>
     <b>Select</b>
-    <span class="faint">Pick rooms, then set their fields</span>
+    <span class="faint">{tool === 'paint' ? 'Paint a field onto rooms' : 'Pick rooms, then set their fields'}</span>
     <button type="button" class="btn icon sm ghost" onclick={onclose} title="Done selecting (V)" aria-label="Done selecting"><X size={15} /></button>
   </header>
   <div class="ways" role="radiogroup" aria-label="Pick rooms with">
@@ -147,12 +183,14 @@
       </button>
     {/each}
   </div>
-  <div class="modes" role="radiogroup" aria-label="Each pick">
-    {#each PICK_MODES as m (m.id)}
-      <button type="button" role="radio" aria-checked={mode === m.id} class:on={mode === m.id} title={m.about} onclick={() => sel.setMode(m.id)}>{m.name}</button>
-    {/each}
-  </div>
-  {#if tool === 'brush'}
+  {#if tool !== 'paint'}
+    <div class="modes" role="radiogroup" aria-label="Each pick">
+      {#each PICK_MODES as m (m.id)}
+        <button type="button" role="radio" aria-checked={mode === m.id} class:on={mode === m.id} title={m.about} onclick={() => sel.setMode(m.id)}>{m.name}</button>
+      {/each}
+    </div>
+  {/if}
+  {#if tool === 'brush' || tool === 'paint'}
     <div class="size">
       <span>Size</span>
       <button type="button" class="btn icon sm" disabled={brush <= BRUSH_SIZES[0]!} onclick={() => sel.sizeBrush(-1)} aria-label="Smaller" title={touch ? 'Smaller' : 'Smaller ([)'}><Minus size={14} /></button>
@@ -161,94 +199,77 @@
       <span>{brush === 1 ? 'room across' : 'rooms across'}</span>
     </div>
   {/if}
-  <p class="how">{HOW[tool][touch ? 1 : 0]} {touch ? 'Two fingers move the map.' : 'Shift adds, Alt takes away, and Space with a drag moves the map.'}</p>
-  <div class="count">
-    <b class="tnum" aria-live="polite">{rooms.length ? (rooms.length === 1 ? `Room ${map}/${rooms[0]!.room}` : `${rooms.length.toLocaleString()} rooms`) : 'No rooms yet'}</b>
-    <span class="grow"></span>
-    {#if rooms.length}
-      <button type="button" class="btn sm ghost" onclick={() => sel.show()} title="Show the rooms picked"><Focus size={14} />Show</button>
-    {/if}
-    <button type="button" class="btn sm ghost" onclick={() => sel.all()} disabled={rooms.length >= total} title="Pick every room of map {map}{touch ? '' : ' (Ctrl+A)'}"><CheckCheck size={14} />All</button>
-    {#if rooms.length}
-      <button type="button" class="btn sm ghost" onclick={() => sel.clear()} title="Let go of them{touch ? '' : ' (Esc)'}"><X size={14} />Clear</button>
-    {/if}
-  </div>
-  {#if rooms.length}
-    <div class="sets">
-      <div class="eyebrow">Set on {many}</div>
-      {#each PICK_FIELDS as f (f.id)}
-        {@const s = said(f)}
-        {@const Icon = FIELD_ICONS[f.id]}
-        <div class="setter" class:open={open === f.id}>
-          <button type="button" class="row" aria-expanded={open === f.id} onclick={() => edit(f)}>
-            <span class="ic"><Icon size={14} /></span>
-            <span class="what">{f.label}</span>
-            <span class="value" class:mixed={s.mixed}>{s.text}</span>
-            <Pencil size={13} />
-          </button>
-          {#if open === f.id}
-            <form class="edit" onsubmit={submit}>
-              {#if f.id === 'name'}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input type="text" bind:value={text} maxlength={nameMax} spellcheck="false" autocomplete="off" aria-label="Name" placeholder={s.mixed ? 'A name for them all' : 'No name'} autofocus />
-              {:else if f.id === 'light'}
-                <label class="line">
-                  <span>Light</span>
-                  <!-- svelte-ignore a11y_autofocus -->
-                  <input type="number" class="num" bind:value={nums[0]} min={range('Light')[0]} max={range('Light')[1]} step="1" autofocus />
-                  <span class="faint">{typeof nums[0] === 'number' ? lightWord(nums[0]) : ''}</span>
-                </label>
-                <div class="picks">
-                  {#each LIGHT_PICKS as v (v)}
-                    <button type="button" class="chip" class:on={nums[0] === v} onclick={() => (nums[0] = v)}>{lightWord(v)} <span class="tnum">{v}</span></button>
-                  {/each}
-                </div>
-              {:else if f.id === 'monsters'}
-                <label class="line">
-                  <span>Mon Type</span>
-                  <select bind:value={nums[0]}>
-                    {#each Object.entries(MONSTER_GROUP) as [v, label] (v)}<option value={Number(v)}>{label}</option>{/each}
-                  </select>
-                </label>
-                <div class="line">
-                  <label><span>Min Index</span><input type="number" class="num" bind:value={nums[1]} min={range('Min Index')[0]} max={range('Min Index')[1]} step="1" /></label>
-                  <label><span>Max Index</span><input type="number" class="num" bind:value={nums[2]} min={range('Max Index')[0]} max={range('Max Index')[1]} step="1" /></label>
-                </div>
-                <label class="line">
-                  <span>Max Regen</span>
-                  <input type="number" class="num" bind:value={nums[3]} min={range('Max Regen')[0]} max={range('Max Regen')[1]} step="1" />
-                  <span class="faint">at a time</span>
-                </label>
-                <p class="note">Monsters of the group with an index from Min to Max come, up to Max Regen in each room; a Max Index or Max Regen of 0 brings none.</p>
-              {:else if f.id === 'control'}
-                <label class="line">
-                  <span>Control Room</span>
-                  <!-- svelte-ignore a11y_autofocus -->
-                  <input type="number" class="num" bind:value={nums[0]} min="0" max={range('Control Room')[1]} step="1" autofocus />
-                  <button type="button" class="btn sm ghost" onclick={() => (nums[0] = 0)}>None</button>
-                </label>
-                <p class="note">
-                  {#if typeof nums[0] === 'number' && nums[0] > 0}{named(nums[0]) ?? `Map ${map} has no room ${nums[0]}.`}{:else}No control room.{/if}
-                  Its Max Area caps how many monsters the rooms it controls bring between them.
-                </p>
-              {:else}
-                <label class="line">
-                  <span>Type</span>
-                  <select bind:value={nums[0]}>
-                    {#each Object.entries(ROOM_TYPE) as [v, label] (v)}<option value={Number(v)}>{label}</option>{/each}
-                  </select>
-                </label>
-              {/if}
-              {#if problem}<p class="problem" role="alert">{problem}</p>{/if}
-              <div class="acts">
-                <button type="submit" class="btn sm primary" disabled={!!problem}>Set on {many}</button>
-                <button type="button" class="btn sm ghost" onclick={() => (open = null)}>Cancel</button>
-              </div>
-            </form>
-          {/if}
-        </div>
+  {#if tool === 'paint'}
+    {@const what = paintDef.label.toLowerCase()}
+    <p class="how">
+      {touch ? `Paint over rooms with a finger to set their ${what}; the pipette takes a room's. Two fingers move the map.` : `Drag over rooms to set their ${what}; Alt+click takes a room's. Space with a drag moves the map.`}
+    </p>
+    <div class="modes" role="radiogroup" aria-label="Paint">
+      {#each PAINT_FIELDS as id (id)}
+        {@const Icon = FIELD_ICONS[id]}
+        <button type="button" role="radio" aria-checked={paintField === id} class:on={paintField === id} title="Paint {id === 'control' ? 'a control room' : id}; the map is coloured by {PAINT_NAMES[id].toLowerCase()}" onclick={() => sel.setPaintField(id)}><Icon size={13} />{PAINT_NAMES[id]}</button>
       {/each}
     </div>
+    <div class="edit paint">
+      {@render editor(paintDef, paint, false)}
+      {#if paintProblem}<p class="problem" role="alert">{paintProblem}</p>{/if}
+      <div class="acts">
+        <button type="button" class="btn sm" class:on={dropper} aria-pressed={dropper} onclick={() => sel.setDropper(!dropper)} title="Take the {what} of a room you {touch ? 'tap' : 'click'}{touch ? '' : ' (or Alt+click)'}"><Pipette size={14} />Take from a room</button>
+      </div>
+    </div>
+    {#if rooms.length}
+      <div class="count">
+        <span class="mask">Only the {rooms.length === 1 ? 'room' : `${rooms.length.toLocaleString()} rooms`} picked take paint</span>
+        <span class="grow"></span>
+        <button type="button" class="btn sm ghost" onclick={() => sel.show()} title="Show the rooms picked"><Focus size={14} />Show</button>
+        <button type="button" class="btn sm ghost" onclick={() => sel.clear()} title="Let go of them, so paint goes anywhere{touch ? '' : ' (Esc)'}"><X size={14} />Clear</button>
+      </div>
+    {/if}
+  {:else}
+    <p class="how">{HOW[tool][touch ? 1 : 0]} {touch ? 'Two fingers move the map.' : 'Shift adds, Alt takes away, and Space with a drag moves the map.'}</p>
+    <div class="count">
+      <b class="tnum" aria-live="polite">{rooms.length ? (rooms.length === 1 ? `Room ${map}/${rooms[0]!.room}` : `${rooms.length.toLocaleString()} rooms`) : 'No rooms yet'}</b>
+      <span class="grow"></span>
+      {#if rooms.length}
+        <button type="button" class="btn sm ghost" onclick={() => sel.show()} title="Show the rooms picked"><Focus size={14} />Show</button>
+      {/if}
+      <button type="button" class="btn sm ghost" onclick={() => sel.all()} disabled={rooms.length >= total} title="Pick every room of map {map}{touch ? '' : ' (Ctrl+A)'}"><CheckCheck size={14} />All</button>
+      {#if rooms.length}
+        <button type="button" class="btn sm ghost" onclick={() => sel.clear()} title="Let go of them{touch ? '' : ' (Esc)'}"><X size={14} />Clear</button>
+      {/if}
+    </div>
+    {#if rooms.length}
+      <div class="sets">
+        <div class="eyebrow">Set on {many}</div>
+        {#each PICK_FIELDS as f (f.id)}
+          {@const s = said(f)}
+          {@const Icon = FIELD_ICONS[f.id]}
+          <div class="setter" class:open={open === f.id}>
+            <button type="button" class="row" aria-expanded={open === f.id} onclick={() => edit(f)}>
+              <span class="ic"><Icon size={14} /></span>
+              <span class="what">{f.label}</span>
+              <span class="value" class:mixed={s.mixed}>{s.text}</span>
+              <Pencil size={13} />
+            </button>
+            {#if open === f.id}
+              <form class="edit" onsubmit={submit}>
+                {#if f.id === 'name'}
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input type="text" bind:value={text} maxlength={nameMax} spellcheck="false" autocomplete="off" aria-label="Name" placeholder={s.mixed ? 'A name for them all' : 'No name'} autofocus />
+                {:else}
+                  {@render editor(f, nums, true)}
+                {/if}
+                {#if problem}<p class="problem" role="alert">{problem}</p>{/if}
+                <div class="acts">
+                  <button type="submit" class="btn sm primary" disabled={!!problem}>Set on {many}</button>
+                  <button type="button" class="btn sm ghost" onclick={() => (open = null)}>Cancel</button>
+                </div>
+              </form>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -264,7 +285,7 @@
   header { display: flex; align-items: center; gap: 8px; padding: 0 0 0 6px; }
   header b { font-size: 14px; }
   header .faint { flex: 1; font-size: 11.5px; font-weight: 700; }
-  .ways { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .ways { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
   .way {
     position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px;
     min-height: 0; padding: 8px 2px 6px; border-radius: 11px; border: 1px solid transparent;
@@ -275,7 +296,7 @@
   .way .name { font-size: 11px; font-weight: 800; }
   .way .key { position: absolute; top: 2px; left: 4px; font: 700 9.5px var(--font-mono); color: var(--ink-3); }
   .modes { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
-  .modes button { flex: 1 1 0; min-height: 26px; padding: 0 6px; border: 0; border-radius: 9px; background: transparent; font-size: 12px; color: var(--ink-2); box-shadow: none; }
+  .modes button { flex: 1 1 0; gap: 5px; min-height: 26px; padding: 0 6px; border: 0; border-radius: 9px; background: transparent; font-size: 12px; color: var(--ink-2); box-shadow: none; }
   .modes button:hover:not(.on) { background: var(--surface-3); }
   .modes button.on { background: var(--lilac-2); color: var(--lilac-ink); box-shadow: 0 0 0 1px var(--line-2); }
   .how { margin: 0 4px; font-size: 12px; line-height: 1.4; color: var(--ink-2); }
@@ -300,6 +321,9 @@
   .row .value { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 700; color: var(--ink-2); overflow-wrap: anywhere; }
   .row .value.mixed { font-style: italic; color: var(--ink-3); }
   .edit { display: flex; flex-direction: column; gap: 8px; padding: 4px 8px 8px; }
+  .edit.paint { padding: 2px 4px 0; }
+  .acts .on { background: var(--lilac-2); color: var(--lilac-ink); border-color: var(--outline); }
+  .mask { font-size: 12px; font-weight: 800; color: var(--ink-2); }
   .edit input[type='text'] { width: 100%; }
   .line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; font-weight: 800; }
   .line label { display: flex; align-items: center; gap: 6px; }

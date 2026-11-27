@@ -19,7 +19,8 @@
 
   Select (V) picks rooms with a box, a lasso, a brush or the wand (the rooms joined to one in its
   colour), and its panel sets their name, light, monsters, control room or room type together,
-  as one save.
+  as one save. Its Paint puts light, monsters or a control room onto the rooms a drag goes over,
+  a save for each stroke, with the map coloured by what it paints.
 -->
 <!-- loaded when the World is first opened, so its styles travel with its code -->
 <svelte:options css="injected" />
@@ -704,6 +705,7 @@
     showPins,
     savePins,
     quiet: () => dismiss(buildToast),
+    colour: (by) => setColour(by, true),
   };
 
   /** The drawer of stamps open (Build mode with it) or put away. */
@@ -808,7 +810,7 @@
 
   // ---- what the map shows --------------------------------------------------------------
 
-  function setColour(by: ColourBy) {
+  function setColour(by: ColourBy, quiet = false) {
     if (by === colourBy) return;
     colourBy = by;
     write('dd-map-colour', by);
@@ -816,7 +818,7 @@
     allLegend = false;
     scene?.setColour(by);
     legend = scene?.legend() ?? [];
-    sfx('toggle');
+    if (!quiet) sfx('toggle');
   }
 
   function setLayer(k: keyof Layers, on: boolean) {
@@ -1290,7 +1292,11 @@
       {:else if stamping}
         <b class="mode">Stamps</b> pick a shape <span class="kbd">1</span>…<span class="kbd">9</span> <span class="kbd">S</span> put them away
       {:else if picking && selector}
-        <b class="mode">Select</b> <span class="kbd">1</span>…<span class="kbd">4</span> how {#if selector.tool === 'brush'}<span class="kbd">[</span><span class="kbd">]</span> size {/if}<span class="kbd">Shift</span> add <span class="kbd">Alt</span> take away <span class="kbd">Space</span> pan <span class="kbd">Esc</span> {selector.picked.size ? 'let go' : 'done'}
+        {#if selector.tool === 'paint'}
+          <b class="mode">Paint</b> drag over rooms <span class="kbd">[</span><span class="kbd">]</span> size <span class="kbd">Alt</span> take a room's {selector.paintDef.label.toLowerCase()} <span class="kbd">1</span>…<span class="kbd">4</span> pick rooms <span class="kbd">Space</span> pan <span class="kbd">Esc</span> {selector.picked.size ? 'let go' : 'done'}
+        {:else}
+          <b class="mode">Select</b> <span class="kbd">1</span>…<span class="kbd">5</span> how {#if selector.tool === 'brush'}<span class="kbd">[</span><span class="kbd">]</span> size {/if}<span class="kbd">Shift</span> add <span class="kbd">Alt</span> take away <span class="kbd">Space</span> pan <span class="kbd">Esc</span> {selector.picked.size ? 'let go' : 'done'}
+        {/if}
       {:else if building}
         <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
@@ -1343,8 +1349,12 @@
   }
   .map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
   /* the tools' cursors: the canvas names the tool on */
-  .map:global([data-tool='stamp']), .map:global([data-tool='box']), .map:global([data-tool='lasso']), .map:global([data-tool='brush']) { cursor: crosshair; }
+  .map:global([data-tool='stamp']), .map:global([data-tool='box']), .map:global([data-tool='lasso']), .map:global([data-tool='brush']), .map:global([data-tool='paint']) { cursor: crosshair; }
   .map:global([data-tool='wand']) { cursor: pointer; }
+  /* Paint's pipette: Lucide's, drawn dark over light so it shows on either theme's map */
+  .map:global([data-tool='dropper']) {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg id='p'%3E%3Cpath d='m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12M18 9l.4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3zM2 22l.414-.414'/%3E%3C/g%3E%3Cuse href='%23p' stroke='%23fff' stroke-width='4'/%3E%3Cuse href='%23p' stroke='%23111' stroke-width='2'/%3E%3C/svg%3E") 2 22, copy;
+  }
   .map:global(.pan-key) { cursor: grab; }
   .map:global(.panning), .map:global(.carrying) { cursor: grabbing; }
   .map:focus-visible { box-shadow: inset 0 0 0 3px var(--focus); }

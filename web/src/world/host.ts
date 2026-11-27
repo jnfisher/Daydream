@@ -3,6 +3,7 @@
 // and saving it in turn. Types only, so it costs the World nothing.
 
 import type { Spot } from './layout';
+import type { ColourBy } from './look';
 import type { MapRoom } from './model';
 import type { Scene } from './scene';
 
@@ -42,4 +43,6 @@ export interface Host {
   savePins(m: number, body: Record<string, [number, number] | null>, replace: boolean): Promise<number>;
   /** Takes the last edit's toast away: its Undo would undo something else now. */
   quiet(): void;
+  /** Colours the map's rooms by this (Paint shows what it puts on rooms this way). */
+  colour(by: ColourBy): void;
 }

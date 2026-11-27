@@ -507,11 +507,14 @@ export class Scene {
 
   private retint() {
     this.tints = new Map();
-    for (const r of this.rooms) {
-      this.tints.set(r.room, tintOf(r, this.colourBy, this.pal, this.biomes.get(r.room) ?? 'other', this.edited.has(r.room)));
-    }
+    for (const r of this.rooms) this.tints.set(r.room, this.tintFor(r));
     this.miniCache = null;
     this.draw();
+  }
+
+  /** The colour a room is drawn in, as the map is coloured now (a room as an edit would leave it, too). */
+  tintFor(r: MapRoom): Tint {
+    return tintOf(r, this.colourBy, this.pal, this.biomes.get(r.room) ?? 'other', this.edited.has(r.room));
   }
 
   private faded(n: number): boolean {
