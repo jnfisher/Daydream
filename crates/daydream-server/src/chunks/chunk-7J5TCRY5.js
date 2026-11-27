@@ -1,2 +1,0 @@
-// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
-import{Ca as t,Da as e,Ga as o}from"./chunk-AWYRHKA7.js";var r={name:"sticky-note",size:24,node:[["path",{d:"M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z"}],["path",{d:"M15 3v5a1 1 0 0 0 1 1h5"}]]},_=r.node,c=new Set(["$$slots","$$events","$$legacy"]);function a(n,p){let s=t(p,c);o(n,e(()=>s,{get icon(){return r}}))}export{a};

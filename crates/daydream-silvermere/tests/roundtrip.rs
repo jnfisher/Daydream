@@ -353,3 +353,28 @@ fn paths_become_sqlite_urls() {
     assert_eq!(database_url("sqlite://x.db"), "sqlite://x.db");
     assert_eq!(database_url(" postgres://u@h/d "), "postgres://u@h/d");
 }
+
+/// A preview into a SQLite file not made yet: every record would be new, and no file is made.
+#[tokio::test]
+async fn a_preview_into_a_new_database_makes_no_file() {
+    let dir = tempfile::tempdir().unwrap();
+    random_realm(dir.path(), LayoutSet::Dos, 4, 3);
+    let realm = Realm::open(dir.path()).unwrap();
+    let file = dir.path().join("silvermere.db");
+    let url = daydream_silvermere::database_url(&file.display().to_string());
+    let dry = ExportOptions {
+        dry_run: true,
+        ..ExportOptions::default()
+    };
+    let r = export(&realm, &url, &dry).await.unwrap();
+    assert_eq!(r.len(), 10, "{}", quiet(&r));
+    for t in &r {
+        assert_eq!(
+            (t.inserted, t.updated, t.deleted),
+            (4, 0, 0),
+            "{}",
+            quiet(&r)
+        );
+    }
+    assert!(!file.exists());
+}

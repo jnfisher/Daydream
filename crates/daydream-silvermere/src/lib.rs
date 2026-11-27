@@ -264,10 +264,23 @@ pub fn layout_of_realm(realm: &Realm) -> LayoutSet {
 }
 
 /// Writes `realm`'s world into silvermere's database at `url`, creating silvermere's schema
-/// in an empty database. silvermere must be stopped.
+/// in an empty database. silvermere must be stopped. A preview (`dry_run`) into a SQLite file
+/// not made yet says what a new one would take, which is everything, and makes no file.
 pub async fn export(realm: &Realm, url: &str, opts: &ExportOptions) -> Result<Vec<TableReport>> {
+    if opts.dry_run
+        && let Some(p) = sqlite_path(url)
+        && !Path::new(p).exists()
+    {
+        let scratch = Db::connect("sqlite::memory:").await?;
+        scratch.migrate().await?;
+        return export_tables(realm, &scratch, opts).await;
+    }
     let opened = open(url, !opts.dry_run).await?;
-    let db = &opened.db;
+    export_tables(realm, &opened.db, opts).await
+}
+
+/// The export into an open database.
+async fn export_tables(realm: &Realm, db: &Db, opts: &ExportOptions) -> Result<Vec<TableReport>> {
     let ctx = Ctx::new(layout_of_realm(realm), opts.legacy_tz.clone());
     if !opts.dry_run {
         db::world_import::begin(db).await?;

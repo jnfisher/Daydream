@@ -1,0 +1,2 @@
+// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
+import{Da as e,Ea as t,Ha as o}from"./chunk-M3NWVWO6.js";var r={name:"maximize-2",size:24,node:[["path",{d:"M15 3h6v6"}],["path",{d:"m21 3-7 7"}],["path",{d:"m3 21 7-7"}],["path",{d:"M9 21H3v-6"}]]},$=r.node,i=new Set(["$$slots","$$events","$$legacy"]);function p(a,n){let s=e(n,i);o(a,t(()=>s,{get icon(){return r}}))}export{p as a};

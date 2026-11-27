@@ -57,13 +57,18 @@
     scissors: Scissors, trash: Trash, hash: Hash, lock: Lock,
   };
 
-  /** How each tool's page is made: rebuilt, or today's form (Legacy). */
+  /** The tools that are one of the world's fixes. */
   const FIXES = new Set(['uses', 'dropuses', 'fold', 'limits', 'kills', 'restock', 'floors', 'buffer', 'strip', 'drops']);
 
-  // the tools' pages load together when the first one opens, so the Workshop's own code stays small
+  // the tools' pages load together when the first one opens, so the Workshop's own code stays
+  // small; the pages that bring files in and send the world out load as a chunk of their own
   type Pages = typeof import('./pages');
+  type Transfers = typeof import('./transfers');
   let pages: Promise<Pages> | null = null;
+  let transfers: Promise<Transfers> | null = null;
   const loadPages = () => (pages ??= import('./pages'));
+  const loadTransfers = () => (transfers ??= import('./transfers'));
+  const TRANSFERS: Record<string, keyof Transfers> = { nmr: 'ImportNmr', merge: 'MergeUsers', wcc: 'WriteWcc', silvermere: 'Silvermere', mme: 'MmeExport' };
 
   let open = $state<{ group: Group; tool: Tool } | null>(null);
   /** What follows the tool in its link: the record Renumber starts on (`items/868`). */
@@ -100,7 +105,11 @@
 {/snippet}
 
 {#snippet lazy(name: keyof Pages, props: Record<string, unknown> = {})}
-  {#await loadPages() then p}
+  {@render loaded(loadPages(), name, props)}
+{/snippet}
+
+{#snippet loaded(chunk: Promise<Record<string, unknown>>, name: string, props: Record<string, unknown> = {})}
+  {#await chunk then p}
     {@const C = p[name] as Component<any>}
     <C {...props} />
   {:catch}
@@ -158,8 +167,8 @@
           <div><a class="btn sticker" href="#/world"><MapIcon size={16} />Open the map</a></div>
           <h3 class="sub">Or a run of rooms by number</h3>
           {@render lazy('RoomRun')}
-        {:else}
-          {@render lazy('Legacy', { id: t.id })}
+        {:else if TRANSFERS[t.id]}
+          {@render loaded(loadTransfers(), TRANSFERS[t.id]!)}
         {/if}
       {/key}
     </section>

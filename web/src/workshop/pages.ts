@@ -6,7 +6,6 @@ export { default as Delete } from './Delete.svelte';
 export { default as Fixes } from './Fixes.svelte';
 export { default as Glossary } from './Glossary.svelte';
 export { default as Indexes } from './Indexes.svelte';
-export { default as Legacy } from './Legacy.svelte';
 export { default as Lists } from './Lists.svelte';
 export { default as Renumber } from './Renumber.svelte';
 export { default as RoomRun } from './RoomRun.svelte';
