@@ -243,6 +243,19 @@ async fn rows_list_their_keys_and_titles() {
     assert_eq!(body["rows"], serde_json::json!([]));
     let (status, _) = get(dir.path(), "/api/tables/races/rows?nonzero=Nope").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    // the rows where a column holds one of some numbers, or with nonzero those either picks
+    let (_, body) = get(dir.path(), "/api/tables/races/rows?match=Number&values=2,7").await;
+    assert_eq!(body["rows"], serde_json::json!([[[2], "Dwarf"]]));
+    let (_, body) = get(
+        dir.path(),
+        "/api/tables/races/rows?nonzero=Min%20STR&match=Number&values=1",
+    )
+    .await;
+    assert_eq!(body["rows"], serde_json::json!([[[1], "Human"]]));
+    for bad in ["match=Number", "values=1", "match=Number&values=one"] {
+        let (status, _) = get(dir.path(), &format!("/api/tables/races/rows?{bad}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
     let (status, body) = get(
         dir.path(),
         &format!("/api/tables/Races/row?key={}", key(serde_json::json!([2]))),

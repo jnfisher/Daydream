@@ -4,6 +4,8 @@ import { fmtMsg, Play, PLAYER, type Pretend, type Shown } from './play.ts';
 import { storyOf, type Cell, type Values } from './story.ts';
 
 const GREEN = '\x1b[0;32m';
+const YELLOW = '\x1b[1;33m';
+const WHITE = '\x1b[1;37m';
 
 /** A world of records by `Table/key`. */
 function world(records: Record<string, Values>) {
@@ -11,7 +13,8 @@ function world(records: Record<string, Values>) {
 }
 const player = (over: Partial<Pretend> = {}): Pretend => ({ ...structuredClone(PLAYER), ...over });
 /** What a turn showed, a note as `(note)` and a failed one as `(!note)`. */
-const said = (shown: Shown[]) => shown.map((s) => (s.to === 'note' ? `(${s.bad ? '!' : ''}${s.text})` : `${s.to}: ${s.text}`));
+const said = (shown: Shown[]) => shown.map((s) => (s.to === 'note' ? `(${s.bad ? '!' : ''}${s.text})` : s.to === 'there' ? `there, ${s.where}: ${s.text}` : `${s.to}: ${s.text}`));
+const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
 const MERCHANT: Record<string, Values> = {
   'Monsters/381': { Name: 'dwarven merchant', 'Greet Txt': 907, 'Talk Txt': 0 },
@@ -130,10 +133,85 @@ test("typed words run a room's command; a roll picks a line as the game rolls it
   await lever.type(6, 1664, 'pull lever');
   await lever.type(6, 1664, 'dance');
   assert.deepEqual(said(lever.shown), [
-    '(The east exit of Mine Shaft is worked (a door, a hidden way or a trap).)',
+    '(The east exit of Mine Shaft is no door, gate, hidden way or hidden trap, so nothing more happens.)',
     '(None of the room’s commands takes it, so the game tries it as a spell or an action next.)',
   ]);
   assert.ok(lever.touched.has('Rooms/6/1665'));
+});
+
+/** A room's exit `dir` as `[to, type, p1, p2, p3, p4]`. */
+const exit = (dir: number, [to, type, p1 = 0, p2 = 0, p3 = 0, p4 = 0]: number[]): Values => ({ [`Exit ${dir}`]: to!, [`Type ${dir}`]: type!, [`Para1 ${dir}`]: p1, [`Para2 ${dir}`]: p2, [`Para3 ${dir}`]: p3, [`Para4 ${dir}`]: p4 });
+
+// stock 1.11p rooms: a manhole down from Brass St. (1/17), a button that opens a panel in
+// the Halls of Training (1/493); and a lever that swaps a vault's door, for those carrying an axe
+const EXITS: Record<string, Values> = {
+  'Rooms/1/17': { Name: 'Intersection of Brass St. & River St.', ...exit(3, [18, 0]), ...exit(9, [607, 10, 12, 0, 8335]) },
+  'Rooms/1/607': { Name: 'Sewer Entrance', 'Desc 0': 'A dark tunnel.', ...exit(8, [17, 0]) },
+  'Rooms/1/493': { Name: 'Halls of Training', ...exit(0, [506, 6, 16, -1, 1267, 1268]), ...exit(1, [492, 0]), ...exit(3, [493, 12, 8259, 10, 8332]) },
+  'Rooms/1/9': { Name: 'Lever Room', 'Command Text': 30, ...exit(0, [40, 12, 42, 11, 0, 868]) },
+  // the same words: a Text exit answers them before a Remote Action, whatever their directions
+  'Rooms/1/10': { Name: 'Pit Edge', ...exit(0, [40, 12, 42, 11]), ...exit(5, [8, 10, 42]) },
+  'Rooms/1/40': { Name: 'Vault Door', ...exit(1, [41, 7, 2, 0, 3]) },
+  'Rooms/1/41': { Name: 'Vault', ...exit(0, [40, 7, 2]) },
+  'Rooms/1/8': { Name: 'Pit' },
+  'Textblocks/30/0': { Data: 'pull lever:message 31', 'Link To': 0 },
+  'Messages/31': { 'Line 1': 'It will not budge.' },
+  'Messages/12': { 'Line 1': 'go manhole', 'Line 2': 'go man', 'Line 3': 'enter manhole' },
+  'Messages/8335': { 'Line 1': 'You pull open the manhole cover, and slip inside the hole.', 'Line 2': '%s enters a manhole in the ground!', 'Line 3': '%s enters from a manhole overhead!' },
+  'Messages/8259': { 'Line 1': 'push button', 'Line 2': 'push but', 'Line 3': 'push button' },
+  'Messages/8332': { 'Line 1': 'You push the button.', 'Line 2': '%s pushes a button!', 'Line 3': '' },
+  'Messages/1267': { 'Line 1': 'A wooden panel in the wall slides open.', 'Line 2': '', 'Line 3': '' },
+  'Messages/1268': { 'Line 1': 'secret passage %s', 'Line 2': '', 'Line 3': '' },
+  'Messages/42': { 'Line 1': 'pull lever', 'Line 2': '', 'Line 3': '' },
+  'Items/868': { Name: 'dwarven axe' },
+};
+const exits = world(EXITS);
+
+test("an exit's words take the player through it, its message read in both rooms", async () => {
+  const p = new Play(exits, player());
+  assert.equal(await p.type(1, 17, 'GO MANHOLE'), 'ok');
+  const [left, reached, mine, screen] = said(p.shown);
+  assert.equal(left, `room: ${YELLOW}Ana${GREEN} enters a manhole in the ground!`);
+  assert.equal(reached, `there, Sewer Entrance: ${GREEN}${YELLOW}Ana${GREEN} enters from a manhole overhead!`);
+  assert.equal(mine, `you: ${YELLOW}You pull open the manhole cover, and slip inside the hole.`);
+  assert.equal(plain(screen!), 'you: Sewer Entrance\n    A dark tunnel.\nObvious exits: up');
+  assert.deepEqual([p.me.map, p.me.room], [1, 607]);
+  assert.deepEqual([...p.went], ['Rooms/1/17>Rooms/1/607@x9', 'Rooms/1/17>Messages/8335@x9']);
+  // the whole line, and none of the room's commands
+  const not = new Play(exits, player());
+  assert.equal(await not.type(1, 17, 'go manhole now'), 'nothing');
+  assert.deepEqual(said(not.shown), ['(The room has no commands of its own.)']);
+});
+
+test('a remote action works the exit it names: a hidden panel opens, a door swaps from both sides', async () => {
+  const p = new Play(exits, player());
+  assert.equal(await p.type(1, 493, 'Push But'), 'ok');
+  assert.deepEqual(said(p.shown), ['room: Ana pushes a button!', 'you: You push the button.', `all: ${WHITE}A wooden panel in the wall slides open.`, '(The north hidden way here opens, and shows among the exits.)']);
+  // shown now, as the game names it
+  assert.deepEqual(p.me.exits, { '1/493/0': 8 });
+  assert.deepEqual([...p.went], ['Rooms/1/493>Messages/8332@r3']);
+
+  // without the axe the words go on, to the next exit's and then the room's commands
+  const without = new Play(exits, player());
+  assert.equal(await without.type(1, 9, 'pull lever'), 'ok');
+  assert.deepEqual(said(without.shown), ["(!You are not carrying dwarven axe, so the north exit's words go on.)", 'you: It will not budge.']);
+  const fix = without.shown[0]!;
+  assert.ok(fix.to === 'note' && fix.fix?.label === 'Carry dwarven axe');
+  const edge = new Play(exits, player());
+  await edge.type(1, 10, 'pull lever');
+  assert.deepEqual(said(edge.shown).map(plain), ['(You go northwest the ordinary way, the others here seeing you leave.)', 'you: Pit\nObvious exits: NONE!!!']);
+
+  const lever = new Play(exits, player({ items: [868] }));
+  await lever.type(1, 9, 'pull lever');
+  await lever.type(1, 9, 'PULL LEVER');
+  assert.deepEqual(said(lever.shown), [
+    '(Your dwarven axe loses a charge.)',
+    '(The south door of Vault Door is unlocked and open now, from the other side too.)',
+    '(Your dwarven axe loses a charge.)',
+    '(The south door of Vault Door is shut and locked now, from the other side too.)',
+  ]);
+  assert.deepEqual(lever.me.exits, { '1/40/1': 2, '1/41/0': 2 });
+  assert.deepEqual([...lever.went], ['Rooms/1/9>Items/868@r0', 'Rooms/1/9>Rooms/1/40@r0']);
 });
 
 test("the player's level, class, alignment and stats, and what is in the room", async () => {
@@ -228,5 +306,13 @@ test("every way a turn goes is one of the story's edges, by the row it leaves fr
     await p.type(6, 1664, typed);
     assert.ok(p.went.size);
     for (const w of p.went) assert.ok(room.has(w), `${w} is no edge of the story`);
+  }
+  // the words of a room's exits
+  for (const [at, typed] of [[17, 'go man'], [493, 'push button'], [9, 'pull lever']] as const) {
+    const ways = edges(storyOf({ table: 'Rooms', key: [1, at] }, look(EXITS)));
+    const p = new Play(exits, player({ items: [868] }));
+    await p.type(1, at, typed);
+    assert.ok(p.went.size);
+    for (const w of p.went) assert.ok(ways.has(w), `${w} is no edge of the story`);
   }
 });

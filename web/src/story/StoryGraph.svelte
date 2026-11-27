@@ -15,6 +15,7 @@
   import Footprints from '@lucide/svelte/icons/footprints';
   import Funnel from '@lucide/svelte/icons/funnel';
   import Gift from '@lucide/svelte/icons/gift';
+  import Hand from '@lucide/svelte/icons/hand';
   import HandCoins from '@lucide/svelte/icons/hand-coins';
   import Maximize2 from '@lucide/svelte/icons/maximize-2';
   import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -27,6 +28,7 @@
   import { plainOf, renderAnsi } from '../ansi';
   import type { Cell } from '../api';
   import { talkOdds } from '../library/combat';
+  import { DIRS, exitsOf, remoteOf, wordsOf, type Lines, type Words } from '../library/exits';
   import { recordOf } from '../library/records.svelte';
   import { alternatives, coinsOf, linesOf, readingOf, type Bit, type Line, type Reading, type Step, type StepKind } from '../library/script';
   import { kindOf } from '../shell/kinds';
@@ -56,6 +58,33 @@
   const story = $derived(storyOf(root, recordOf));
   const first = $derived(story.nodes[0]);
   const lookFirst = $derived(recordOf(start.table, start.key));
+
+  /** A message's lines, as the room card reads them. */
+  const linesOf3 = (n: number): Lines | null | undefined => {
+    const v = recordOf('Messages', [n]);
+    return v ? [text(v['Line 1']), text(v['Line 2']), text(v['Line 3'])] : v;
+  };
+  /** The words of the start room's exits, in the order the game tries them (exits.ts). */
+  const exitWords = $derived.by((): Words[] => {
+    const v = lookFirst;
+    if (start.table !== 'Rooms' || !v) return [];
+    const own = { map: num(start.key[0]), room: num(start.key[1]) };
+    return wordsOf(exitsOf((c) => v[c]), own, linesOf3, (n) => {
+      const r = recordOf('Rooms', [own.map, n]);
+      return r ? exitsOf((c) => r[c]) : r;
+    });
+  });
+  /** What an exit's words do, in a few words: where they take players, or what they work. */
+  function wordsDo(w: Words): Bit[] {
+    const e = w.exit;
+    const map = num(start.key[0]);
+    if (w.kind === 'text') return [`Goes ${DIRS[e.dir]} to `, { ref: { t: 'Rooms', n: e.to, map }, role: 'moves' }];
+    const x = remoteOf(e).exit;
+    const needs: Bit[] = e.p4 ? ['With ', { ref: { t: 'Items', n: e.p4 }, role: 'needs' }, ': '] : [];
+    const own = e.to === num(start.key[1]);
+    if (x < 0) return [...needs, e.p3 > 0 ? 'Says a message and works no exit' : 'Works no exit'];
+    return [...needs, `Works the ${DIRS[x]} exit `, ...(own ? ['here'] : ['of ', { ref: { t: 'Rooms', n: e.to, map }, role: 'works' } as Bit])];
+  }
 
   /** A node's record's values. */
   const valuesOf = (n: StoryNode): Values | null | undefined => recordOf(n.table, n.key);
@@ -271,11 +300,11 @@
   // ---- playing it ----------------------------------------------------------------------------
 
   /** Whether a pretend player can try the story: a monster with a talk block, a room with
-   * commands, or a text block the game runs or shows. */
+   * commands or exits that answer words, or a text block the game runs or shows. */
   const playable = $derived.by(() => {
     if (!lookFirst) return false;
     if (start.table === 'Monsters') return num(lookFirst['Greet Txt']) > 0;
-    if (start.table === 'Rooms') return num(lookFirst['Command Text']) > 0;
+    if (start.table === 'Rooms') return num(lookFirst['Command Text']) > 0 || exitWords.length > 0;
     return root.table === 'Textblocks' && 'reading' in root && root.reading !== undefined && root.reading !== 'talk' && root.reading !== 'names';
   });
   let playing = $state(false);
@@ -400,7 +429,17 @@
     {#if !greet && !talk}<p class="note">Says nothing: it has no talk block.</p>{/if}
   {:else if n.table === 'Rooms' && n === first}
     {@const cmd = num(v['Command Text'])}
-    {#if cmd}<div class="row" data-port="types"><span class="gi t-text"><CornerDownRight size={12} /></span><span>Players can type: block <b>{cmd}</b></span></div>{:else}<p class="note">Nothing to type here: it has no commands.</p>{/if}
+    {#each exitWords as w (w.exit.dir)}
+      {@const Icon = w.kind === 'text' ? Footprints : Hand}
+      <div class="typed">
+        {#if w.words === undefined}<span class="faint">…</span>{:else if !w.words.length}<span class="faint">No words work it</span>{:else}{#each w.words.slice(0, 3) as t, j (j)}{#if j}<span class="faint">or</span>{/if}<code>{t}</code>{/each}{/if}
+      </div>
+      <div class="row step" class:skip={!!w.taken} data-port="{w.kind === 'text' ? 'x' : 'r'}{w.exit.dir}" title={w.taken}>
+        <span class="gi {w.kind === 'text' ? 't-shop' : 't-spell'}"><Icon size={12} /></span>
+        <span class="said">{@render said(wordsDo(w))}</span>
+      </div>
+    {/each}
+    {#if cmd}<div class="row" data-port="types"><span class="gi t-text"><CornerDownRight size={12} /></span><span>{exitWords.length ? 'Then its commands' : 'Players can type'}: block <b>{cmd}</b></span></div>{:else if !exitWords.length}<p class="note">Nothing to type here: it has no commands, and no exit answers words.</p>{/if}
   {:else if n.table === 'Textblocks'}
     {@const data = text(v['Data'])}
     {@const link = num(v['Link To'])}

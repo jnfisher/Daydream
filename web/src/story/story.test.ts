@@ -102,6 +102,33 @@ test("a room's commands, a random block's lines by chance, and a remote action o
   assert.ok(!block.nodes.some((n) => n.table === 'Rooms'));
 });
 
+test("a room's exits that answer words come first: where they take players, what they work", () => {
+  // the words of a manhole down, a lever for those with a key on another room's door, a
+  // button on the room's own hidden way; an ordinary exit and one leading nowhere answer none
+  const room = {
+    'Rooms/1/9': {
+      Name: 'Lever Room',
+      'Command Text': 30,
+      'Exit 0': 40, 'Type 0': 12, 'Para1 0': 42, 'Para2 0': 11, 'Para3 0': 43, 'Para4 0': 868,
+      'Exit 1': 9, 'Type 1': 12, 'Para1 1': 44, 'Para2 1': 10,
+      'Exit 2': 8, 'Type 2': 0,
+      'Exit 3': 0, 'Type 3': 10, 'Para1 3': 45,
+      'Exit 9': 607, 'Type 9': 10, 'Para1 9': 12, 'Para3 9': 8335,
+    },
+    'Textblocks/30/0': { Data: 'pull lever:message 31', 'Link To': 0 },
+  };
+  const s = storyOf({ table: 'Rooms', key: [1, 9] }, world(room));
+  assert.deepEqual(edges(s), [
+    'Rooms/1/9 moves@x9 Rooms/1/607',
+    'Rooms/1/9 says@x9 Messages/8335',
+    'Rooms/1/9 needs@r0 Items/868',
+    'Rooms/1/9 works@r0 Rooms/1/40',
+    'Rooms/1/9 says@r0 Messages/43',
+    'Rooms/1/9 types@types Textblocks/30/0',
+    'Textblocks/30/0 says@0.0 Messages/31',
+  ]);
+});
+
 const SMALL: Spacing = { w: 200, gapX: 50, gapY: 10, pad: 0, entry: 10 };
 const ports = (at: Record<string, number>) => (e: StoryEdge) => at[e.port];
 

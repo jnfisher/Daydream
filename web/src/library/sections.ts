@@ -43,9 +43,10 @@ export interface Section {
   where?: boolean;
   /**
    * Drawn by a part of its own (a monster's attacks, how it is wired, where it spawns, what a
-   * text block does). Its fields and grid still say which columns it shows.
+   * text block does, what players can type in a room). Its fields and grid still say which
+   * columns it shows.
    */
-  custom?: 'attacks' | 'wired' | 'spawns' | 'script';
+  custom?: 'attacks' | 'wired' | 'spawns' | 'script' | 'typed';
   /** Two of its numbers drawn against its peers' (a weapon's Max Hit against its Speed). Both
    * must be among the list's columns. */
   scatter?: { x: string; y: string; xLabel?: string; yLabel?: string; note?: string };

@@ -1,8 +1,10 @@
 // Play: a pretend player in a story, run as the game runs it (silvermere-engine's
-// commands/ask_greet.rs, scripts/{actions,special}.rs, display/long_text.rs). The player
-// greets a monster, asks it about something or types a room's command; the game's text comes
-// back as the game sends it, and what changed that the game does not say (coins paid, an item
-// given, a test that failed and why) as a note. A roll is made as the game makes it.
+// commands/ask_greet.rs and input.rs, scripts/{actions,special}.rs, display/long_text.rs,
+// movement/exits.rs). The player greets a monster, asks it about something, or types in a
+// room: the words of an exit that takes them through it or works another, or a command. The
+// game's text comes back as the game sends it, and what changed that the game does not say
+// (coins paid, an item given, a door unlocked, a test that failed and why) as a note. A roll is
+// made as the game makes it.
 //
 // What the world would know that a pretend player does not (its class, level, alignment, stats
 // and abilities, what lies in the room) is the player's to set, and a note on a test that
@@ -10,6 +12,7 @@
 //
 // Pure: no DOM, so `node --test` runs its tests (play.test.ts).
 
+import { BACK, DIRS, exitsOf, GATE, HIDDEN, REMOTE, remoteOf, roomScreen, sameWords, shown, TEXT, workExit, type Exit, type Lines } from '../library/exits.ts';
 import { clauses, coinsOf, leadingInt32, MAX_PARTS, patternLines, SKILLS, TELEPORTS, wholeLines, wildcardMatch, type Clause } from '../library/script.ts';
 import { nodeId, type Cell, type Values } from './story.ts';
 
@@ -44,6 +47,9 @@ export interface Pretend {
   monsters: number[];
   /** Whether the game has tournament play on (what `test_tournament` asks). */
   tournament: boolean;
+  /** The exits play has changed, by `map/room/direction`: the exit's Para1 now (a door's
+   * lock, a hidden way's flags). */
+  exits: Record<string, number>;
 }
 
 export const PLAYER: Pretend = {
@@ -63,6 +69,7 @@ export const PLAYER: Pretend = {
   floor: [],
   monsters: [],
   tournament: false,
+  exits: {},
 };
 
 /** A change to the player that would have let a line go on. */
@@ -72,8 +79,9 @@ export interface Fix {
 }
 
 /** What the player reads (`you`), what the others in the room read (`room`), what everyone
- * there reads (`all`), and a note of what happened that the game does not say. */
-export type Shown = { to: 'you' | 'room' | 'all'; text: string } | { to: 'note'; text: string; bad?: boolean; fix?: Fix };
+ * there reads (`all`), what those in another room read (`there`, its name `where`), and a note
+ * of what happened that the game does not say. */
+export type Shown = { to: 'you' | 'room' | 'all'; text: string } | { to: 'there'; text: string; where: string } | { to: 'note'; text: string; bad?: boolean; fix?: Fix };
 
 /** How a line ended: run through, stopped, or nothing in it ran. */
 export type Result = 'ok' | 'stop' | 'nothing';
@@ -86,9 +94,10 @@ const STOP: Step = { result: 'stop', on: false };
 const END_OK: Step = { result: 'ok', on: false };
 
 const GREEN = '\x1b[0;32m';
+const YELLOW = '\x1b[1;33m';
+const WHITE = '\x1b[1;37m';
+const LINES = ['Line 1', 'Line 2', 'Line 3'] as const;
 const COPPER: Record<string, number> = { runic: 1_000_000, platinum: 10_000, gold: 100, silver: 10, copper: 1 };
-/** The exits 0 to 9 a remote action works. */
-const EXITS = ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down'];
 /** How deep blocks may run each other before the chain is cut (silvermere's MAX_DEPTH). */
 const MAX_DEPTH = 32;
 /** The parts of a text the game shows at most (display_long_text). */
@@ -103,6 +112,7 @@ const num = (v: Cell | undefined) => Number(v) || 0;
 const upper = (s: string) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
 const wrap16 = (v: number) => ((((v % 65536) + 98304) % 65536) - 32768);
 const drop = (list: number[], n: number) => list.filter((x) => x !== n);
+const several = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** A message's `%s` (and `%d`) filled in order, `%%` a percent sign, as the game's printf
  * does (`fmt_msg`). */
@@ -327,8 +337,10 @@ export class Play {
     );
   }
 
-  /** A player in a room types `typed`, and the room's commands take it when one matches
-   * (`room_command`). */
+  /** A player in a room types `typed`, and the room takes it as the game tries it
+   * (`execute_input`, after the game's own commands): the words of its Text exits, then of its
+   * Remote Action exits, each the whole line in any case; then its commands, until one
+   * matches. */
   async type(map: number, room: number, typed: string): Promise<Result> {
     const r = await this.get('Rooms', [map, room]);
     if (!r) {
@@ -337,10 +349,157 @@ export class Play {
     }
     this.touch('Rooms', [map, room]);
     [this.me.map, this.me.room] = [map, room];
+    const exits = this.exitsOf(map, room, r);
+    for (const kind of [TEXT, REMOTE])
+      for (const e of exits) {
+        if (e.type !== kind || !e.to || !e.p1) continue;
+        const words = await this.get('Messages', [e.p1]);
+        if (!words || !LINES.some((c) => sameWords(text(words[c]), typed))) continue;
+        const port = `${kind === TEXT ? 'x' : 'r'}${e.dir}`;
+        if (await this.within('Rooms', [map, room], port, () => (kind === TEXT ? this.walk(map, e) : this.remote(map, e)))) return 'ok';
+      }
     const cmd = num(r['Command Text']);
     const result = cmd ? await this.within('Rooms', [map, room], 'types', () => this.command(cmd, typed)) : 'nothing';
     if (result === 'nothing') this.note(cmd ? 'None of the room’s commands takes it, so the game tries it as a spell or an action next.' : 'The room has no commands of its own.');
     return result;
+  }
+
+  /** A room's exits as play has left them. */
+  private exitsOf(map: number, room: number, r: Values): Exit[] {
+    return exitsOf(this.asPlayed(map, room, r));
+  }
+  /** A room's values, its exits as play has left them. */
+  private asPlayed(map: number, room: number, r: Values): (c: string) => Cell | undefined {
+    return (c) => {
+      const d = /^Para1 (\d)$/.exec(c)?.[1];
+      const changed = d === undefined ? undefined : this.me.exits[`${map}/${room}/${d}`];
+      return changed ?? r[c];
+    };
+  }
+  private changed(map: number, room: number, e: Exit) {
+    this.me.exits[`${map}/${room}/${e.dir}`] = e.p1;
+  }
+
+  /** The room as a player arriving reads it (`show_room`): its name, description and exits. */
+  private async screen(map: number, room: number, r: Values): Promise<string> {
+    const get = this.asPlayed(map, room, r);
+    // a found hidden way's naming message
+    const names = new Map<number, Lines | null>();
+    for (const e of exitsOf(get))
+      if (e.type === HIDDEN && e.p4 && shown(e)) {
+        const v = await this.get('Messages', [e.p4]);
+        names.set(e.p4, v ? [text(v['Line 1']), text(v['Line 2']), text(v['Line 3'])] : null);
+      }
+    return roomScreen(get, (n) => names.get(n) ?? null) ?? '';
+  }
+
+  /** A Text exit's words take the player through it (`text_exit`, the exit's `text` gate):
+   * its message's line 2 to the room they leave, line 3 to the room they reach and line 1 to
+   * them, then the room they reach; without a message, the ordinary way. */
+  private async walk(map: number, e: Exit): Promise<boolean> {
+    const dir = DIRS[e.dir]!;
+    const to = await this.get('Rooms', [map, e.to]);
+    if (!to) {
+      this.note(`There is no room ${e.to} on map ${map} for the ${dir} exit to take you to, so you stay.`, true);
+      return true;
+    }
+    this.touch('Rooms', [map, e.to]);
+    const where = text(to['Name']) || `room ${e.to}`;
+    const m = e.p3 ? await this.get('Messages', [e.p3]) : null;
+    if (m) {
+      this.touch('Messages', [e.p3]);
+      // the name in yellow, the rest of the line green (sic); a drag's words after it
+      const who = YELLOW + this.me.name + GREEN;
+      const [mine, left, reached] = LINES.map((c) => text(m[c]));
+      if (left) this.shown.push({ to: 'room', text: fmtMsg(left, [who, '']) });
+      if (reached) this.shown.push({ to: 'there', where, text: GREEN + fmtMsg(reached, [who, '']) });
+      if (mine) this.you(YELLOW + fmtMsg(mine, ['']));
+    } else this.note(e.p3 ? `There is no message ${e.p3}, so you go ${dir} the ordinary way.` : `You go ${dir} the ordinary way, the others here seeing you leave.`, !!e.p3);
+    Object.assign(this.me, { map, room: e.to, floor: [], monsters: [] });
+    this.you(await this.screen(map, e.to, to));
+    return true;
+  }
+
+  /** A Remote Action exit's words (`RemoteExitWords`): an item it names must be carried, and
+   * loses a charge; then the exit it names, of the room it leads to, is worked. False when
+   * the words go on to the next exit. */
+  private async remote(map: number, e: Exit): Promise<boolean> {
+    const dir = DIRS[e.dir]!;
+    if (e.p4) {
+      const item = await this.get('Items', [e.p4]);
+      if (!item) {
+        this.note(`There is no item ${e.p4} for the ${dir} exit's words to need, so they go on.`, true);
+        return false;
+      }
+      const name = text(item['Name']) || `item ${e.p4}`;
+      if (!this.me.items.includes(e.p4)) {
+        const need = e.p4;
+        this.note(`You are not carrying ${name}, so the ${dir} exit's words go on.`, true, { label: `Carry ${name}`, apply: (p) => p.items.push(need) });
+        return false;
+      }
+      this.touch('Items', [e.p4]);
+      this.note(`Your ${name} loses a charge.`);
+    }
+    const far = await this.get('Rooms', [map, e.to]);
+    if (!far) {
+      this.note(`There is no room ${e.to} on map ${map} for the ${dir} exit's words to work, so they go on.`, true);
+      return false;
+    }
+    const { action, exit } = remoteOf(e);
+    await this.worked(map, e.to, far, e.p3, action, exit);
+    return true;
+  }
+
+  /** `run_room_exit_action` on a room of the player's map: the message, line 2 to the
+   * player's room first and then line 1 to them; then its exit `exit` is worked by `action`. */
+  private async worked(map: number, room: number, r: Values, msg: number, action: number, exit: number): Promise<void> {
+    this.touch('Rooms', [map, room]);
+    await this.message(msg, true);
+    if (exit < 0 || exit > 9) {
+      this.note(`${exit === 10 ? 'Exit 10 is past the last direction' : 'It names no exit'}, so only the message is said.`);
+      return;
+    }
+    const dir = DIRS[exit]!;
+    const here = map === this.me.map && room === this.me.room;
+    const name = text(r['Name']) || `room ${room}`;
+    const of = here ? 'here' : `of ${name}`;
+    const e = this.exitsOf(map, room, r)[exit]!;
+    const w = workExit(e, action);
+    switch (w.kind) {
+      case 'swapped': {
+        this.changed(map, room, w.exit);
+        // the same door from the other side, when it leads straight back
+        const back = e.to ? await this.get('Rooms', [map, e.to]) : null;
+        const b = back ? this.exitsOf(map, e.to, back)[BACK[exit]!]! : null;
+        const bw = b && b.to === room ? workExit(b, action) : null;
+        if (bw?.kind === 'swapped') this.changed(map, e.to, bw.exit);
+        const what = e.type === GATE ? 'gate' : 'door';
+        this.note(`The ${dir} ${what} ${of} is ${w.exit.p1 ? 'shut and locked' : 'unlocked and open'} now${bw?.kind === 'swapped' ? ', from the other side too' : ''}.`);
+        return;
+      }
+      case 'thrown':
+        this.note(`Everyone ${here ? 'here' : `in ${name}`}, players and then monsters, is thrown ${dir} through the hidden trap.`);
+        return;
+      case 'cleared': {
+        this.changed(map, room, w.exit);
+        if (w.left) {
+          this.note(
+            w.cleared
+              ? `${w.cleared === 1 ? 'A block' : `${w.cleared} blocks`} of the ${dir} hidden way ${of} ${w.cleared === 1 ? 'goes' : 'go'}, and ${several(w.left, 'block')} ${w.left === 1 ? 'is' : 'are'} left.`
+              : `No block of the ${dir} hidden way ${of} goes, so ${several(w.left, 'block')} still ${w.left === 1 ? 'blocks' : 'block'} it.`,
+          );
+          return;
+        }
+        // everyone in its room is told, in its own words or the game's
+        const m = e.p3 ? await this.get('Messages', [e.p3]) : null;
+        const said = m ? (text(m['Line 1']) ? fmtMsg(text(m['Line 1']), [dir]) : '') : `A concealed passage opens to the ${dir}.`;
+        if (said) this.shown.push(here ? { to: 'all', text: WHITE + said } : { to: 'there', where: name, text: WHITE + said });
+        this.note(`The ${dir} hidden way ${of} opens, and shows among the exits.`);
+        return;
+      }
+      case 'nothing':
+        this.note(`The ${dir} exit ${of} is no door, gate, hidden way or hidden trap, so nothing more happens.`);
+    }
   }
 
   /** `ask_monster_a_question`: a greeting (no question) shows the text the monster's talk
@@ -636,11 +795,10 @@ export class Play {
       case 'remoteaction': {
         const exit = n.exit!;
         if (exit < 0 || exit > 10) return OK;
-        const work = exit === 10 ? 'Only its message is said' : `The ${EXITS[exit]} exit`;
         if (!me.map) {
           // a story from a monster or a text block: nobody knows the player's map
           await this.message(n.msg!, true);
-          this.note(`${work} of room ${n.room} on your map${exit === 10 ? '' : ' is worked (a door, a hidden way or a trap)'}, if that room is there.`);
+          this.note(exit === 10 ? `Only the message is said, if room ${n.room} is on your map.` : `The ${DIRS[exit]} exit of room ${n.room} on your map is worked (a door, a hidden way or a hidden trap), if that room is there.`);
           return OK;
         }
         const room = await this.get('Rooms', [me.map, n.room!]);
@@ -648,10 +806,7 @@ export class Play {
           this.note(`There is no room ${n.room} on map ${me.map}, so nothing happens.`, true);
           return OK;
         }
-        this.touch('Rooms', [me.map, n.room!]);
-        await this.message(n.msg!, true);
-        const name = text(room['Name']) || `room ${n.room}`;
-        this.note(exit === 10 ? `${work}, from ${name}.` : `${work} of ${name} is worked (a door, a hidden way or a trap).`);
+        await this.worked(me.map, n.room!, room, n.msg!, n.action!, exit);
         return OK;
       }
       case 'random': {
