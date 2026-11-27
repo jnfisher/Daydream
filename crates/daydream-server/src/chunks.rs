@@ -5,8 +5,12 @@
 /// A chunk's code, by its file name.
 pub(crate) fn get(name: &str) -> Option<&'static str> {
     Some(match name {
-        "World-VUFH5AGU.js" => include_str!("chunks/World-VUFH5AGU.js"),
-        "chunk-EELWAIY6.js" => include_str!("chunks/chunk-EELWAIY6.js"),
+        "Library-H5XRAWJM.js" => include_str!("chunks/Library-H5XRAWJM.js"),
+        "World-XOK6JKP3.js" => include_str!("chunks/World-XOK6JKP3.js"),
+        "chunk-BUXFAU4A.js" => include_str!("chunks/chunk-BUXFAU4A.js"),
+        "chunk-HD3BSVQF.js" => include_str!("chunks/chunk-HD3BSVQF.js"),
+        "chunk-VA475VRY.js" => include_str!("chunks/chunk-VA475VRY.js"),
+        "chunk-ZVRKVWLB.js" => include_str!("chunks/chunk-ZVRKVWLB.js"),
         _ => return None,
     })
 }

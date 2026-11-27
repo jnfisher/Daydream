@@ -602,3 +602,27 @@ export function columnsShown(layout: Layout): Set<string> {
   }
   return shown;
 }
+
+type ColumnNotes = Record<string, { columns: Record<string, { ref?: string; links?: string; note?: string; source?: string }> }>;
+
+/** The table whose record a column's value names (its ref, or what it links to), if any. A
+ * numbered column is looked for by its family's template (`Exit 3` by `Exit #`) too. */
+export function targetOf(table: string, col: string): string | undefined {
+  const cols = (FIELDS.tables as ColumnNotes)[table]?.columns;
+  if (!cols) return undefined;
+  const c = cols[col] ?? cols[col.replace(/(\d+)(?!.*\d)/, '#')];
+  return c?.ref ?? c?.links;
+}
+
+/** What fields.json notes of what the game does with a column (by its family's too). */
+export function noteOf(table: string, col: string): string | undefined {
+  const cols = (FIELDS.tables as ColumnNotes)[table]?.columns;
+  if (!cols) return undefined;
+  return (cols[col] ?? cols[col.replace(/(\d+)(?!.*\d)/, '#')])?.note;
+}
+
+/** What an exit's parameter (`Para1`) means for exit type `ty`, and the table it names. */
+export function exitParam(ty: number, para: string): { means: string; links?: string } | undefined {
+  const types = FIELDS.exit_params.types as Record<string, Record<string, { means: string; links?: string }>>;
+  return types[String(ty)]?.[para];
+}

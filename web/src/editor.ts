@@ -1,7 +1,8 @@
-// The record editors, in the Library and Players places: a list of a table's records on the
-// left and its editor on the right, laid out as Nightmare Redux's forms are (layouts.ts).
-// Every save goes to the server, which writes it through the same import an NMR .mdb goes
-// through. The frame (main.ts) routes here with `show`.
+// The Players place's record editor (users, gangs and bank books): a list of a table's
+// records on the left and its editor on the right, laid out as Nightmare Redux's forms are
+// (layouts.ts), with NMR's user tools. Every save goes to the server, which writes it through
+// the same import an NMR .mdb goes through. The frame (main.ts) routes here with
+// `showRoute`. The Library's records have cards (library/).
 
 import { ABILITIES } from './abilities';
 import { renderAnsi, titleOf, toShown, toWire } from './ansi';
@@ -10,7 +11,7 @@ import { columnsShown, layoutFor, type Field, type Layout, type Pick } from './l
 import { kindOf, TABLE_ORDER } from './shell/kinds';
 import { sfx } from './shell/prefs.svelte';
 import { PLAYER_TABLES, recordHref, type Route } from './shell/routes';
-import { remember, setGuard, undo } from './shell/state.svelte';
+import { addGuard, remember, undo } from './shell/state.svelte';
 import { toast } from './shell/toasts.svelte';
 import {
   type Ambiguous,
@@ -157,20 +158,16 @@ function pickName(pick: Pick | undefined, value: string): string {
 
 // ---- rendering --------------------------------------------------------------
 
-/** The tables a place edits: Players has the users, gangs and bank books; the Library the rest. */
-function tablesOf(place: 'library' | 'players'): TableInfo[] {
+/** The users, gangs and bank books, in NMR's menu order. */
+function playerTables(): TableInfo[] {
   const order = (t: TableInfo) => TABLE_ORDER.indexOf(t.name) + 1 || 99;
-  return state.tables
-    .filter((t) => PLAYER_TABLES.includes(t.name) === (place === 'players'))
-    .sort((a, b) => order(a) - order(b));
+  return state.tables.filter((t) => PLAYER_TABLES.includes(t.name)).sort((a, b) => order(a) - order(b));
 }
-
-let shownPlace: 'library' | 'players' = 'library';
 
 function renderNav() {
   const nav = $('#tables');
   nav.replaceChildren();
-  for (const t of tablesOf(shownPlace)) {
+  for (const t of playerTables()) {
     const k = kindOf(t.name);
     const a = h('a', { href: recordHref(t.name), class: k.cls }, k.many);
     if (t === state.table) a.classList.add('active');
@@ -376,10 +373,6 @@ function toolbar(t: TableInfo): HTMLElement {
   }
   button('Insert', state.row ? `Copy this record to a new ${t.name} record` : `Add a new ${t.name} record`, () => void insert());
   if (state.row) button('Delete', 'Remove this record from the realm', () => void remove(), 'danger');
-  if (state.row && t.name === 'Rooms') {
-    const [map, room] = state.row.key;
-    bar.append(h('a', { href: `#/world/${map}/${room}`, class: 'btn' }, 'Show on the map'));
-  }
   if (state.row && t.name === 'Users') {
     button('Revive', 'NMR\'s Revive Character: HP and Mana to full, then lives, spells cast and where to move them', () => void revive());
     button('Paste Stats', 'NMR\'s Paste Character: read a capture of the game\'s stat output into the fields', () => void pasteStats());
@@ -816,7 +809,7 @@ export function start(tables: TableInfo[]) {
     renderList();
   });
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && state.row && !$('#library').hidden) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && state.row && !$('#players').hidden) {
       e.preventDefault();
       void save();
     }
@@ -824,7 +817,7 @@ export function start(tables: TableInfo[]) {
   window.addEventListener('beforeunload', (e) => {
     if (dirty()) e.preventDefault();
   });
-  setGuard(confirmLeave);
+  addGuard(confirmLeave);
   // an undo or a take-back changed records under the editor: read them again
   window.addEventListener('dd:realm', () => {
     state.names.clear();
@@ -837,16 +830,11 @@ export function start(tables: TableInfo[]) {
   });
 }
 
-/** Shows the Library's or Players' table and record the route names. Answers false when
- *  the person kept unsaved edits instead, and the page stays where it was. */
+/** Shows the Players table and record the route names. Answers false when the person kept
+ *  unsaved edits instead, and the page stays where it was. */
 export async function showRoute(route: Route): Promise<boolean> {
-  const place = route.place === 'players' ? 'players' : 'library';
-  const name = route.table ?? tablesOf(place)[0]?.name;
+  const name = route.table ?? playerTables()[0]?.name;
   const same = !!state.row && name === state.table?.name && !!route.key && sameKey(route.key, state.row.key);
-  if (place !== shownPlace) {
-    shownPlace = place;
-    renderNav();
-  }
   // back on the record being edited: as it was left
   if (same && dirty()) return true;
   if (!same && dirty() && !confirmLeave()) return false;
@@ -864,7 +852,7 @@ export async function showRoute(route: Route): Promise<boolean> {
 }
 
 /** The link of what the editor shows now. */
-export const here = (): string => (state.table ? recordHref(state.table.name, state.row?.key) : '#/library');
+export const here = (): string => (state.table ? recordHref(state.table.name, state.row?.key) : '#/players');
 
 /** The previous (-1) or next (1) record in the list, as NMR's buttons step. */
 export function step(by: number) {
