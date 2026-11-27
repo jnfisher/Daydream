@@ -46,6 +46,9 @@ export interface Spot {
   y: number;
 }
 
+/** Places of rooms, as the map's side file keeps them: `{"14": [3, -2]}`. */
+export const cellsOf = (p: ReadonlyMap<number, Spot>): Record<string, [number, number]> => Object.fromEntries([...p].map(([n, s]) => [String(n), [s.x, s.y]]));
+
 /** A name shared by a run of joined rooms, drawn once where the run is. */
 export interface Label {
   x: number;

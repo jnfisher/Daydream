@@ -25,55 +25,28 @@
   import X from '@lucide/svelte/icons/x';
   import type { Component } from 'svelte';
   import { MONSTER_GROUP, ROOM_TYPE } from '../layouts';
-  import type { MapRoom } from './model';
-  import { BRUSH_SIZES, LIGHT_PICKS, lightWord, mapValue, PICK_FIELDS, PICK_MODES, PICK_TOOLS, sharedOf, type PickField, type PickMode, type PickTool } from './picks';
+  import { LIGHT_PICKS, lightWord } from './light';
+  import { BRUSH_SIZES, mapValue, PICK_FIELDS, PICK_MODES, PICK_TOOLS, sharedOf, type PickField, type PickTool } from './picks';
+  import type { Selector } from './selector.svelte';
 
-  let {
-    tool,
-    mode,
-    rooms,
-    total,
-    map,
-    touch,
-    ranges,
-    brush,
-    nameMax,
-    named,
-    ontool,
-    onmode,
-    onbrush,
-    onset,
-    onall,
-    onclear,
-    onshow,
-    onclose,
-  }: {
-    tool: PickTool;
-    mode: PickMode;
-    /** The rooms picked, in room order. */
-    rooms: MapRoom[];
-    /** How many rooms the map has. */
-    total: number;
-    map: number;
-    /** A finger, not a mouse: no keys to show. */
-    touch: boolean;
-    /** The whole numbers each Rooms column holds, by column. */
-    ranges: Record<string, [number, number] | null>;
-    /** How many rooms across the brush takes. */
-    brush: number;
-    nameMax: number;
-    /** A room of this map for a person ("Town square 1/245"), or null when the map has no such room. */
-    named: (n: number) => string | null;
-    ontool: (t: PickTool) => void;
-    onmode: (m: PickMode) => void;
-    /** The brush a size larger (1) or smaller (-1). */
-    onbrush: (by: number) => void;
-    onset: (f: PickField, values: [string, string | number][]) => void;
-    onall: () => void;
-    onclear: () => void;
-    onshow: () => void;
-    onclose: () => void;
-  } = $props();
+  let { selector: sel, onclose }: { selector: Selector; onclose: () => void } = $props();
+
+  const tool = $derived(sel.tool);
+  const mode = $derived(sel.mode);
+  /** The rooms picked, in room order. */
+  const rooms = $derived(sel.rooms);
+  const map = $derived(sel.host.map);
+  /** How many rooms the map has. */
+  const total = $derived(sel.host.count);
+  /** A finger, not a mouse: no keys to show. */
+  const touch = $derived(sel.host.coarse);
+  /** The whole numbers each Rooms column holds, by column. */
+  const ranges = $derived(sel.ranges);
+  /** How many rooms across the brush takes. */
+  const brush = $derived(sel.brush);
+  const nameMax = $derived(sel.host.nameMax);
+  /** A room of this map for a person ("Town square 1/245"), or null when the map has no such room. */
+  const named = (n: number) => (sel.host.scene.by.has(n) ? sel.host.called(n) : null);
 
   const TOOL_ICONS: Record<PickTool, Component<{ size?: number }>> = { box: SquareDashed, lasso: Lasso, brush: Brush, wand: WandSparkles };
   const FIELD_ICONS: Record<PickField['id'], Component<{ size?: number }>> = { name: Type, light: SunDim, monsters: Skull, control: Flag, type: House };
@@ -150,7 +123,7 @@
     e.preventDefault();
     const f = editing;
     if (!f || problem) return;
-    onset(f, f.id === 'name' ? [['Name', text.trim()]] : f.columns.map((c, i) => [c, nums[i] as number]));
+    sel.set(f, f.id === 'name' ? [['Name', text.trim()]] : f.columns.map((c, i) => [c, nums[i] as number]));
     open = null;
   }
 
@@ -167,7 +140,7 @@
   <div class="ways" role="radiogroup" aria-label="Pick rooms with">
     {#each PICK_TOOLS as t, i (t.id)}
       {@const Icon = TOOL_ICONS[t.id]}
-      <button type="button" role="radio" aria-checked={tool === t.id} class="way" class:on={tool === t.id} title="{t.about}{touch ? '' : ` (${i + 1})`}" onclick={() => ontool(t.id)}>
+      <button type="button" role="radio" aria-checked={tool === t.id} class="way" class:on={tool === t.id} title="{t.about}{touch ? '' : ` (${i + 1})`}" onclick={() => sel.setTool(t.id)}>
         {#if !touch}<span class="key">{i + 1}</span>{/if}
         <Icon size={18} />
         <span class="name">{t.name}</span>
@@ -176,15 +149,15 @@
   </div>
   <div class="modes" role="radiogroup" aria-label="Each pick">
     {#each PICK_MODES as m (m.id)}
-      <button type="button" role="radio" aria-checked={mode === m.id} class:on={mode === m.id} title={m.about} onclick={() => onmode(m.id)}>{m.name}</button>
+      <button type="button" role="radio" aria-checked={mode === m.id} class:on={mode === m.id} title={m.about} onclick={() => sel.setMode(m.id)}>{m.name}</button>
     {/each}
   </div>
   {#if tool === 'brush'}
     <div class="size">
       <span>Size</span>
-      <button type="button" class="btn icon sm" disabled={brush <= BRUSH_SIZES[0]!} onclick={() => onbrush(-1)} aria-label="Smaller" title={touch ? 'Smaller' : 'Smaller ([)'}><Minus size={14} /></button>
+      <button type="button" class="btn icon sm" disabled={brush <= BRUSH_SIZES[0]!} onclick={() => sel.sizeBrush(-1)} aria-label="Smaller" title={touch ? 'Smaller' : 'Smaller ([)'}><Minus size={14} /></button>
       <span class="n tnum">{brush}</span>
-      <button type="button" class="btn icon sm" disabled={brush >= BRUSH_SIZES.at(-1)!} onclick={() => onbrush(1)} aria-label="Bigger" title={touch ? 'Bigger' : 'Bigger (])'}><Plus size={14} /></button>
+      <button type="button" class="btn icon sm" disabled={brush >= BRUSH_SIZES.at(-1)!} onclick={() => sel.sizeBrush(1)} aria-label="Bigger" title={touch ? 'Bigger' : 'Bigger (])'}><Plus size={14} /></button>
       <span>{brush === 1 ? 'room across' : 'rooms across'}</span>
     </div>
   {/if}
@@ -193,11 +166,11 @@
     <b class="tnum" aria-live="polite">{rooms.length ? (rooms.length === 1 ? `Room ${map}/${rooms[0]!.room}` : `${rooms.length.toLocaleString()} rooms`) : 'No rooms yet'}</b>
     <span class="grow"></span>
     {#if rooms.length}
-      <button type="button" class="btn sm ghost" onclick={onshow} title="Show the rooms picked"><Focus size={14} />Show</button>
+      <button type="button" class="btn sm ghost" onclick={() => sel.show()} title="Show the rooms picked"><Focus size={14} />Show</button>
     {/if}
-    <button type="button" class="btn sm ghost" onclick={onall} disabled={rooms.length >= total} title="Pick every room of map {map}{touch ? '' : ' (Ctrl+A)'}"><CheckCheck size={14} />All</button>
+    <button type="button" class="btn sm ghost" onclick={() => sel.all()} disabled={rooms.length >= total} title="Pick every room of map {map}{touch ? '' : ' (Ctrl+A)'}"><CheckCheck size={14} />All</button>
     {#if rooms.length}
-      <button type="button" class="btn sm ghost" onclick={onclear} title="Let go of them{touch ? '' : ' (Esc)'}"><X size={14} />Clear</button>
+      <button type="button" class="btn sm ghost" onclick={() => sel.clear()} title="Let go of them{touch ? '' : ' (Esc)'}"><X size={14} />Clear</button>
     {/if}
   </div>
   {#if rooms.length}

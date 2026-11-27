@@ -47,16 +47,17 @@
   import X from '@lucide/svelte/icons/x';
   import { api } from '../api';
   import { read, sfx, write } from '../shell/prefs.svelte';
-  import { app, closeInspector, dropLocalStep, inspect, localStep, realmChanged, undo, type LocalStep } from '../shell/state.svelte';
+  import { app, closeInspector, dropLocalStep, inspect, localStep, undo, type LocalStep } from '../shell/state.svelte';
   import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
   import { dug, joined, moveFrom, renamed } from './build';
   import { ICONS } from './icons';
   import { COLOUR_BY, EXIT_LEGEND, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName } from './look';
-  import { cellKey, STEP, type Spot } from './layout';
-  import { DIR_WORDS, kindName, type MapFile, type MapRoom, type PinCells } from './model';
-  import { after, BRUSH_SIZES, mapValue, onRooms, PICK_TOOLS, withValues, type PickField, type PickHow, type PickMode, type PickTool } from './picks';
+  import type { Host } from './host';
+  import { cellKey, cellsOf, STEP, type Spot } from './layout';
+  import { DIR_WORDS, KEY_DIR, kindName, type MapFile, type MapRoom, type PinCells } from './model';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
-  import type { Placed, StampKind, StampOptions, StampRequest, Turn } from './stamps';
+  import type { Selector } from './selector.svelte';
+  import type { Stamper } from './stamper.svelte';
 
   let canvas: HTMLCanvasElement;
   let mini: HTMLCanvasElement;
@@ -114,56 +115,19 @@
   let stale = false;
   /** Where the camera was on each map, so coming back to one finds it as it was left. */
   const cams = new Map<number, Camera>();
-  // Stamps
-  /** The stamps' code, once the drawer has been opened. */
+  // the map's tools, whose code loads the first time each is used
+  /** The stamps' code and the stamp held, once the drawer has been opened. */
   let kit = $state<typeof import('./stamping') | null>(null);
-  const UPRIGHT: Turn = { turns: 0, flipX: false, flipY: false };
+  let stamper = $state.raw<Stamper | null>(null);
   /** The stamp drawer is open. */
   let stamping = $state(false);
-  /** The stamp held, its sizes, its roll, how it is turned, and whether it joins the rooms it touches. */
-  let stampKind = $state<StampKind | null>(null);
-  let stampSizes = $state<number[]>([]);
-  let stampSeed = $state(1);
-  let stampTurn = $state<Turn>(UPRIGHT);
-  let stampSeam = $state(false);
-  /** Leave the rooms already there alone, and replace the exits in the way: switched on, or held down (Shift, Alt). */
-  let stampKeep = $state(false);
-  let stampOverwrite = $state(false);
-  /** The cell the held stamp's first cell is over. */
-  let aim = $state<[number, number] | null>(null);
-  /** Shift (leave the rooms already there alone) and Alt (replace the exits in the way), held down. */
-  let mods = $state({ shift: false, alt: false });
+  /** The Select tool's code and the rooms it picks, once it has been taken up. */
+  let picker = $state<typeof import('./picking') | null>(null);
+  let selector = $state.raw<Selector | null>(null);
+  /** The Select tool is on. */
+  let picking = $state(false);
   /** A finger, not a mouse: a stamp is aimed with one tap and put down with another. */
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-  /** The held stamp as it would go down where it is aimed, and the room its new rooms copy. */
-  let ghost = $state<Placed | null>(null);
-  let ghostBrush = $state<number | null>(null);
-  // Picking rooms
-  /** The Select tool's panel, once it has been taken up. */
-  let picker = $state<typeof import('./picking') | null>(null);
-  /** The Select tool, while it is on. */
-  let picking = $state<PickTool | null>(null);
-  /** The way it picks (kept for next time), and what a pick does with no key held. */
-  let pickTool = $state<PickTool>(pickToolFrom(read('dd-map-pick', 'box')));
-  let pickMode = $state<PickMode>('set');
-  /** How many rooms across the brush takes (kept for next time). */
-  let brushSize = $state(brushFrom(read('dd-map-brush', '3')));
-  /** The rooms picked, on this map. */
-  let picked = $state.raw<ReadonlySet<number>>(new Set());
-  /** Counts the times the map's rooms changed, so what is worked out from them follows. */
-  let roomsSeen = $state(0);
-  /** Space held down: a drag with the Select tool moves the map. */
-  let panKey = false;
-
-
-  function brushFrom(v: string): number {
-    const n = Number(v);
-    return BRUSH_SIZES.includes(n) ? n : 3;
-  }
-
-  function pickToolFrom(v: string): PickTool {
-    return PICK_TOOLS.find((t) => t.id === v)?.id ?? 'box';
-  }
 
   function colourFrom(v: string): ColourBy {
     return COLOUR_BY.some((c) => c.id === v) ? (v as ColourBy) : 'place';
@@ -219,8 +183,6 @@
       if (moved) {
         scene.select(null);
         selected = null;
-        aim = null;
-        if (picked.size) setPicked(new Set());
       }
       map = a.map;
       maps = a.maps;
@@ -233,9 +195,6 @@
         pinCount = pins.size;
       }
       scene.setRooms(a.rooms, pins);
-      roomsSeen++;
-      // rooms an undo took away are no longer picked
-      if ([...picked].some((n) => !scene!.by.has(n))) setPicked(new Set([...picked].filter((n) => scene!.by.has(n))));
       startRoom = scene.start;
       stale = false;
       failed = '';
@@ -252,7 +211,7 @@
       selected = selected ? (scene.by.get(selected.room) ?? null) : null;
       if (had !== undefined && !selected && !moved) gone(had);
       legend = scene.legend();
-      reghost();
+      toolsChanged(moved);
     } catch (e) {
       failed = messageOf(e);
     } finally {
@@ -393,11 +352,7 @@
       return { title: `${way} to ${t?.name || `room ${e.to}`}`, sub: `${kind} to room ${map}/${e.to}, drawn elsewhere. Click to go there.` };
     }
     const r = h.room!;
-    if (picking === 'wand') {
-      const k = scene?.regionOf(r.room).length ?? 1;
-      return { title: r.name || `Room ${r.room}`, sub: `Room ${map}/${r.room}. ${k === 1 ? 'Click to pick it: no room joined to it shares its colour.' : `Click to pick the ${k.toLocaleString()} rooms joined to it in its colour.`}` };
-    }
-    if (picking) return { title: r.name || `Room ${r.room}`, sub: `Room ${map}/${r.room}${picked.has(r.room) ? ', picked' : ''}` };
+    if (picking && selector) return { title: r.name || `Room ${r.room}`, sub: selector.about(r) };
     return { title: r.name || `Room ${r.room}`, sub: building ? `Room ${map}/${r.room}. Drag to move it.` : `Room ${map}/${r.room}` };
   }
 
@@ -420,7 +375,7 @@
     if (!on && naming) finishNaming(true);
     if (!on && stamping) {
       stamping = false;
-      pickStamp(null);
+      stamper?.pick(null);
     }
     scene?.setBuild(on);
     if (on && !selected && scene?.layout) choose(scene.start, 'centre', false);
@@ -510,16 +465,24 @@
     if (!scene) return;
     edits++;
     scene.setRooms(rooms);
-    roomsSeen++;
     count = rooms.length;
     maps = maps.map(([m, c]) => [m, m === map ? rooms.length : c]);
     selected = selected ? (scene.by.get(selected.room) ?? null) : null;
     legend = scene.legend();
-    reghost();
+    toolsChanged(false);
   }
 
-  /** Sends an edit once those before it are in; `done` says what it did (from its answer), in a toast that can undo it. */
-  function send<T>(work: () => Promise<T>, done: string | ((out: T) => string)) {
+  /** The map's rooms or places changed (`moved`: it is another map): the tools follow. */
+  function toolsChanged(moved: boolean) {
+    stamper?.changed(moved);
+    selector?.changed(moved);
+  }
+
+  /**
+   * Sends an edit once those before it are in; `done` says what it did (from its answer), in a
+   * toast that can undo it. If it fails, `failed` puts back what was shown.
+   */
+  function send<T>(work: () => Promise<T>, done: string | ((out: T) => string), failed?: () => void) {
     pending++;
     chain = chain.then(async () => {
       if (broken) return;
@@ -533,6 +496,7 @@
       } catch (e) {
         // what came after it rested on it: the map is read again as the server has it
         broken = true;
+        failed?.();
         sfx('nope');
         dismiss(buildToast);
         toast(messageOf(e), { kind: 'error' });
@@ -608,7 +572,6 @@
   let importer = $state<HTMLInputElement | undefined>();
 
   const pinsFrom = (c: PinCells | undefined) => new Map(Object.entries(c ?? {}).map(([k, [x, y]]) => [Number(k), { x, y }]));
-  const cellsOf = (p: ReadonlyMap<number, Spot>): Record<string, [number, number]> => Object.fromEntries([...p].map(([n, s]) => [String(n), [s.x, s.y]]));
 
   /** Draws map `m`'s rooms with these places, if it is the map shown. */
   function showPins(m: number, next: ReadonlyMap<number, Spot>) {
@@ -616,7 +579,7 @@
     pins = next;
     pinCount = next.size;
     scene.setPins(next);
-    reghost();
+    toolsChanged(false);
   }
 
   /** Saves places of map `m`'s rooms, after those sent before; answers the realm history's newest step. */
@@ -704,7 +667,44 @@
     sfx('toggle');
   }
 
-  // ---- stamps ---------------------------------------------------------------------------
+  // ---- the map's tools -------------------------------------------------------------------
+
+  /** What the map's tools borrow: the scene, the map shown, and the page's ways of showing and saving an edit. */
+  const host: Host = {
+    get scene() {
+      return scene!;
+    },
+    get canvas() {
+      return canvas;
+    },
+    get map() {
+      return map;
+    },
+    get count() {
+      return count;
+    },
+    get selected() {
+      return selected;
+    },
+    get card() {
+      return card;
+    },
+    get pins() {
+      return pins;
+    },
+    get nameMax() {
+      return nameMax;
+    },
+    coarse,
+    say,
+    tell: (text) => (live = text),
+    called,
+    patch,
+    send,
+    showPins,
+    savePins,
+    quiet: () => dismiss(buildToast),
+  };
 
   /** The drawer of stamps open (Build mode with it) or put away. */
   async function setStamping(on: boolean) {
@@ -712,223 +712,36 @@
     if (on && !kit) {
       try {
         kit = await import('./stamping');
+        stamper = new kit.Stamper(host, () => void setStamping(false));
       } catch (e) {
         toast(messageOf(e), { kind: 'error' });
         return;
       }
     }
     stamping = on;
-    if (on && picking) void setPicking(false);
+    if (on && picking) await setPicking(false);
     if (on && !building) setBuilding(true);
-    if (!on) {
-      pickStamp(null);
-      stampKeep = stampOverwrite = false;
-    }
-    say(on ? (coarse ? 'Stamps: pick a shape, then tap the map where it goes.' : 'Stamps: pick a shape (1 to 9), then click the map to put it down.') : 'Stamps put away.', true);
+    stamper?.opened(on);
     sfx('toggle');
   }
 
-  /** Picks a stamp up (or puts the one held away). */
-  function pickStamp(k: StampKind | null) {
-    stampKind = k;
-    tip = null;
-    if (k) {
-      stampSizes = k.sizes.map((z) => z.start);
-      stampTurn = UPRIGHT;
-      stampSeed = Math.floor(Math.random() * 2 ** 31);
-      aim ??= startAim();
-      // too far out to aim at a cell: come in close where it aims
-      if (aim && scene && scene.cam.z < 0.35) scene.lookAt(aim[0], aim[1], 0.75, openMiddle());
-      say(
-        coarse
-          ? `${k.name}: tap the map to aim it, and tap it again to put it down.`
-          : `${k.name}: click the map to put it down. R turns it, X and Y mirror it${k.sizes.length ? ', [ and ] size it' : ''}.`,
-        true,
-      );
-    } else {
-      aim = null;
-      mods = { shift: false, alt: false };
-    }
-    scene?.setHolding(!!k);
-    reghost();
-  }
-
-  /** Where a stamp first aims: the selected room, else the middle of what the map shows. */
-  function startAim(): [number, number] | null {
-    const p = selected ? scene?.layout?.at.get(selected.room) : undefined;
-    if (p) return [p.x, p.y];
-    return scene && canvas ? scene.cellAt(...openMiddle()) : null;
-  }
-
-  /** The middle of the map that the card and the stamp drawer leave showing, on the canvas. */
-  function openMiddle(): [number, number] {
-    const c = canvas.getBoundingClientRect();
-    let [x0, x1, y0, y1] = [0, canvas.clientWidth - card, 0, canvas.clientHeight];
-    const d = canvas.parentElement?.querySelector('section.drawer')?.getBoundingClientRect();
-    if (d?.width) {
-      // a sheet along the bottom (a small screen), else a panel down the left
-      if (d.top - c.top > c.height * 0.3) y1 = Math.min(y1, d.top - c.top);
-      else x0 = Math.max(x0, d.right - c.left);
-    }
-    return [(x0 + x1) / 2, (y0 + y1) / 2];
-  }
-
-  const stampOptions = (m = mods): StampOptions => ({ keep: m.shift || stampKeep, overwrite: m.alt || stampOverwrite, seam: stampSeam });
-
-  /** The held stamp, drawn where it would go down. */
-  function reghost() {
-    if (!scene?.layout || !stampKind || !aim || !kit) {
-      ghost = null;
-      ghostBrush = null;
-      scene?.setStamp(null);
-      return;
-    }
-    const p = kit.placed(scene.by, scene.layout, kit.turned(stampKind.make(stampSizes, stampSeed), stampTurn), aim[0], aim[1], stampOptions());
-    ghost = p;
-    ghostBrush = kit.brushOf(p, selected?.room ?? scene.start);
-    scene.setStamp(p);
-  }
-
-  function sizeStamp(i: number, by: number) {
-    const z = stampKind?.sizes[i];
-    if (!z) return;
-    stampSizes = stampSizes.map((v, j) => (j === i ? Math.max(z.min, Math.min(z.max, v + by)) : v));
-    reghost();
-  }
-
-  /** A quarter turn clockwise, as the map shows it. */
-  function turnStamp() {
-    stampTurn = { ...stampTurn, turns: (stampTurn.turns + 1) % 4 };
-    reghost();
-  }
-
-  /** Mirrors the stamp as the map shows it: once turned a quarter, across is up and down before the turn. */
-  function flipStamp(axis: 'x' | 'y') {
-    const across = (axis === 'x') === (stampTurn.turns % 2 === 0);
-    stampTurn = across ? { ...stampTurn, flipX: !stampTurn.flipX } : { ...stampTurn, flipY: !stampTurn.flipY };
-    reghost();
-  }
-
-  function rollStamp() {
-    stampSeed = Math.floor(Math.random() * 2 ** 31);
-    reghost();
-  }
-
-  function seamStamp(on: boolean) {
-    stampSeam = on;
-    reghost();
-  }
-
-  function keepStamp(on: boolean) {
-    stampKeep = on;
-    reghost();
-  }
-
-  function overwriteStamp(on: boolean) {
-    stampOverwrite = on;
-    reghost();
-  }
-
-  /** What the held stamp would do where it is aimed, for the drawer. */
-  const ghostSaid = $derived.by(() => {
-    if (!ghost || !kit) return '';
-    const makes = ghost.rooms.length || ghost.links.some((l) => l.sort === 'make' || l.sort === 'replace');
-    if (!makes) return ghost.count.left ? 'Here: nothing, the exits in its way are left (Alt replaces them).' : 'Here: nothing, it is all there already.';
-    return `Here: ${kit.summary(map, ghost)}.`;
-  });
-
-  /** Puts the held stamp down with its first cell at (x, y). */
-  function putStamp(x: number, y: number, m: { shift: boolean; alt: boolean }) {
-    if (!scene?.layout || !stampKind || !kit) return;
-    aim = [x, y];
-    const o = stampOptions(m);
-    const p = kit.placed(scene.by, scene.layout, kit.turned(stampKind.make(stampSizes, stampSeed), stampTurn), x, y, o);
-    if (!p.rooms.length && !p.links.some((l) => l.sort === 'make' || l.sort === 'replace')) {
-      sfx('nope');
-      say(p.count.left ? 'Nothing to put down here: the exits in its way are left (hold Alt to replace them).' : 'Nothing to put down here: it is all there already.');
-      reghost();
-      return;
-    }
-    const brushNo = kit.brushOf(p, selected?.room ?? scene.start);
-    const brush = brushNo === null ? undefined : scene.by.get(brushNo);
-    if (!brush) {
-      sfx('nope');
-      say('Pick a room first: new rooms copy it.');
-      return;
-    }
-    const m0 = map;
-    const what = kit.named(stampKind);
-    // where its new rooms are drawn: the first stamp on a map keeps every room where it is drawn
-    const before = pins;
-    const first = pins.size === 0;
-    const next = new Map(first ? [...scene.layout.at].map(([k, s]) => [k, { ...s }]) : pins);
-    for (const c of p.cells) if (c.sort === 'new' && c.room !== null) next.set(c.room, { x: c.x, y: c.y });
-    const said = `Stamped ${what}: ${kit.summary(m0, p)}${first ? '. The map keeps this layout now: rooms stay where they are drawn' : ''}`;
-    patch(kit.stamped(scene.rooms, p, brush));
-    showPins(m0, next);
-    sfx('pop');
-    sendStamp(m0, kit.request(m0, brush.room, p, o, what), before, next, said);
-  }
-
-  /**
-   * Writes a stamp once the edits before it are in, then the places its rooms are drawn in;
-   * Ctrl+Z (or its toast) takes back both at once.
-   */
-  function sendStamp(m: number, req: StampRequest, before: ReadonlyMap<number, Spot>, next: ReadonlyMap<number, Spot>, said: string) {
-    pending++;
-    chain = chain.then(async () => {
-      if (broken) return;
+  /** The Select tool taken up (its panel with it) or put away; the rooms picked wait for it. */
+  async function setPicking(on: boolean) {
+    if (on === picking) return;
+    if (on && !picker) {
       try {
-        const out = await api.stamp(req);
-        const step = out.step;
-        await savePins(m, cellsOf(next), true);
-        if (step !== null) {
-          localStep({
-            label: `Stamp ${req.what}`,
-            after: step,
-            undo: async () => {
-              dismiss(buildToast);
-              await api.undo(step);
-              showPins(m, before);
-              await savePins(m, cellsOf(before), true);
-              realmChanged();
-            },
-            redo: async () => {
-              dismiss(buildToast);
-              await api.redo(step);
-              showPins(m, next);
-              await savePins(m, cellsOf(next), true);
-              realmChanged();
-            },
-          });
-        }
-        const notes = out.notes?.length ? ` ${out.notes.join(' ')}` : '';
-        dismiss(buildToast);
-        buildToast = toast(`${said}.${notes}`, { action: 'Undo', onAction: () => void undo() });
+        picker = await import('./picking');
+        selector = new picker.Selector(host, () => void setPicking(false));
       } catch (e) {
-        broken = true;
-        sfx('nope');
-        showPins(m, before);
-        dismiss(buildToast);
         toast(messageOf(e), { kind: 'error' });
-      } finally {
-        pending--;
-        if (!pending) {
-          broken = false;
-          void settle();
-        }
+        return;
       }
-    });
-  }
-
-  /** Shift and Alt held down change what the held stamp would do: shown as they change. */
-  function onMods(e: KeyboardEvent) {
-    if (!stampKind || !here()) return;
-    const m = { shift: e.shiftKey, alt: e.altKey };
-    if (e.key === 'Alt') e.preventDefault();
-    if (m.shift === mods.shift && m.alt === mods.alt) return;
-    mods = m;
-    reghost();
+    }
+    if (on && stamping) await setStamping(false);
+    picking = on;
+    tip = null;
+    selector?.turn(on);
+    sfx('toggle');
   }
 
   /** The export's name: the world's, as a file name. */
@@ -990,159 +803,6 @@
     } catch (e) {
       sfx('nope');
       toast(messageOf(e), { kind: 'error' });
-    }
-  }
-
-  // ---- picking rooms --------------------------------------------------------------------
-
-  /** The Select tool taken up (its panel with it) or put away; the rooms picked wait for it. */
-  async function setPicking(on: boolean) {
-    if (on === !!picking) return;
-    if (on && !picker) {
-      try {
-        picker = await import('./picking');
-      } catch (e) {
-        toast(messageOf(e), { kind: 'error' });
-        return;
-      }
-    }
-    if (on && stamping) await setStamping(false);
-    picking = on ? pickTool : null;
-    tip = null;
-    if (!on) setPanKey(false);
-    scene?.setPicking(picking);
-    scene?.setPickMode(pickMode);
-    scene?.setBrushSize(brushSize);
-    scene?.setPicked(on ? picked : new Set());
-    say(on ? (coarse ? 'Select: pick rooms with a finger, then set their fields.' : 'Select: drag a box around rooms (1 to 4 pick other ways), then set their fields.') : 'Select put away.', true);
-    sfx('toggle');
-  }
-
-  function setPickTool(t: PickTool) {
-    pickTool = t;
-    write('dd-map-pick', t);
-    if (!picking) return;
-    picking = t;
-    tip = null;
-    scene?.setPicking(t);
-  }
-
-  function setPickMode(m: PickMode) {
-    pickMode = m;
-    scene?.setPickMode(m);
-  }
-
-  function setBrushSize(n: number) {
-    brushSize = n;
-    write('dd-map-brush', String(n));
-    scene?.setBrushSize(n);
-  }
-
-  /** The brush a size larger or smaller. */
-  function sizeBrush(by: number) {
-    const i = BRUSH_SIZES.indexOf(brushSize) + by;
-    if (i >= 0 && i < BRUSH_SIZES.length) setBrushSize(BRUSH_SIZES[i]!);
-  }
-
-  function setPicked(next: ReadonlySet<number>) {
-    picked = next;
-    scene?.setPicked(picking ? next : new Set());
-  }
-
-  /** A pick on the map: a box, a lasso, a brush stroke, a click or the wand's region. */
-  function pickRooms(rooms: number[], how: PickHow) {
-    const next = after(picked, rooms, how);
-    if (next.size === picked.size && [...next].every((n) => picked.has(n))) return;
-    setPicked(next);
-    live = next.size ? `${next.size.toLocaleString()} room${next.size === 1 ? '' : 's'} picked.` : 'No rooms picked.';
-  }
-
-  function pickAll() {
-    if (!scene) return;
-    setPicked(new Set(scene.rooms.map((r) => r.room)));
-    say(`All ${scene.rooms.length.toLocaleString()} rooms of map ${map} picked.`, true);
-  }
-
-  function setPanKey(down: boolean) {
-    if (down === panKey) return;
-    panKey = down;
-    scene?.setPanKey(down);
-  }
-
-  /** The rooms picked, as the map has them, in room order. */
-  const pickedRooms = $derived.by(() => {
-    void roomsSeen;
-    const by = scene?.by;
-    if (!by || !picked.size) return [];
-    return [...picked]
-      .map((n) => by.get(n))
-      .filter((r): r is MapRoom => !!r)
-      .sort((a, b) => a.room - b.room);
-  });
-
-  /** The whole numbers each Rooms column holds. */
-  const roomRanges = $derived(Object.fromEntries((app.tables.find((t) => t.name === 'Rooms')?.columns ?? []).map((c) => [c.name, c.range ?? null])));
-
-  /** Sets a field on the rooms picked: shown at once, written as one save that one undo takes back. */
-  function setOnPicked(f: PickField, values: [string, string | number][]) {
-    if (!scene || !pickedRooms.length) return;
-    const rooms = pickedRooms.map((r) => r.room);
-    const what = f.label.toLowerCase();
-    const same = (r: MapRoom) => values.every(([c, v]) => mapValue(r, c) === (typeof v === 'string' ? v.trim() : v));
-    if (pickedRooms.every(same)) {
-      say(rooms.length === 1 ? `Room ${map}/${rooms[0]} has that ${what} already.` : `Those rooms have that ${what} already.`);
-      return;
-    }
-    const set = new Set(rooms);
-    patch(scene.rooms.map((r) => (set.has(r.room) ? withValues(r, values) : r)));
-    const m = map;
-    send(
-      () => api.mapSet({ map: m, rooms, values, what: f.label }),
-      (out) =>
-        out.changed >= rooms.length || !out.changed
-          ? `Set ${what} ${onRooms(m, rooms)}`
-          : `Set ${what} on ${out.changed.toLocaleString()} of the ${rooms.length.toLocaleString()} rooms (the others had it already)`,
-    );
-    sfx('pop');
-  }
-
-  /** The Select tool's keys: 1 to 4 pick how, Esc lets go of the rooms picked and then puts it away. Answers whether the key was one. */
-  function pickKeys(e: KeyboardEvent): boolean {
-    if (e.key === 'Escape') {
-      if (scene?.sweeping) scene.cancelSweep();
-      else if (picked.size) setPicked(new Set());
-      else void setPicking(false);
-      e.preventDefault();
-      return true;
-    }
-    if (!e.shiftKey && /^Digit[1-4]$/.test(e.code)) {
-      setPickTool(PICK_TOOLS[Number(e.code.slice(5)) - 1]!.id);
-      e.preventDefault();
-      return true;
-    }
-    if (picking === 'brush' && (e.key === '[' || e.key === ']')) {
-      sizeBrush(e.key === ']' ? 1 : -1);
-      e.preventDefault();
-      return true;
-    }
-    return false;
-  }
-
-  /** Space held down moves the map with a drag, and Ctrl+A picks every room, while the Select tool is on. */
-  function onPickKeys(e: KeyboardEvent) {
-    // let go of, wherever the key is let go
-    if (e.type === 'keyup' && e.code === 'Space') setPanKey(false);
-    if (!picking || !here() || e.type !== 'keydown') return;
-    const t = e.target;
-    if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-    if (e.code === 'Space') {
-      // a button keeps its Space
-      if (t instanceof HTMLElement && /^(BUTTON|A)$/.test(t.tagName)) return;
-      e.preventDefault();
-      setPanKey(true);
-    } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
-      e.preventDefault();
-      pickAll();
     }
   }
 
@@ -1238,54 +898,6 @@
 
   // ---- the keyboard ------------------------------------------------------------------
 
-  const KEY_DIR: Record<string, number> = {
-    ArrowUp: 0, ArrowDown: 1, ArrowRight: 2, ArrowLeft: 3, PageUp: 4, Home: 5, PageDown: 6, End: 7,
-    Numpad8: 0, Numpad2: 1, Numpad6: 2, Numpad4: 3, Numpad9: 4, Numpad7: 5, Numpad3: 6, Numpad1: 7,
-  };
-
-  /** The stamp drawer's keys: 1 to 9 pick a stamp, and the one held is moved, turned, sized and put down. Answers whether the key was one. */
-  function stampKeys(e: KeyboardEvent): boolean {
-    const done = () => {
-      e.preventDefault();
-      return true;
-    };
-    if (e.key === 'Escape') {
-      if (stampKind) pickStamp(null);
-      else void setStamping(false);
-      return done();
-    }
-    if (!e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
-      const k = kit?.STAMPS[Number(e.code.slice(5)) - 1] ?? null;
-      pickStamp(k && k.id !== stampKind?.id ? k : null);
-      return done();
-    }
-    if (!stampKind) return false;
-    const d = KEY_DIR[e.code] ?? KEY_DIR[e.key];
-    if (d !== undefined && !e.shiftKey) {
-      const [dx, dy] = STEP[d]!;
-      aim = aim ? [aim[0] + dx, aim[1] + dy] : startAim();
-      if (aim) scene?.showCell(aim[0], aim[1]);
-      reghost();
-      return done();
-    }
-    if (e.key === 'Enter') {
-      if (aim) putStamp(aim[0], aim[1], { shift: e.shiftKey, alt: false });
-      return done();
-    }
-    const k = e.key.toLowerCase();
-    if (k === 'r') turnStamp();
-    else if (k === 'x') flipStamp('x');
-    else if (k === 'y') flipStamp('y');
-    else if (e.key === '[') sizeStamp(0, -1);
-    else if (e.key === ']') sizeStamp(0, 1);
-    else if (e.key === '{') sizeStamp(1, -1);
-    else if (e.key === '}') sizeStamp(1, 1);
-    else if (e.key === ' ' && stampKind.random) rollStamp();
-    else if (k === 'j') seamStamp(!stampSeam);
-    else return false;
-    return done();
-  }
-
   function onKey(e: KeyboardEvent) {
     if (!here() || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
     if (app.paletteOpen || document.querySelector('dialog[open], [role=dialog]')) return;
@@ -1295,8 +907,8 @@
       // the card, the bar and the rail keep their own keys
       if (t.closest('#dd-inspector, #dd-top, #dd-rail, .pop')) return;
     }
-    if (stamping && stampKeys(e)) return;
-    if (picking && pickKeys(e)) return;
+    if (stamping && stamper?.keys(e)) return;
+    if (picking && selector?.keys(e)) return;
     if (e.key === 'Escape') {
       if (scene?.carrying) scene.dropCarry();
       else if (countText) countText = '';
@@ -1385,12 +997,6 @@
       },
       build: (g: Ghost) => build(g.dir),
       move: (n, x, y) => moveRoom(n, x, y),
-      aim: (x, y) => {
-        aim = [x, y];
-        reghost();
-      },
-      stamp: (x, y, m) => putStamp(x, y, m),
-      choose: (rooms, how) => pickRooms(rooms, how),
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
@@ -1406,6 +1012,11 @@
     const unfull = () => {
       if (!document.fullscreenElement && focus) setFocus(false);
     };
+    // Shift and Alt change what a stamp held would do; Space and Ctrl+A are the Select tool's
+    const onMods = (e: KeyboardEvent) => {
+      if (here()) stamper?.held(e);
+    };
+    const onPickKeys = (e: KeyboardEvent) => selector?.onKey(e, here());
     document.addEventListener('fullscreenchange', unfull);
     document.addEventListener('keydown', onKey);
     document.addEventListener('keydown', onMods);
@@ -1413,11 +1024,8 @@
     document.addEventListener('keydown', onPickKeys);
     document.addEventListener('keyup', onPickKeys);
     const letGo = () => {
-      setPanKey(false);
-      if (mods.shift || mods.alt) {
-        mods = { shift: false, alt: false };
-        reghost();
-      }
+      selector?.letGo();
+      stamper?.letGo();
     };
     window.addEventListener('blur', letGo);
     window.addEventListener('dd:wrote', written);
@@ -1536,12 +1144,12 @@
     <button
       type="button"
       class="btn glass build-btn"
-      class:on={!!picking}
-      aria-pressed={!!picking}
+      class:on={picking}
+      aria-pressed={picking}
       onclick={() => void setPicking(!picking)}
       title={picking ? 'Done selecting (V)' : 'Select: pick rooms and set their fields together (V)'}
     >
-      <SquareDashedMousePointer size={15} /><span>Select</span>{#if picking && picked.size}<b class="count tnum">{picked.size.toLocaleString()}</b>{/if}
+      <SquareDashedMousePointer size={15} /><span>Select</span>{#if picking && selector?.picked.size}<b class="count tnum">{selector.picked.size.toLocaleString()}</b>{/if}
     </button>
     {#if pending}<span class="pill lilac">Saving…</span>{:else if loading}<span class="pill lilac">Reading map…</span>{/if}
   </div>
@@ -1665,62 +1273,24 @@
     <canvas bind:this={mini} class="mini" aria-label="Overview of the whole map. Click or drag to look there."></canvas>
   </div>
 
-  {#if stamping && kit}
-    <kit.StampDrawer
-      kind={stampKind}
-      sizes={stampSizes}
-      seam={stampSeam}
-      keep={stampKeep || mods.shift}
-      overwrite={stampOverwrite || mods.alt}
-      touch={coarse}
-      brush={ghostBrush === null ? 'the room picked' : called(ghostBrush)}
-      said={ghostSaid}
-      colours={pal.stamp}
-      onpick={pickStamp}
-      onsize={sizeStamp}
-      onturn={turnStamp}
-      onflip={flipStamp}
-      onroll={rollStamp}
-      onseam={seamStamp}
-      onkeep={keepStamp}
-      onoverwrite={overwriteStamp}
-      onclose={() => void setStamping(false)}
-    />
+  {#if stamping && kit && stamper}
+    <kit.StampDrawer {stamper} colours={pal.stamp} onclose={() => void setStamping(false)} />
   {/if}
 
-  {#if picking && picker}
-    <picker.PickBar
-      tool={picking}
-      mode={pickMode}
-      rooms={pickedRooms}
-      total={count}
-      {map}
-      touch={coarse}
-      ranges={roomRanges}
-      brush={brushSize}
-      {nameMax}
-      named={(n) => (scene?.by.has(n) ? called(n) : null)}
-      ontool={setPickTool}
-      onmode={setPickMode}
-      onbrush={sizeBrush}
-      onset={setOnPicked}
-      onall={pickAll}
-      onclear={() => setPicked(new Set())}
-      onshow={() => scene?.frameRooms(picked)}
-      onclose={() => void setPicking(false)}
-    />
+  {#if picking && picker && selector}
+    <picker.PickBar {selector} onclose={() => void setPicking(false)} />
   {/if}
 
   {#if roomy}
     <div class="float hint map-hint glass" aria-hidden="true">
       {#if note}
         {note}
-      {:else if stampKind}
-        <b class="mode">Stamp</b> click to put it down <span class="kbd">R</span> turn <span class="kbd">X</span><span class="kbd">Y</span> mirror {#if stampKind.sizes.length}<span class="kbd">[</span><span class="kbd">]</span> size {/if}{#if stampKind.random}<span class="kbd">Space</span> roll {/if}<span class="kbd">J</span> join <span class="kbd">Esc</span> put away
+      {:else if stamper?.kind}
+        <b class="mode">Stamp</b> click to put it down <span class="kbd">R</span> turn <span class="kbd">X</span><span class="kbd">Y</span> mirror {#if stamper.kind.sizes.length}<span class="kbd">[</span><span class="kbd">]</span> size {/if}{#if stamper.kind.random}<span class="kbd">Space</span> roll {/if}<span class="kbd">J</span> join <span class="kbd">Esc</span> put away
       {:else if stamping}
         <b class="mode">Stamps</b> pick a shape <span class="kbd">1</span>…<span class="kbd">9</span> <span class="kbd">S</span> put them away
-      {:else if picking}
-        <b class="mode">Select</b> <span class="kbd">1</span>…<span class="kbd">4</span> how {#if picking === 'brush'}<span class="kbd">[</span><span class="kbd">]</span> size {/if}<span class="kbd">Shift</span> add <span class="kbd">Alt</span> take away <span class="kbd">Space</span> pan <span class="kbd">Esc</span> {picked.size ? 'let go' : 'done'}
+      {:else if picking && selector}
+        <b class="mode">Select</b> <span class="kbd">1</span>…<span class="kbd">4</span> how {#if selector.tool === 'brush'}<span class="kbd">[</span><span class="kbd">]</span> size {/if}<span class="kbd">Shift</span> add <span class="kbd">Alt</span> take away <span class="kbd">Space</span> pan <span class="kbd">Esc</span> {selector.picked.size ? 'let go' : 'done'}
       {:else if building}
         <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
@@ -1772,12 +1342,11 @@
     --edge: 12px;
   }
   .map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
+  /* the tools' cursors: the canvas names the tool on */
+  .map:global([data-tool='stamp']), .map:global([data-tool='box']), .map:global([data-tool='lasso']), .map:global([data-tool='brush']) { cursor: crosshair; }
+  .map:global([data-tool='wand']) { cursor: pointer; }
+  .map:global(.pan-key) { cursor: grab; }
   .map:global(.panning), .map:global(.carrying) { cursor: grabbing; }
-  .map:global(.stamping) { cursor: crosshair; }
-  .map:global(.picking) { cursor: crosshair; }
-  .map:global(.picking[data-tool='wand']) { cursor: pointer; }
-  .map:global(.picking.pan-key) { cursor: grab; }
-  .map:global(.picking.panning) { cursor: grabbing; }
   .map:focus-visible { box-shadow: inset 0 0 0 3px var(--focus); }
 
   .float { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; }

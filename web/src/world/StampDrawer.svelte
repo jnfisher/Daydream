@@ -15,52 +15,30 @@
   import Plus from '@lucide/svelte/icons/plus';
   import RotateCw from '@lucide/svelte/icons/rotate-cw';
   import X from '@lucide/svelte/icons/x';
-  import { STAMPS, type Shape, type StampKind } from './stamps';
+  import type { Stamper } from './stamper.svelte';
+  import { STAMPS, type Shape } from './stamps';
 
   let {
-    kind,
-    sizes,
-    seam,
-    keep,
-    overwrite,
-    touch,
-    brush,
-    said,
+    stamper: st,
     colours,
-    onpick,
-    onsize,
-    onturn,
-    onflip,
-    onroll,
-    onseam,
-    onkeep,
-    onoverwrite,
     onclose,
   }: {
-    kind: StampKind | null;
-    sizes: number[];
-    seam: boolean;
-    /** Leave the rooms already there alone, and replace the exits in the way: switched on or held down. */
-    keep: boolean;
-    overwrite: boolean;
-    /** A finger, not a mouse: tap to aim, tap again to put it down, and no keys to show. */
-    touch: boolean;
-    /** The room new rooms copy, for a person. */
-    brush: string;
-    /** What putting the stamp down where it is would do. */
-    said: string;
+    /** The stamp held, and what it would do where it is aimed. */
+    stamper: Stamper;
     /** The map's colours for a stamp's cells and links. */
     colours: { fresh: string; join: string; clash: string; replace: string; kept: string };
-    onpick: (k: StampKind | null) => void;
-    onsize: (i: number, by: number) => void;
-    onturn: () => void;
-    onflip: (axis: 'x' | 'y') => void;
-    onroll: () => void;
-    onseam: (on: boolean) => void;
-    onkeep: (on: boolean) => void;
-    onoverwrite: (on: boolean) => void;
     onclose: () => void;
   } = $props();
+
+  const kind = $derived(st.kind);
+  const sizes = $derived(st.sizes);
+  /** Leave the rooms already there alone, and replace the exits in the way: switched on or held down. */
+  const keep = $derived(st.keep || st.mods.shift);
+  const overwrite = $derived(st.overwrite || st.mods.alt);
+  /** A finger, not a mouse: tap to aim, tap again to put it down, and no keys to show. */
+  const touch = $derived(st.host.coarse);
+  /** The room new rooms copy, for a person. */
+  const brush = $derived(st.brush === null ? 'the room picked' : st.host.called(st.brush));
 
   /** A shape as a little drawing: its cells, and lines for its links (dashed up and down). */
   function preview(s: Shape) {
@@ -89,7 +67,7 @@
   <div class="shapes" role="listbox" aria-label="Shapes">
     {#each STAMPS as k, i (k.id)}
       {@const p = PREVIEWS[i]!}
-      <button type="button" role="option" aria-selected={kind?.id === k.id} class="shape" class:on={kind?.id === k.id} title="{k.name}: {k.about}" onclick={() => onpick(kind?.id === k.id ? null : k)}>
+      <button type="button" role="option" aria-selected={kind?.id === k.id} class="shape" class:on={kind?.id === k.id} title="{k.name}: {k.about}" onclick={() => st.pick(kind?.id === k.id ? null : k)}>
         {#if i < 9 && !touch}<span class="key">{i + 1}</span>{/if}
         <svg viewBox={p.box} aria-hidden="true">
           {#each p.lines as [x1, y1, x2, y2], j (j)}<line {x1} {y1} {x2} {y2} />{/each}
@@ -103,33 +81,33 @@
   {#if kind}
     <div class="held">
       <p class="about"><b>{kind.name}</b> {kind.about.toLowerCase()}.</p>
-      <p class="said" class:faint={!said} aria-live="polite">{said || (touch ? 'Tap the map to see what it would do there.' : 'Point at the map to see what it would do there.')}</p>
+      <p class="said" class:faint={!st.said} aria-live="polite">{st.said || (touch ? 'Tap the map to see what it would do there.' : 'Point at the map to see what it would do there.')}</p>
       {#each kind.sizes as z, i (z.word)}
         <div class="size">
           {#if !touch}<span class="faint">{i ? '{ }' : '[ ]'}</span>{/if}
-          <button type="button" class="btn icon sm" disabled={sizes[i]! <= z.min} onclick={() => onsize(i, -1)} aria-label="Smaller"><Minus size={14} /></button>
+          <button type="button" class="btn icon sm" disabled={sizes[i]! <= z.min} onclick={() => st.size(i, -1)} aria-label="Smaller"><Minus size={14} /></button>
           <span class="n tnum">{sizes[i]}</span>
-          <button type="button" class="btn icon sm" disabled={sizes[i]! >= z.max} onclick={() => onsize(i, 1)} aria-label="Bigger"><Plus size={14} /></button>
+          <button type="button" class="btn icon sm" disabled={sizes[i]! >= z.max} onclick={() => st.size(i, 1)} aria-label="Bigger"><Plus size={14} /></button>
           <span>{z.word}</span>
         </div>
       {/each}
       <div class="acts">
-        <button type="button" class="btn sm" onclick={onturn} title="Turn it a quarter clockwise (R)"><RotateCw size={14} />Turn</button>
-        <button type="button" class="btn sm" onclick={() => onflip('x')} title="Mirror it left to right (X)"><ArrowLeftRight size={14} />X</button>
-        <button type="button" class="btn sm" onclick={() => onflip('y')} title="Mirror it top to bottom (Y)"><ArrowUpDown size={14} />Y</button>
-        {#if kind.random}<button type="button" class="btn sm" onclick={onroll} title="Another one (Space)"><Dices size={14} />Roll</button>{/if}
+        <button type="button" class="btn sm" onclick={() => st.rotate()} title="Turn it a quarter clockwise (R)"><RotateCw size={14} />Turn</button>
+        <button type="button" class="btn sm" onclick={() => st.flip('x')} title="Mirror it left to right (X)"><ArrowLeftRight size={14} />X</button>
+        <button type="button" class="btn sm" onclick={() => st.flip('y')} title="Mirror it top to bottom (Y)"><ArrowUpDown size={14} />Y</button>
+        {#if kind.random}<button type="button" class="btn sm" onclick={() => st.roll()} title="Another one (Space)"><Dices size={14} />Roll</button>{/if}
       </div>
       <div class="switches">
         <label>
-          <input class="switch" type="checkbox" role="switch" checked={seam} onchange={(e) => onseam(e.currentTarget.checked)} />
+          <input class="switch" type="checkbox" role="switch" checked={st.seam} onchange={(e) => st.setSeam(e.currentTarget.checked)} />
           <span>Join the rooms it touches</span>{#if !touch}<span class="kbd">J</span>{/if}
         </label>
         <label>
-          <input class="switch" type="checkbox" role="switch" checked={keep} onchange={(e) => onkeep(e.currentTarget.checked)} />
+          <input class="switch" type="checkbox" role="switch" checked={keep} onchange={(e) => st.setKeep(e.currentTarget.checked)} />
           <span>Leave rooms under it alone</span>{#if !touch}<span class="kbd">Shift</span>{/if}
         </label>
         <label>
-          <input class="switch" type="checkbox" role="switch" checked={overwrite} onchange={(e) => onoverwrite(e.currentTarget.checked)} />
+          <input class="switch" type="checkbox" role="switch" checked={overwrite} onchange={(e) => st.setOverwrite(e.currentTarget.checked)} />
           <span>Replace the exits in its way</span>{#if !touch}<span class="kbd">Alt</span>{/if}
         </label>
       </div>
