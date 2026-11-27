@@ -534,6 +534,7 @@ const RACES: CardDef = {
 const MESSAGES: CardDef = {
   sections: [
     { id: 'see', title: 'What players see', text: { cols: ['Line 1', 'Line 2', 'Line 3'] } },
+    { id: 'reads', title: 'How the game reads it', hint: 'each use, filled in', custom: 'reads' },
     { id: 'where', title: 'Where it is used', side: true, where: true },
   ],
 };

@@ -1,13 +1,15 @@
 <!--
   What is wrong with the record on its card (problems.ts): a pill in its header that counts
   them, opening the list. Each says what is wrong, with its fix (typed into the card, so it is
-  one Save, and one undo) and a way to the field.
+  one Save, and one undo) and a way to the field; a line borrowed from another monster, with a
+  copy of the message of its own.
 -->
 <svelte:options css="injected" />
 
 <script lang="ts">
   import BroomSparkles from '@lucide/svelte/icons/broom-sparkles';
   import CircleAlert from '@lucide/svelte/icons/circle-exclamation-point';
+  import CopyPlus from '@lucide/svelte/icons/copy-plus';
   import Locate from '@lucide/svelte/icons/locate';
   import TriangleAlert from '@lucide/svelte/icons/triangle-exclamation-point';
   import WandSparkles from '@lucide/svelte/icons/wand-sparkles';
@@ -20,6 +22,7 @@
     onfix,
     onshow,
     onaccept,
+    onown,
   }: {
     problems: Problem[];
     /** Types a fix's values into the card. */
@@ -28,6 +31,8 @@
     onshow: (col: string) => boolean;
     /** Tells spelling to leave a word alone. */
     onaccept?: (word: string) => void;
+    /** Gives the record a copy of a message of its own. */
+    onown?: (message: number) => void;
   } = $props();
 
   let open = $state(false);
@@ -66,6 +71,18 @@
                 {#if p.fix}
                   {@const set = p.fix.set}
                   <button type="button" class="btn sm" onclick={() => fix(set)}><WandSparkles size={13} /> {p.fix.label}</button>
+                {/if}
+                {#if p.own && onown}
+                  {@const m = p.own}
+                  <button
+                    type="button"
+                    class="btn sm"
+                    onclick={() => {
+                      open = false;
+                      onown(m);
+                    }}
+                    title="A copy of message {m} for this record alone, its name written in"><CopyPlus size={13} /> Give it its own copy</button
+                  >
                 {/if}
                 {#if p.accept && onaccept}
                   {@const w = p.accept}

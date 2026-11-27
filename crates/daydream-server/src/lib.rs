@@ -4,7 +4,8 @@
 //! from `web/` into `src/app.js` and embedded, so a cargo build needs no node). The UI's
 //! editors work on NMR's tables through the routes in [`tables`], NMR's database tools are
 //! in [`tools`], its lists in [`reports`], the checks that read the wiring across the world in
-//! [`checks`], its Export to MMUD Explorer in [`mme`], the realm
+//! [`checks`], who shares a message and a record's own copy of one in [`messages`], its
+//! Export to MMUD Explorer in [`mme`], the realm
 //! in a silvermere database in [`silvermere`], choosing the game to work on in [`games`], the
 //! realm's unpublished changes in [`changes`], publishing them into the game in [`publish`],
 //! where the World map draws rooms moved by hand in [`pins`],
@@ -50,6 +51,7 @@ pub mod control;
 pub mod games;
 pub mod history;
 pub mod mcp;
+pub mod messages;
 pub mod mme;
 pub mod pins;
 pub mod publish;
@@ -291,6 +293,8 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/tables", get(tables::tables))
         .route("/api/tables/{table}/rows", get(tables::rows))
         .route("/api/references", get(tables::references))
+        .route("/api/messages/users", get(messages::users))
+        .route("/api/messages/own", post(messages::own))
         .route("/api/spawns", get(tables::spawns))
         .route(
             "/api/tables/{table}/row",

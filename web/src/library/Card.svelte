@@ -205,6 +205,11 @@
     return byLevel(out);
   });
 
+  /** Gives the record its own copy of a message (the Library saves it first, then makes it). */
+  function ownMessage(number: number) {
+    window.dispatchEvent(new CustomEvent('dd:own-message', { detail: { table: table.name, key, number } }));
+  }
+
   function fix(set: Record<string, string>) {
     for (const [col, v] of Object.entries(set)) if (draft.has(col)) draft.set(col, v);
   }
@@ -259,7 +264,7 @@
               </Popover.Portal>
             </Popover.Root>
           {/if}
-          <Problems {problems} onfix={fix} onshow={show} onaccept={(w) => void accept(w)} />
+          <Problems {problems} onfix={fix} onshow={show} onaccept={(w) => void accept(w)} onown={ownMessage} />
         </div>
         <h1>{name || `${k.one} ${label}`}</h1>
       </div>

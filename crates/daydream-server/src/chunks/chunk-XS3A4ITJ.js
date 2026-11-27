@@ -1,2 +1,0 @@
-// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
-import{Ca as e,Da as o,Ia as t}from"./chunk-HVVU22PZ.js";var r={name:"users",size:24,node:[["path",{d:"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"}],["path",{d:"M16 3.128a4 4 0 0 1 0 7.744"}],["path",{d:"M22 21v-2a4 4 0 0 0-3-3.87"}],["circle",{cx:"9",cy:"7",r:"4"}]]},l=r.node,c=new Set(["$$slots","$$events","$$legacy"]);function s(p,a){let n=e(a,c);t(p,o(()=>n,{get icon(){return r}}))}export{s as a};

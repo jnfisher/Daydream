@@ -10,13 +10,18 @@
 //! [`fill`] is the game's formatter, [`Names`] finds the names written into a line, and
 //! [`swap_name`] writes another name in their place (a monster cloned with its messages).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+use daydream_store::Realm;
+
+use crate::NmrRows;
 use crate::refs::{self, Tables};
 use crate::rows::{self, RowError};
 use crate::schema::{NmrTable, Value};
-use crate::script;
+use crate::{script, wiring};
 
 /// One line a use reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +43,8 @@ pub const CAME_FROM: &str = "where it came from (“the north”)";
 const MISS_VERB: &str = "its weapon's miss verb";
 const WEAPON: &str = "its weapon's name";
 const PLAYER: &str = "the player's name";
+/// What the game fills a monster's attack line's spare blanks with: two stars after the rest.
+pub const STAR: &str = "a star (*)";
 
 fn read(line: usize, when: impl Into<String>, to: &'static str, fills: &[&'static str]) -> Read {
     Read {
@@ -74,8 +81,17 @@ pub fn reads(table: &str, column: &str, get: &dyn Fn(&str) -> i64) -> Option<Vec
             &slot.map_or("an attack".to_string(), |n| format!("attack {n}")),
         )
     };
+    // an attack line's blanks past the rest take a star each, two of them
+    let starred = |v: Vec<Read>| {
+        v.into_iter()
+            .map(|mut r| {
+                r.fills.extend([STAR, STAR]);
+                r
+            })
+            .collect()
+    };
     Some(match (table, f) {
-        ("Monsters", "Attack Hit Msg") => vec![
+        ("Monsters", "Attack Hit Msg") => starred(vec![
             read(
                 1,
                 attack("{a} hits"),
@@ -88,8 +104,8 @@ pub fn reads(table: &str, column: &str, get: &dyn Fn(&str) -> i64) -> Option<Vec
                 "the room",
                 &[ITS_NAME, PLAYER, "the damage"],
             ),
-        ],
-        ("Monsters", "Attack Dodge Msg") => vec![
+        ]),
+        ("Monsters", "Attack Dodge Msg") => starred(vec![
             read(
                 1,
                 attack("armour takes {a}"),
@@ -108,8 +124,8 @@ pub fn reads(table: &str, column: &str, get: &dyn Fn(&str) -> i64) -> Option<Vec
                 "the player",
                 &[ITS_NAME, MISS_VERB, WEAPON],
             ),
-        ],
-        ("Monsters", "Attack Miss Msg") => vec![
+        ]),
+        ("Monsters", "Attack Miss Msg") => starred(vec![
             read(
                 1,
                 attack("the player dodges {a} (when it has a dodge message too)"),
@@ -128,7 +144,7 @@ pub fn reads(table: &str, column: &str, get: &dyn Fn(&str) -> i64) -> Option<Vec
                 "the room",
                 &[ITS_NAME, MISS_VERB, PLAYER, WEAPON],
             ),
-        ],
+        ]),
         // with a name list the name goes first, else where it came from
         ("Monsters", "Move Msg") => vec![if get("Desc Txt") != 0 {
             read(1, "it appears", "the room", &[ITS_NAME, CAME_FROM])
@@ -506,20 +522,45 @@ impl<T> Names<T> {
 /// first letter and setting `a` or `an` before it to fit. Returns the text and how many
 /// times the name was there.
 pub fn swap_name(text: &str, from: &str, to: &str) -> (String, usize) {
-    let full = name_words(from);
-    if full.is_empty() || to.trim().is_empty() {
+    swap_names(text, &[from], to)
+}
+
+/// [`swap_name`] for several names at once, in one pass, so a name written in is never read
+/// again; `to` where it is already written is left as it is (a `bear` line that says `cave
+/// bear` already, swapping `polar bear` for `cave bear`).
+pub fn swap_names(text: &str, from: &[&str], to: &str) -> (String, usize) {
+    let to = to.trim();
+    if to.is_empty() {
         return (text.to_string(), 0);
     }
-    let mut names = vec![(full.join(" "), ())];
-    if let Some(last) = full.last().filter(|l| full.len() > 1 && l.len() >= 3) {
-        names.push((last.clone(), ()));
+    // each name, and whether it is swapped (the new name is kept)
+    let mut names = Vec::new();
+    for f in from {
+        let full = name_words(f);
+        if full.is_empty() {
+            continue;
+        }
+        if let Some(last) = full.last().filter(|l| full.len() > 1 && l.len() >= 3) {
+            names.push((last.clone(), true));
+        }
+        names.push((full.join(" "), true));
+    }
+    if names.is_empty() {
+        return (text.to_string(), 0);
+    }
+    let kept = name_words(to);
+    if !kept.is_empty() {
+        names.push((kept.join(" "), false));
     }
     let index = Names::new(names);
-    let found = index.find(text);
+    let found: Vec<_> = index
+        .find(text)
+        .into_iter()
+        .filter(|f| f.of.iter().all(|swap| *swap))
+        .collect();
     if found.is_empty() {
         return (text.to_string(), 0);
     }
-    let to = to.trim();
     let mut out = String::with_capacity(text.len() + 16);
     let mut at = 0;
     for f in &found {
@@ -571,6 +612,171 @@ pub fn swap_name(text: &str, from: &str, to: &str) -> (String, usize) {
     (out, found.len())
 }
 
+// ---- who uses each message -----------------------------------------------------------------
+
+/// A record that uses a message.
+#[derive(Debug, Clone, PartialEq)]
+pub struct User {
+    pub table: &'static str,
+    pub key: Vec<Value>,
+    /// Its title (`Name`, ...), as a row list shows it.
+    pub title: Option<Value>,
+}
+
+/// Every message's users, by number.
+pub type UsersIndex = HashMap<i64, Vec<User>>;
+
+/// The realms whose index is kept.
+const KEPT: usize = 4;
+
+/// Who uses each message of the realm in `dir`: the records that name it, a record once
+/// however many of its columns (or its script's lines) do. Kept, and made again only when the
+/// realm's files change, so a card's message fields are answered at once.
+pub fn users_index(dir: &Path) -> Result<Arc<UsersIndex>, RowError> {
+    type Kept = Vec<(PathBuf, wiring::Fingerprint, Arc<UsersIndex>)>;
+    static CACHE: Mutex<Kept> = Mutex::new(Vec::new());
+    let print = wiring::fingerprint(dir);
+    // held while an index is made, so two asks make it once
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, _, x)) = cache.iter().find(|(d, p, _)| d == dir && *p == print) {
+        return Ok(x.clone());
+    }
+    let realm = Realm::open(dir)?;
+    let mut tables = Tables::new(&realm);
+    let mt = rows::record_table("Messages")?;
+    let msgs = tables.rows(mt)?;
+    let at = msgs.position("Number");
+    let numbers: HashSet<refs::Named> = msgs
+        .rows
+        .iter()
+        .filter_map(|r| at.and_then(|i| refs::num(&r[i])))
+        .filter(|n| *n > 0)
+        .map(refs::Named::Number)
+        .collect();
+    let targets = HashMap::from([("Messages", numbers)]);
+    let search: Vec<_> = rows::record_tables().collect();
+    let mut index = UsersIndex::new();
+    refs::scan(&mut tables, &search, &targets, &mut |_, named, r| {
+        let refs::Named::Number(n) = named else {
+            return;
+        };
+        let list = index.entry(n).or_default();
+        if !list
+            .iter()
+            .any(|u| u.table == r.table && rows::same_key(&u.key, &r.key))
+        {
+            list.push(User {
+                table: r.table,
+                key: r.key,
+                title: r.title,
+            });
+        }
+    })?;
+    let x = Arc::new(index);
+    cache.retain(|(d, _, _)| d != dir);
+    if cache.len() >= KEPT {
+        cache.remove(0);
+    }
+    cache.push((dir.to_path_buf(), print, x.clone()));
+    Ok(x)
+}
+
+// ---- a record's own copy -------------------------------------------------------------------
+
+/// A record's own copy of a message it shares, to be written as a new message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnCopy {
+    pub lines: [String; 3],
+    /// The record's columns that name the message, to name the copy instead.
+    pub columns: Vec<String>,
+    /// How many names were swapped for the record's own.
+    pub swapped: usize,
+}
+
+/// The copy of message `number` that `table`'s record `key` takes for its own: the lines, and
+/// for a monster, the names of the other monsters that use the message, written in its lines,
+/// swapped for its own (unless its own name holds them: a `troll` line on a `cave troll`).
+pub fn own_copy(
+    tables: &mut Tables,
+    table: &'static NmrTable,
+    key: &[Value],
+    number: i64,
+) -> Result<OwnCopy, RowError> {
+    let text = |all: &NmrRows, row: &[Value], c: &str| match all.position(c).map(|i| &row[i]) {
+        Some(Value::Text(s)) => s.split('\0').next().unwrap_or("").to_string(),
+        _ => String::new(),
+    };
+    let all = tables.rows(table)?;
+    let row = rows::find_row(all, &rows::index_columns(table), key)
+        .ok_or_else(|| RowError::NotFound(format!("{} {}", table.name, rows::key_display(key))))?;
+    let columns: Vec<String> = all
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| {
+            crate::fields::column(table.name, c).and_then(|f| f.target()) == Some("Messages")
+                && refs::num(&row[*i]) == Some(number)
+        })
+        .map(|(_, c)| c.clone())
+        .collect();
+    if columns.is_empty() {
+        return Err(RowError::Bad(format!(
+            "{} {} does not name message {number}",
+            table.name,
+            rows::key_display(key)
+        )));
+    }
+    let own = if table.name == "Monsters" {
+        text(all, row, "Name").trim().to_string()
+    } else {
+        String::new()
+    };
+    let mt = rows::record_table("Messages")?;
+    let msgs = tables.rows(mt)?;
+    let wanted =
+        [Value::Long(i32::try_from(number).map_err(|_| {
+            RowError::NotFound(format!("Messages {number}"))
+        })?)];
+    let m = rows::find_row(msgs, &rows::index_columns(mt), &wanted)
+        .ok_or_else(|| RowError::NotFound(format!("Messages {number}")))?;
+    let mut lines = [1, 2, 3].map(|i| text(msgs, m, &format!("Line {i}")));
+    let mut swapped = 0;
+    if !own.is_empty() {
+        // the other monsters that use it, by name
+        let mons = rows::record_table("Monsters")?;
+        let targets = HashMap::from([("Messages", HashSet::from([refs::Named::Number(number)]))]);
+        let mut others: Vec<String> = Vec::new();
+        refs::scan(tables, &[mons], &targets, &mut |_, _, r| {
+            if !rows::same_key(&r.key, key)
+                && let Some(Value::Text(n)) = &r.title
+            {
+                others.push(n.split('\0').next().unwrap_or("").trim().to_string());
+            }
+        })?;
+        let mine = name_words(&own);
+        others.sort();
+        others.dedup();
+        let from: Vec<&str> = others
+            .iter()
+            .map(String::as_str)
+            .filter(|o| {
+                let w = name_words(o);
+                !w.is_empty() && !within(&w, &mine)
+            })
+            .collect();
+        for l in &mut lines {
+            let (s, n) = swap_names(l, &from, &own);
+            *l = s;
+            swapped += n;
+        }
+    }
+    Ok(OwnCopy {
+        lines,
+        columns,
+        swapped,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,7 +801,10 @@ mod tests {
         let hit = reads("Monsters", "Attack Hit Msg 1", &none).unwrap();
         assert_eq!(hit.len(), 2);
         assert_eq!(hit[0].when, "attack 2 hits");
-        assert_eq!(hit[1].fills, vec![ITS_NAME, PLAYER, "the damage"]);
+        assert_eq!(
+            hit[1].fills,
+            vec![ITS_NAME, PLAYER, "the damage", STAR, STAR]
+        );
         let death = reads("Monsters", "Death Msg", &none).unwrap();
         assert_eq!((death[0].line, death[0].fills.len()), (3, 0));
         // the arrival line's blanks swap with a name list
@@ -663,5 +872,27 @@ mod tests {
             ("Ape! An ape falls; the apes flee.".into(), 3)
         );
         assert_eq!(swap_name("A %s lumbers in from %s.", "troll", "ape").1, 0);
+    }
+
+    #[test]
+    fn names_swapped_in_one_pass() {
+        // the new name where it is written already stays, and is not read again
+        assert_eq!(
+            swap_names(
+                "The bear growls; the cave bear sleeps.",
+                &["polar bear"],
+                "cave bear"
+            ),
+            ("The cave bear growls; the cave bear sleeps.".into(), 1)
+        );
+        assert_eq!(
+            swap_names(
+                "Aiken utters a sharp cry; the troll flees.",
+                &["Aiken", "troll"],
+                "orc"
+            ),
+            ("Orc utters a sharp cry; the orc flees.".into(), 2)
+        );
+        assert_eq!(swap_names("The troll dies.", &[], "orc").1, 0);
     }
 }

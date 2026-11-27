@@ -36,6 +36,8 @@ export interface Problem {
   bits?: (string | { ref: Ref })[];
   /** A word spelling can be told to leave alone. */
   accept?: string;
+  /** A message the record can be given a copy of its own of (a line borrowed from another). */
+  own?: number;
 }
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -277,6 +279,11 @@ export function foundProblems(found: Finding[], table: string, key: readonly Cel
       const fixed = replaceWord(was, f.word, f.suggest[0]);
       if (fixed !== was) p.fix = { label: `Make it “${f.suggest[0]}”`, set: { [f.column]: fixed } };
       p.accept = f.word;
+    }
+    // a line written for another monster: a copy of its own, its name written in
+    if (own && f.check === 'messages' && f.level === 'note' && f.column) {
+      const n = Number(get(f.column));
+      if (n > 0) p.own = n;
     }
     out.push(p);
   }

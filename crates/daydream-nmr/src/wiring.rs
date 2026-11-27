@@ -584,9 +584,11 @@ impl Report {
 }
 
 /// What says a realm's files changed: each world file's name, length and time written.
-type Fingerprint = Vec<(String, u64, Option<SystemTime>)>;
+pub type Fingerprint = Vec<(String, u64, Option<SystemTime>)>;
 
-fn fingerprint(dir: &Path) -> Fingerprint {
+/// The realm in `dir` as [`Fingerprint`] says it is now: what is made from it (this report,
+/// who uses each message) is made again when it changes.
+pub fn fingerprint(dir: &Path) -> Fingerprint {
     let mut out: Fingerprint = std::fs::read_dir(dir)
         .into_iter()
         .flatten()

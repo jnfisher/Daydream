@@ -96,6 +96,8 @@
       <parts.Script {draft} {rowKey} {version} />
     {:else if section.custom === 'typed'}
       <parts.Typed {draft} {rowKey} />
+    {:else if section.custom === 'reads'}
+      <parts.Reads {draft} {rowKey} {version} />
     {:else}
       <parts.Spawns {draft} {rowKey} {version} />
     {/if}
