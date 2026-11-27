@@ -196,8 +196,12 @@ does: how often each is picked (the Attack % add up), how many blows its Energy 
 lines each outcome sends to the player hit and to the room, and **Roll another round** for a
 round drawn as the game draws one. It also shows where the monster spawns (the rooms that
 take its Group and Index, and the group's monsters by Index) and how it is wired: its weapon,
-the lines a room reads when it arrives and dies, its names, and what it says. Players keep
-today's editor for now.
+the lines a room reads when it arrives and dies, its names, and what it says. A card also
+says what is wrong with its record, each with a one-click fix that fills in the fields (so
+Save keeps it and Undo takes it back): a value its field can't hold, checked as you type
+(Save waits until it is fixed), a number that names a record the world does not have, an
+empty slot still holding an old entry's values, and for a monster, an attack no blow picks
+or a blank placeholder message players would read. Players keep today's editor for now.
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little

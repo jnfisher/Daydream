@@ -166,6 +166,21 @@ pub fn column_type(ty: ColumnType) -> (&'static str, Option<u16>) {
     }
 }
 
+/// The whole numbers a column holds, as its record element stores them: `None` for text, and
+/// for the columns NMR clamps (an unsigned 32-bit value) or makes up. A value outside it, or
+/// one with a fraction, is refused when it is written.
+pub fn column_range(c: &schema::Column) -> Option<(i64, i64)> {
+    use schema::{Source, Vb};
+    match c.source {
+        Source::Element { vb: Vb::Long, .. } => Some((i32::MIN.into(), i32::MAX.into())),
+        Source::Element {
+            vb: Vb::Integer, ..
+        } => Some((i16::MIN.into(), i16::MAX.into())),
+        Source::Element { vb: Vb::Byte, .. } => Some((0, 255)),
+        _ => None,
+    }
+}
+
 /// A cell as the editors see it: text up to its first NUL.
 pub fn cell_json(v: &Value) -> Json {
     match v {
@@ -786,6 +801,24 @@ mod tests {
         let long = "x".repeat(70);
         assert_eq!(t(&long), json!(format!("{}...", "x".repeat(60))));
         assert_eq!(title_json(&Value::Long(7)), json!(7));
+    }
+
+    #[test]
+    fn a_column_holds_what_its_element_does() {
+        let range = |table: &str, col: &str| {
+            let t = record_table(table).unwrap();
+            column_range(t.columns.iter().find(|c| c.name == col).unwrap())
+        };
+        // a monster's Energy is a VB Integer, its Weapon Number a Long, Undead a Byte
+        assert_eq!(range("Monsters", "Energy"), Some((-32768, 32767)));
+        assert_eq!(
+            range("Monsters", "Weapon Number"),
+            Some((i32::MIN.into(), i32::MAX.into()))
+        );
+        assert_eq!(range("Monsters", "Undead"), Some((0, 255)));
+        // NMR clamps an unsigned Experience; a name is text
+        assert_eq!(range("Monsters", "Experience"), None);
+        assert_eq!(range("Items", "Name"), None);
     }
 
     #[test]

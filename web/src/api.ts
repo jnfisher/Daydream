@@ -9,6 +9,8 @@ export interface ColumnInfo {
   name: string;
   type: 'long' | 'double' | 'text' | 'memo';
   size: number | null;
+  /** The whole numbers it holds, when its record element limits them. */
+  range?: [number, number] | null;
 }
 
 export interface TableInfo {

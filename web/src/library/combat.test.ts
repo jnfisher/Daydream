@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   arrivalLine,
+  attackProblems,
   attacksOf,
   blowLines,
   blowsOf,
   COLOUR,
   fmtMsg,
+  monsterProblems,
   nameOdds,
   roundOf,
   SAMPLE_VICTIM,
@@ -182,4 +184,59 @@ test('greet text lists what a monster may be asked about', () => {
     { words: 'mail', block: 82 },
   ]);
   assert.deepEqual(topicsOf('no topics here'), []);
+});
+
+test("an attack's problems say why it does nothing", () => {
+  const p = attackProblems(
+    [attack({ pct: 60 }), attack({ type: 0, pct: 80 }), attack({ type: 229, pct: 90 }), attack({ pct: 50 }), attack({ pct: 100, energy: 900, min: 9, max: 4 })],
+    600,
+  );
+  assert.deepEqual(p[0], []);
+  assert.deepEqual(p[1], ['It has no type, so the 20% of blows that pick it do nothing.']);
+  assert.deepEqual(p[2], ['Type 229 is not an attack type, so its blows do nothing.']);
+  assert.deepEqual(p[3], ['No blow picks it: the attacks above it already take every roll under 90%, and the % add up.']);
+  assert.deepEqual(p[4], ['A blow costs 900 energy, more than its whole round of 600, so it never lands.', 'Its least damage is more than its most.']);
+});
+
+test("a monster's problems: its attacks, leftovers, and blank messages players read", () => {
+  const cols: Record<string, number> = {
+    Energy: 1000,
+    'Attack Type 0': 1,
+    'Attack % 0': 100,
+    'Attack Energy 0': 500,
+    'Attack Min Hit/Cast % 0': 1,
+    'Attack Max Hit/Cast LVL 0': 5,
+    'Attack Hit Msg 0': 1,
+    'Attack Dodge Msg 0': 8297,
+    'Attack Miss Msg 0': 1,
+    // an empty slot with an old attack's numbers, never picked
+    'Attack % 1': 70,
+    'Attack Hit Msg 1': 8464,
+    // a spell attack's unused messages are not read
+    'Attack Type 2': 2,
+    'Attack % 2': 100,
+    'Attack Miss Msg 2': 1,
+    'Move Msg': 1,
+    'Death Msg': 1463,
+  };
+  const msgs: Record<number, Lines> = { 1: ['', '', ''], 8297: ['a', 'b', 'c'], 1463: ['x', 'y', 'The dwarf screams!'] };
+  const ps = monsterProblems(
+    (c) => cols[c] ?? 0,
+    (n) => msgs[n] ?? null,
+  );
+  assert.deepEqual(
+    ps.map((p) => [p.level, p.text]),
+    [
+      ['warn', "Attack 1's hit message is 1, which is empty, so players read blank lines."],
+      ['warn', "Attack 1's miss message is 1, which is empty, so players read blank lines."],
+      ['tidy', "Attack 2 is empty but still holds an old attack's numbers. No blow picks it."],
+      ['warn', 'Attack 3: No blow picks it: the attacks above it already take every roll under 100%, and the % add up.'],
+      ['warn', 'Its Move Msg is 1, whose first line is empty, so a room reads a blank line when it appears.'],
+    ],
+  );
+  assert.deepEqual(ps[0]!.fix!.set, { 'Attack Hit Msg 0': '0' });
+  assert.equal(ps[2]!.fix!.set['Attack Hit Msg 1'], '0');
+  assert.equal(Object.keys(ps[2]!.fix!.set).length, 10);
+  // while a message is read, nothing is said of it
+  assert.equal(monsterProblems((c) => cols[c] ?? 0, () => undefined).filter((p) => p.text.includes('empty,')).length, 0);
 });

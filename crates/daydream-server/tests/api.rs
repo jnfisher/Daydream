@@ -193,6 +193,20 @@ async fn the_tables_are_nmrs() {
     assert_eq!(races["columns"][1]["name"], "Name");
     assert_eq!(races["columns"][1]["type"], "text");
     assert_eq!(races["columns"][1]["size"], 29);
+    // what a column holds, so the editors check a value as it is typed
+    assert_eq!(races["columns"][1]["range"], serde_json::Value::Null);
+    let monsters = tables.iter().find(|t| t["name"] == "Monsters").unwrap();
+    let col = |name: &str| {
+        monsters["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap()["range"]
+            .clone()
+    };
+    assert_eq!(col("Energy"), serde_json::json!([-32768, 32767]));
+    assert_eq!(col("Undead"), serde_json::json!([0, 255]));
     let rooms = tables.iter().find(|t| t["name"] == "Rooms").unwrap();
     assert_eq!(
         rooms["key"],
