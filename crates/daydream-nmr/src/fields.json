@@ -638,7 +638,7 @@
      "links": "Textblocks"
     }
    },
-   "note": "Rooms spawn a monster when its Group equals the room's Mon Type and its Index lies within the room's Min Index to Max Index. Its messages are rows of the Messages table, three lines each; one row often serves several purposes (lines 1-2 a hit, line 3 a death), and stock rows can name the creature they were written for, so read a row before reusing it, and give a new monster its own rows."
+   "note": "Rooms spawn a monster when its Group equals the room's Mon Type and its Index lies within the room's Min Index to Max Index (a Max Index of 0 spawns nothing). Its messages are rows of the Messages table, three lines each; one row often serves several purposes (lines 1-2 a hit, line 3 a death), and stock rows can name the creature they were written for, so read a row before reusing it, and give a new monster its own rows."
   },
   "Spells": {
    "columns": {
@@ -752,8 +752,8 @@
      "source": "silvermere-rules/src/spawn.rs (pool)"
     },
     "Max Index": {
-     "note": "Highest monster Index spawned here; 0 means no upper limit. In an arena it is also the highest player level let in.",
-     "source": "silvermere-rules/src/spawn.rs (pool), silvermere-engine/src/movement/move_user.rs"
+     "note": "Highest monster Index spawned here; 0 spawns nothing from the group, since a pick from the group needs one. In an arena it is also the highest player level let in.",
+     "source": "silvermere-engine/src/monsters/generate.rs, silvermere-rules/src/spawn.rs (pool), silvermere-engine/src/movement/move_user.rs"
     },
     "Max Regen": {
      "note": "The most monsters the room holds before it stops spawning (its Perm NPC aside); 0 spawns none.",
@@ -801,7 +801,7 @@
      "note": "Uses left on each."
     }
    },
-   "note": "A room is keyed by Map Number and Room Number. Exits, Death Room, Exit Room and Control Room name rooms on the same map. A room spawns monsters whose Group equals its Mon Type and whose Index lies from Min Index to Max Index, up to Max Regen at a time."
+   "note": "A room is keyed by Map Number and Room Number. Exits, Death Room, Exit Room and Control Room name rooms on the same map. A room spawns monsters whose Group equals its Mon Type and whose Index lies from Min Index to Max Index, up to Max Regen at a time; a Max Index of 0 spawns nothing."
   },
   "Users": {
    "columns": {

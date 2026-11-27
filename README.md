@@ -191,7 +191,13 @@ as a chip, which opens it beside the page, with a search to pick another by name
 drawn among its peers' (every 1H Sharp weapon) to read in context. A field changed since
 publishing shows what it was, struck through, and the header counts those changes and takes
 them back. **All fields** lays out every column as NMR's forms do, and **Copy** makes a new
-record from the open one, as NMR's Insert does. Players keep today's editor for now.
+record from the open one, as NMR's Insert does. A monster's card plays its attacks as a fight
+does: how often each is picked (the Attack % add up), how many blows its Energy buys, the
+lines each outcome sends to the player hit and to the room, and **Roll another round** for a
+round drawn as the game draws one. It also shows where the monster spawns (the rooms that
+take its Group and Index, and the group's monsters by Index) and how it is wired: its weapon,
+the lines a room reads when it arrives and dies, its names, and what it says. Players keep
+today's editor for now.
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little

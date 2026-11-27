@@ -69,7 +69,17 @@ fn references_find_what_names_a_record() {
             "Exit 0": 2, "Type 0": 2, "Para1 0": 1,
             "Room Item 0": 1, "Room Item 0 QTY": 1 } },
         { "op": "insert", "table": "Rooms", "values": { "Map Number": 1, "Room Number": 2, "Name": "Ledge", "Exit 1": 1 } },
-        { "op": "insert", "table": "Rooms", "values": { "Map Number": 2, "Room Number": 5, "Name": "Elsewhere", "Exit 1": 2 } }
+        { "op": "insert", "table": "Rooms", "values": { "Map Number": 2, "Room Number": 5, "Name": "Elsewhere", "Exit 1": 2 } },
+        // group 6 rooms that spawn nothing: no Max Index (a pick from the group needs one),
+        // and a jail, which the spawn passes leave alone
+        { "op": "insert", "table": "Rooms", "values": {
+            "Map Number": 2, "Room Number": 6, "Name": "Pit", "Mon Type": 6, "Max Regen": 3 } },
+        { "op": "insert", "table": "Rooms", "values": {
+            "Map Number": 2, "Room Number": 7, "Name": "Cell", "Type": 6,
+            "Mon Type": 6, "Min Index": 1, "Max Index": 10, "Max Regen": 3 } },
+        { "op": "insert", "table": "Rooms", "values": {
+            "Map Number": 2, "Room Number": 8, "Name": "Grotto",
+            "Mon Type": 6, "Min Index": 1, "Max Index": 10, "Max Regen": 1 } }
     ] }));
     c.call("apply_edits", json!({ "token": p["token"] }));
     let by = |v: &Value| -> Vec<String> {
@@ -104,9 +114,13 @@ fn references_find_what_names_a_record() {
         "find_references",
         json!({ "table": "Monsters", "key": [1] }),
     ));
-    assert_eq!(monster.len(), 1, "{monster:?}");
+    assert_eq!(monster.len(), 2, "{monster:?}");
     assert!(
         monster[0].starts_with("\"Rooms\" [1,1] spawns it"),
+        "{monster:?}"
+    );
+    assert!(
+        monster[1].starts_with("\"Rooms\" [2,8] spawns it"),
         "{monster:?}"
     );
     // out of the room's index range: nothing spawns it
@@ -115,6 +129,21 @@ fn references_find_what_names_a_record() {
         json!({ "table": "Monsters", "key": [2] }),
     );
     assert!(by(&bat).is_empty());
+
+    // the group's ladder: its monsters by index, its spawning rooms by range
+    let realm = daydream_store::Realm::open(tmp.path()).unwrap();
+    let mut tables = daydream_nmr::refs::Tables::new(&realm);
+    let ladder = daydream_nmr::refs::spawn_ladder(&mut tables, 6).unwrap();
+    assert_eq!(
+        ladder.monsters,
+        [(1, "cave newt".to_string(), 4), (2, "bat".to_string(), 40)]
+    );
+    assert_eq!(ladder.ranges.len(), 1, "{:?}", ladder.ranges);
+    let r = &ladder.ranges[0];
+    assert_eq!((r.min, r.max, r.rooms), (1, 10, 2));
+    assert_eq!(r.maps, [(1, 1), (2, 1)]);
+    assert_eq!(r.names, [("Grotto".to_string(), 2)]);
+    assert_eq!(ladder.idle, 2);
 
     let msg = by(&c.call(
         "find_references",

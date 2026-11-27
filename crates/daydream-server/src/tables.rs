@@ -17,6 +17,7 @@
 //! | `GET /api/tables/{table}/rows?columns=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked |
 //! | `GET /api/tables/{table}/row?key=[...]` | one row: `{key, values: {column: value}, published}` |
 //! | `GET /api/references?table=&key=[...]` | the rows that name a record: `{references: [{table, key, title, column, by}], more}` |
+//! | `GET /api/spawns?group=` | where a monster group spawns: `{group, monsters: [[number, name, index]], ranges: [{min, max, rooms, maps: [[map, rooms]], names: [[name, rooms]]}], idle}` |
 //! | `PUT /api/tables/{table}/row?key=[...]` | `{values}` over the row; the import's report |
 //! | `POST /api/tables/{table}/row` | `{values}` as a new row; the import's report |
 //! | `DELETE /api/tables/{table}/row?key=[...]` | removes the row; the report |
@@ -236,6 +237,50 @@ pub(crate) async fn references(
             "key": key.iter().map(cell_json).collect::<Vec<_>>(),
             "references": list,
             "more": found.more,
+        })))
+    })
+    .await
+}
+
+/// `?group=`.
+#[derive(Debug, Deserialize)]
+pub struct GroupQuery {
+    group: i64,
+}
+
+/// Where a monster group spawns: its monsters by Index, and the rooms that spawn from it by
+/// their Index range ([`refs::spawn_ladder`]).
+pub(crate) async fn spawns(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<GroupQuery>,
+) -> Result<Json<Value>, ApiError> {
+    blocking(move || {
+        let realm = Realm::open(&s.realm_dir()?)?;
+        let mut tables = refs::Tables::new(&realm);
+        let ladder = refs::spawn_ladder(&mut tables, q.group)?;
+        let monsters: Vec<Value> = ladder
+            .monsters
+            .iter()
+            .map(|(n, name, index)| json!([n, name, index]))
+            .collect();
+        let ranges: Vec<Value> = ladder
+            .ranges
+            .iter()
+            .map(|r| {
+                json!({
+                    "min": r.min,
+                    "max": r.max,
+                    "rooms": r.rooms,
+                    "maps": r.maps,
+                    "names": r.names,
+                })
+            })
+            .collect();
+        Ok(Json(json!({
+            "group": q.group,
+            "monsters": monsters,
+            "ranges": ranges,
+            "idle": ladder.idle,
         })))
     })
     .await

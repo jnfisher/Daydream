@@ -231,6 +231,8 @@ const MONSTERS: CardDef = {
     {
       id: 'attacks',
       title: 'Attacks',
+      hint: 'up to 6 blows a round, while its Energy lasts',
+      custom: 'attacks',
       grid: grid('Monsters', {
         columns: [
           { template: 'Attack Type #', label: 'Type' },
@@ -300,6 +302,7 @@ const MONSTERS: CardDef = {
       title: 'How it is wired',
       side: true,
       hint: 'the records it names',
+      custom: 'wired',
       fields: [
         F('Weapon Number', 'Weapon'),
         F('Death Spell'),
@@ -311,6 +314,7 @@ const MONSTERS: CardDef = {
         F('Talk Txt'),
       ],
     },
+    { id: 'spawns', title: 'Where it spawns', side: true, custom: 'spawns' },
     { id: 'where', title: 'Where it is in the world', side: true, where: true },
   ],
 };

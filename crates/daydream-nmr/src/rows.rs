@@ -176,13 +176,17 @@ pub fn cell_json(v: &Value) -> Json {
     }
 }
 
-/// A cell as a row list's title: text's first line, without ANSI escapes, and short.
+/// A cell as a row list's title: text's first line, without ANSI escapes, and short. A NUL
+/// ends the text, as it does for the editors: what follows one is an older value's leftovers.
 pub fn title_json(v: &Value) -> Json {
     let Value::Text(s) = v else {
         return cell_json(v);
     };
     let line = s
-        .split(['\0', '\n', '\r'])
+        .split('\0')
+        .next()
+        .unwrap_or("")
+        .split(['\n', '\r'])
         .find(|l| !l.trim().is_empty())
         .unwrap_or("");
     let mut out = String::new();
@@ -777,6 +781,8 @@ mod tests {
             json!("The %s greets you")
         );
         assert_eq!(t("grey robes\0junk"), json!("grey robes"));
+        // an emptied message still holds its old words after the NUL
+        assert_eq!(t("\0ou flake off pieces of the steak"), json!(""));
         let long = "x".repeat(70);
         assert_eq!(t(&long), json!(format!("{}...", "x".repeat(60))));
         assert_eq!(title_json(&Value::Long(7)), json!(7));

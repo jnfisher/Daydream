@@ -58,9 +58,10 @@ export function renderAnsi(text: string): DocumentFragment {
   return out;
 }
 
-/** A text's first non-blank line without escapes, at most 60 characters (as row lists show it). */
+/** A text's first non-blank line without escapes, at most 60 characters (as row lists show it).
+ * A NUL ends the text: what follows one is an older value's leftovers. */
 export function titleOf(text: string): string {
-  const line = toWire(text).split(/[\0\r\n]/).find((l) => l.trim()) ?? '';
+  const line = toWire(text).split('\0')[0]!.split(/[\r\n]/).find((l) => l.trim()) ?? '';
   const clean = line.replace(/\x1b\[[0-9;]*[A-Za-z]?/g, '').trim();
   return clean.length > 60 ? `${clean.slice(0, 60)}...` : clean;
 }
