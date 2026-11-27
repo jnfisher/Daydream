@@ -190,6 +190,48 @@ pub enum DigError {
     Report(#[from] ReportError),
 }
 
+/// A room as a new room copies it, as NMR's Map Editor digs one: without its exits, items,
+/// coins and permanent NPC.
+fn blank_copy(
+    rows: &Rows,
+    row: &[crate::schema::Value],
+) -> Result<Vec<crate::schema::Value>, ReportError> {
+    let mut out = row.to_vec();
+    let mut clear: Vec<usize> = Vec::new();
+    for c in [
+        "Perm NPC",
+        "Runic",
+        "Platinum",
+        "Gold",
+        "Silver",
+        "Copper",
+        "InvisRunic",
+        "InvisPlatinum",
+        "InvisGold",
+        "InvisSilver",
+        "InvisCopper",
+    ] {
+        clear.push(rows.at(c)?);
+    }
+    for (stem, count) in [("Room Item", 17), ("Hidden Item", 15)] {
+        for x in 0..count {
+            for suffix in ["", " QTY", " USES"] {
+                clear.push(rows.at(&format!("{stem} {x}{suffix}"))?);
+            }
+        }
+    }
+    clear.extend(rows.family("Placed Item", 10, "")?);
+    clear.extend(rows.family("Exit", 10, "")?);
+    clear.extend(rows.family("Type", 10, "")?);
+    for p in 1..=4 {
+        clear.extend(rows.family(&format!("Para{p}"), 10, "")?);
+    }
+    for c in clear {
+        out[c] = crate::modify::cell(&out[c], 0.0);
+    }
+    Ok(out)
+}
+
 /// Plans a dig (nothing is written; [`crate::modify::apply`] writes it). A new room is a copy
 /// of the room it is dug from, as NMR's, without its exits, items, coins and permanent NPC.
 pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::Plan, DigError> {
@@ -298,37 +340,7 @@ pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::P
         None => {
             // a new room is the room it is dug from without its exits, items, coins and
             // permanent NPC; each room of a line is the same
-            let mut like_current = current.clone();
-            let mut clear: Vec<usize> = Vec::new();
-            for c in [
-                "Perm NPC",
-                "Runic",
-                "Platinum",
-                "Gold",
-                "Silver",
-                "Copper",
-                "InvisRunic",
-                "InvisPlatinum",
-                "InvisGold",
-                "InvisSilver",
-                "InvisCopper",
-            ] {
-                clear.push(rows.at(c)?);
-            }
-            for (stem, count) in [("Room Item", 17), ("Hidden Item", 15)] {
-                for x in 0..count {
-                    for suffix in ["", " QTY", " USES"] {
-                        clear.push(rows.at(&format!("{stem} {x}{suffix}"))?);
-                    }
-                }
-            }
-            clear.extend(rows.family("Placed Item", 10, "")?);
-            clear.extend(&exits);
-            clear.extend(&kinds);
-            paras.iter().for_each(|p| clear.extend(p));
-            for c in clear {
-                like_current[c] = like(&like_current[c], 0);
-            }
+            let like_current = blank_copy(&rows, current)?;
             // the numbers the map already uses, for the line's rooms after the first
             let used: std::collections::HashSet<i64> = rows
                 .0
@@ -397,4 +409,312 @@ pub fn dig(realm: &Realm, layout: LayoutSet, d: &Dig) -> Result<crate::modify::P
         rows: out,
     });
     Ok(plan)
+}
+
+/// The most new rooms one stamp makes.
+pub const MAX_STAMP_ROOMS: usize = 2_000;
+/// The most exits one stamp asks for.
+pub const MAX_STAMP_LINKS: usize = 20_000;
+/// The notes a stamp lists before it counts the rest.
+const STAMP_NOTES: usize = 12;
+
+/// A stamp from the World map: new rooms and the exits between them and the map's rooms, put
+/// down at once as one save. Each new room is a copy of the `brush` room, as a dig makes one.
+/// An exit goes only where its slot is free (or already leads there): a link whose way there,
+/// or (both ways) whose way back, is another exit's is left whole, with a note, unless
+/// `overwrite`, so a stamp never makes a one-way exit by surprise. Nothing is deleted.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Stamp {
+    pub map: i64,
+    /// The room new rooms copy, without its exits, items, coins and permanent NPC.
+    #[serde(default)]
+    pub brush: i64,
+    /// The new rooms, by number: none may be on the map yet.
+    #[serde(default)]
+    pub rooms: Vec<i64>,
+    /// The exits to make, in order.
+    #[serde(default)]
+    pub links: Vec<Link>,
+    /// Replace an exit in a link's way instead of leaving the link.
+    #[serde(default)]
+    pub overwrite: bool,
+    /// What was stamped, for the history (`a ring`).
+    #[serde(default)]
+    pub what: String,
+}
+
+/// An exit a stamp makes: from room `from` in `dir` to room `to`, both on the stamp's map, and
+/// the way back unless `one_way`.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Link {
+    pub from: i64,
+    /// 0 to 9, as [`DIRECTIONS`].
+    pub dir: usize,
+    pub to: i64,
+    #[serde(default)]
+    pub one_way: bool,
+}
+
+/// What a stamp does.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct Stamped {
+    /// New rooms made.
+    pub rooms: usize,
+    /// Exits set, each way counted.
+    pub exits: usize,
+    /// Rooms already on the map that gain an exit.
+    pub joined: usize,
+    /// Links left whole because an exit was in their way.
+    pub left: usize,
+}
+
+impl Stamp {
+    /// What the stamp does, for the history (`Stamp a ring: 8 rooms on map 1`).
+    pub fn label(&self) -> String {
+        let what = match self.what.trim() {
+            "" => "a stamp",
+            w => w,
+        };
+        match self.rooms.as_slice() {
+            [] => format!("Stamp {what} on map {}", self.map),
+            [one] => format!("Stamp {what}: room {}/{one}", self.map),
+            more => format!("Stamp {what}: {} rooms on map {}", more.len(), self.map),
+        }
+    }
+}
+
+/// Plans a stamp (nothing is written; [`crate::modify::apply`] writes it), and says what it
+/// does.
+pub fn stamp(
+    realm: &Realm,
+    layout: LayoutSet,
+    s: &Stamp,
+) -> Result<(crate::modify::Plan, Stamped), DigError> {
+    use crate::modify::{Change, Plan};
+    use crate::schema::Value;
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    let bad = |m: String| DigError::Bad(m);
+    let top = i64::from(i32::MAX);
+    if !(1..=top).contains(&s.map) {
+        return Err(bad(format!("no map {}: a map is numbered from 1", s.map)));
+    }
+    if s.rooms.is_empty() && s.links.is_empty() {
+        return Err(bad("a stamp makes rooms or exits: it has neither".into()));
+    }
+    if s.rooms.len() > MAX_STAMP_ROOMS {
+        return Err(bad(format!(
+            "a stamp makes at most {MAX_STAMP_ROOMS} rooms"
+        )));
+    }
+    if s.links.len() > MAX_STAMP_LINKS {
+        return Err(bad(format!(
+            "a stamp makes at most {MAX_STAMP_LINKS} exits"
+        )));
+    }
+    let rows = Rows::load(realm, "Rooms", layout)?;
+    let (mapn, roomn, name) = (
+        rows.at("Map Number")?,
+        rows.at("Room Number")?,
+        rows.at("Name")?,
+    );
+    let exits = rows.family("Exit", 10, "")?;
+    let kinds = rows.family("Type", 10, "")?;
+    let paras: Vec<Vec<usize>> = (1..=4)
+        .map(|p| rows.family(&format!("Para{p}"), 10, ""))
+        .collect::<Result<_, _>>()?;
+    // the map's rooms, by number
+    let on_map: HashMap<i64, usize> = rows
+        .0
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| n(&r[mapn]) == s.map)
+        .map(|(i, r)| (n(&r[roomn]), i))
+        .collect();
+    let mut seen = HashSet::new();
+    for &r in &s.rooms {
+        if !(1..=top).contains(&r) {
+            return Err(bad(format!(
+                "no room {}/{r}: a room is numbered from 1",
+                s.map
+            )));
+        }
+        if on_map.contains_key(&r) {
+            return Err(bad(format!(
+                "room {}/{r} is already on the map: a stamp's new rooms take free numbers",
+                s.map
+            )));
+        }
+        if !seen.insert(r) {
+            return Err(bad(format!("room {}/{r} is made twice", s.map)));
+        }
+    }
+    // the rows as the stamp leaves them, by room: new ones from the brush, the map's own as
+    // they are until a link changes them
+    let mut work: BTreeMap<i64, Vec<Value>> = BTreeMap::new();
+    if !s.rooms.is_empty() {
+        let brush = on_map.get(&s.brush).ok_or_else(|| {
+            bad(format!(
+                "room {}/{} is not on the map: new rooms copy a room of it",
+                s.map, s.brush
+            ))
+        })?;
+        let blank = blank_copy(&rows, &rows.0.rows[*brush])?;
+        for &r in &s.rooms {
+            let mut row = blank.clone();
+            row[mapn] = crate::modify::cell(&row[mapn], s.map as f64);
+            row[roomn] = crate::modify::cell(&row[roomn], r as f64);
+            work.insert(r, row);
+        }
+    }
+    let room_of = |r: i64| -> Result<(), DigError> {
+        if seen.contains(&r) || on_map.contains_key(&r) {
+            Ok(())
+        } else {
+            Err(DigError::Bad(format!(
+                "room {}/{r} is neither on the map nor one the stamp makes",
+                s.map
+            )))
+        }
+    };
+    for l in &s.links {
+        if l.dir > 9 {
+            return Err(bad("directions run from 0 to 9".into()));
+        }
+        room_of(l.from)?;
+        room_of(l.to)?;
+        if l.from == l.to {
+            return Err(bad(format!(
+                "room {}/{} cannot lead to itself here",
+                s.map, l.from
+            )));
+        }
+    }
+    // a slot's exit: free, already the link's, or another exit's (where it leads)
+    enum Slot {
+        Free,
+        Have,
+        Taken(i64),
+    }
+    let slot = |row: &[Value], dir: usize, to: i64| {
+        let at = n(&row[exits[dir]]);
+        if at == 0 {
+            Slot::Free
+        } else if at == to && n(&row[kinds[dir]]) != 8 {
+            Slot::Have
+        } else {
+            Slot::Taken(at)
+        }
+    };
+    let set = |row: &mut Vec<Value>, dir: usize, to: i64| {
+        row[exits[dir]] = crate::modify::cell(&row[exits[dir]], to as f64);
+        row[kinds[dir]] = crate::modify::cell(&row[kinds[dir]], 0.0);
+        for p in &paras {
+            row[p[dir]] = crate::modify::cell(&row[p[dir]], 0.0);
+        }
+    };
+    let mut done = Stamped {
+        rooms: s.rooms.len(),
+        ..Stamped::default()
+    };
+    let mut notes = Vec::new();
+    for l in &s.links {
+        let back = OPPOSITE[l.dir];
+        for r in [l.from, l.to] {
+            work.entry(r)
+                .or_insert_with(|| rows.0.rows[on_map[&r]].clone());
+        }
+        let there = slot(&work[&l.from], l.dir, l.to);
+        let home = if l.one_way {
+            Slot::Have
+        } else {
+            slot(&work[&l.to], back, l.from)
+        };
+        let in_way: Vec<String> = [(l.from, l.dir, &there), (l.to, back, &home)]
+            .into_iter()
+            .filter_map(|(r, d, sl)| match sl {
+                Slot::Taken(to) => Some(format!(
+                    "room {}/{r}'s exit {} leads to {to}",
+                    s.map, DIRECTION_WORDS[d]
+                )),
+                _ => None,
+            })
+            .collect();
+        if !in_way.is_empty() && !s.overwrite {
+            done.left += 1;
+            if notes.len() < STAMP_NOTES {
+                notes.push(format!(
+                    "{}: the exit {} from {}/{} to {} was left.",
+                    upper_first(&in_way.join(", and ")),
+                    DIRECTION_WORDS[l.dir],
+                    s.map,
+                    l.from,
+                    l.to
+                ));
+            }
+            continue;
+        }
+        if !matches!(there, Slot::Have) {
+            set(work.get_mut(&l.from).expect("kept above"), l.dir, l.to);
+            done.exits += 1;
+        }
+        if !matches!(home, Slot::Have) {
+            set(work.get_mut(&l.to).expect("kept above"), back, l.from);
+            done.exits += 1;
+        }
+    }
+    if done.left > STAMP_NOTES {
+        notes.push(format!(
+            "And {} more links were left the same way.",
+            done.left - STAMP_NOTES
+        ));
+    }
+    let mut plan = Plan {
+        table: "Rooms".into(),
+        notes,
+        ..Plan::default()
+    };
+    let mut out = Vec::new();
+    for (room, after) in work {
+        let before = on_map.get(&room).map(|&i| &rows.0.rows[i]);
+        let key = vec![after[mapn].clone(), after[roomn].clone()];
+        let mut changed = false;
+        for (i, b) in after.iter().enumerate() {
+            let a = before.map(|r| &r[i]);
+            if a == Some(b) || (a.is_none() && i != name) {
+                continue;
+            }
+            changed = true;
+            plan.changes.push(Change {
+                key: key.clone(),
+                column: if a.is_some() {
+                    rows.0.columns[i].clone()
+                } else {
+                    "(new room)".into()
+                },
+                before: a.cloned().unwrap_or(Value::Null),
+                after: b.clone(),
+            });
+        }
+        if before.is_none() || changed {
+            if before.is_some() {
+                done.joined += 1;
+            }
+            out.push(after);
+        }
+    }
+    plan.rows = Some(crate::data::NmrRows {
+        name: rows.0.name.clone(),
+        columns: rows.0.columns.clone(),
+        rows: out,
+    });
+    Ok((plan, done))
+}
+
+/// `text` with its first letter a capital.
+fn upper_first(text: &str) -> String {
+    let mut c = text.chars();
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
 }

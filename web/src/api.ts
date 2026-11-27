@@ -3,6 +3,7 @@
 import type { Ref } from './library/script';
 import type { References } from './library/where';
 import type { Dig, MapAnswer, MapFile } from './world/model';
+import type { StampRequest } from './world/stamps';
 
 export type Cell = number | string | null;
 
@@ -368,6 +369,9 @@ export const api = {
   map: (map: number) => call<MapAnswer>('GET', `/api/map?map=${map}`),
   /** NMR's map editor's dig: a new room (or a line of them), or a room joined, an exit each way. */
   dig: (dig: Dig) => call<{ notes: string[] }>('POST', '/api/map/dig', dig),
+  /** A stamp from the World map: its rooms and exits as one step of the history, which it answers. */
+  stamp: (s: StampRequest) =>
+    call<{ notes: string[]; stamp: { rooms: number; exits: number; joined: number; left: number }; step: number | null }>('POST', '/api/map/stamp', s),
   /**
    * Where rooms of one map moved by hand are drawn (`null`: where the layout puts them; `replace`
    * puts the map's others back too). Kept beside the working copy, not in the realm. Answers the

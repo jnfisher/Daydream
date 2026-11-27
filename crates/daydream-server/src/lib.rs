@@ -210,17 +210,35 @@ pub(crate) struct WriteGuard<'a> {
     step: Option<String>,
 }
 
-impl Drop for WriteGuard<'_> {
-    fn drop(&mut self) {
-        if let (Some(dir), Some(label)) = (&self.dir, &self.step) {
-            match Realm::open(dir).and_then(|r| daydream_store::history::end(&r, label)) {
-                Ok(Some(s)) => {
-                    tracing::info!("step {}: {} ({} records)", s.step, s.label, s.records)
-                }
-                Ok(None) => {}
-                Err(e) => tracing::warn!("keeping the step for undo: {e}"),
+impl WriteGuard<'_> {
+    /// Lets the lock go now, answering the step of the history the write made (none for a
+    /// dry run, or when nothing was written).
+    pub(crate) fn finish(mut self) -> Option<i64> {
+        self.end_step()
+    }
+
+    /// Keeps what was written as a step of the history, once.
+    fn end_step(&mut self) -> Option<i64> {
+        let (Some(dir), Some(label)) = (&self.dir, self.step.take()) else {
+            return None;
+        };
+        match Realm::open(dir).and_then(|r| daydream_store::history::end(&r, &label)) {
+            Ok(Some(s)) => {
+                tracing::info!("step {}: {} ({} records)", s.step, s.label, s.records);
+                Some(s.step)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("keeping the step for undo: {e}");
+                None
             }
         }
+    }
+}
+
+impl Drop for WriteGuard<'_> {
+    fn drop(&mut self) {
+        self.end_step();
         if let Some(dir) = &self.dir {
             match daydream_store::update::sync(dir) {
                 Ok(r) if r.changed() => tracing::info!(
@@ -344,6 +362,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/checks/record", get(checks::record))
         .route("/api/checks/words", post(checks::words))
         .route("/api/map/dig", post(tools::dig))
+        .route("/api/map/stamp", post(tools::stamp))
         .route("/api/map/pins", get(pins::get).post(pins::set))
         .route("/api/map/pins/import", post(pins::import))
         .route("/api/quests", get(reports::quests))

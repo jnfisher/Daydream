@@ -487,3 +487,165 @@ fn the_map_editor_digs_new_rooms_and_joins_old_ones() {
     };
     assert_eq!(one.label(), "Dig room 1/11 north of 1/10");
 }
+
+#[test]
+fn a_stamp_puts_down_rooms_and_joins_them_only_through_free_slots() {
+    use daydream_nmr::map::{Link, Stamp, stamp};
+    use daydream_nmr::modify::apply;
+    let dir = tempfile::tempdir().unwrap();
+    empty_realm(dir.path());
+    let realm = Realm::open(dir.path()).unwrap();
+    put(
+        &realm,
+        "Rooms",
+        &[
+            &[
+                ("Map Number", l(1)),
+                ("Room Number", l(1)),
+                ("Name", t("Hall")),
+                ("Light", l(5)),
+                ("Gold", l(9)),
+                ("Room Item 0", l(7)),
+                ("Perm NPC", l(4)),
+                ("Exit 2", l(2)),
+            ],
+            &[
+                ("Map Number", l(1)),
+                ("Room Number", l(2)),
+                ("Name", t("Yard")),
+                ("Exit 3", l(1)),
+                ("Exit 0", l(9)),
+                ("Type 0", l(7)),
+            ],
+            &[
+                ("Map Number", l(1)),
+                ("Room Number", l(3)),
+                ("Name", t("Shed")),
+            ],
+        ],
+    );
+    let get = |room: i64, col: &str| -> i64 {
+        let view =
+            daydream_nmr::export_table(&realm, daydream_nmr::schema::table("Rooms").unwrap(), Dos)
+                .unwrap();
+        let (m, r, c) = (
+            view.position("Map Number").unwrap(),
+            view.position("Room Number").unwrap(),
+            view.position(col).unwrap(),
+        );
+        let row = view
+            .rows
+            .iter()
+            .find(|row| {
+                daydream_nmr::schema::number(&row[m]).unwrap() as i64 == 1
+                    && daydream_nmr::schema::number(&row[r]).unwrap() as i64 == room
+            })
+            .unwrap();
+        daydream_nmr::schema::number(&row[c]).unwrap() as i64
+    };
+    let link = |from, dir, to| Link {
+        from,
+        dir,
+        to,
+        one_way: false,
+    };
+    let s = Stamp {
+        map: 1,
+        brush: 1,
+        rooms: vec![10, 11],
+        links: vec![
+            // new to new, both ways
+            link(10, 2, 11),
+            // the yard's south is free and so is 10's north: joined both ways
+            link(2, 1, 10),
+            // the yard's north leads to 9: left whole, not made one way
+            link(2, 0, 11),
+            // already there both ways: nothing to do
+            link(1, 2, 2),
+            // a one-way drop from 11 into the shed
+            Link {
+                one_way: true,
+                ..link(11, 2, 3)
+            },
+        ],
+        overwrite: false,
+        what: "a corridor".into(),
+    };
+    assert_eq!(s.label(), "Stamp a corridor: 2 rooms on map 1");
+    let (plan, done) = stamp(&realm, Dos, &s).unwrap();
+    assert_eq!(
+        (done.rooms, done.exits, done.joined, done.left),
+        (2, 5, 1, 1),
+        "{done:?}"
+    );
+    assert_eq!(plan.notes.len(), 1, "{:?}", plan.notes);
+    assert!(
+        plan.notes[0].starts_with("Room 1/2's exit north leads to 9"),
+        "{:?}",
+        plan.notes
+    );
+    apply(&realm, &plan, Dos).unwrap();
+    assert_eq!((get(10, "Exit 2"), get(11, "Exit 3")), (11, 10));
+    assert_eq!((get(2, "Exit 1"), get(10, "Exit 0")), (10, 2));
+    assert_eq!(
+        (get(2, "Exit 0"), get(2, "Type 0")),
+        (9, 7),
+        "left as it was"
+    );
+    assert_eq!((get(11, "Exit 2"), get(3, "Exit 3")), (3, 0), "one way");
+    // a copy of the brush without its coins, items and permanent NPC
+    assert_eq!(get(10, "Light"), 5);
+    assert_eq!(
+        (get(11, "Gold"), get(11, "Room Item 0"), get(11, "Perm NPC")),
+        (0, 0, 0)
+    );
+
+    // told to, a stamp replaces the exit in its way (a normal exit now) and makes the link
+    let over = Stamp {
+        rooms: vec![],
+        links: vec![link(2, 0, 11)],
+        overwrite: true,
+        ..s.clone()
+    };
+    assert_eq!(over.label(), "Stamp a corridor on map 1");
+    let (plan, done) = stamp(&realm, Dos, &over).unwrap();
+    assert_eq!((done.exits, done.joined, done.left), (2, 2, 0));
+    apply(&realm, &plan, Dos).unwrap();
+    assert_eq!(
+        (get(2, "Exit 0"), get(2, "Type 0"), get(11, "Exit 1")),
+        (11, 0, 2)
+    );
+
+    // refused: a new room on a number the map uses, a room neither on the map nor made, a
+    // brush the map does not have, nothing at all, a direction past down
+    for bad in [
+        Stamp {
+            rooms: vec![3],
+            links: vec![],
+            ..s.clone()
+        },
+        Stamp {
+            rooms: vec![],
+            links: vec![link(1, 0, 77)],
+            ..s.clone()
+        },
+        Stamp {
+            brush: 99,
+            rooms: vec![20],
+            links: vec![],
+            ..s.clone()
+        },
+        Stamp {
+            rooms: vec![],
+            links: vec![],
+            ..s.clone()
+        },
+        Stamp {
+            rooms: vec![],
+            links: vec![link(1, 10, 2)],
+            ..s.clone()
+        },
+    ] {
+        assert!(stamp(&realm, Dos, &bad).is_err(), "{bad:?}");
+    }
+}

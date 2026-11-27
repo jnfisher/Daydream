@@ -9,6 +9,7 @@
 //! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify) and `dry_run`; every change, then the write's report |
 //! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
 //! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) (`count` digs a line of new rooms) and `dry_run`; as `modify` |
+//! | `POST /api/map/stamp` | a [`Stamp`](daydream_nmr::map::Stamp) and `dry_run`; as `modify`, with `stamp` (`{rooms, exits, joined, left}`) and the history's `step` |
 //! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
 //! | `POST /api/tools/write-dat` | `{wcc?, out?, backup, dry_run, force}`; `{files: [{stem, dest, action, records}], backup?}` |
 //!
@@ -294,6 +295,43 @@ pub(crate) async fn dig(
     let label = body.dig.label();
     run_plan(s, body.dry_run, label, move |realm, layout| {
         daydream_nmr::map::dig(realm, layout, &body.dig).map_err(|e| bad(e.to_string()))
+    })
+    .await
+}
+
+/// The body of a stamp from the World map.
+#[derive(Debug, Deserialize)]
+pub struct StampJson {
+    #[serde(flatten)]
+    stamp: daydream_nmr::map::Stamp,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// Puts a stamp's rooms and exits down as one step of the history, and answers which step,
+/// so the map can take the places it drew them in back with it.
+pub(crate) async fn stamp(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<StampJson>,
+) -> Result<Json<Value>, ApiError> {
+    blocking(move || {
+        let (writing, dir) = s.lock_write(body.dry_run, &body.stamp.label())?;
+        let realm = Realm::open(&dir)?;
+        let layout = daydream_nmr::layout_of_realm(&realm);
+        let (plan, done) = daydream_nmr::map::stamp(&realm, layout, &body.stamp)
+            .map_err(|e| bad(e.to_string()))?;
+        let report = if body.dry_run {
+            None
+        } else {
+            let r = daydream_nmr::modify::apply(&realm, &plan, layout)
+                .map_err(|e| bad(e.to_string()))?;
+            Some(daydream_nmr::rows::report_json(&r))
+        };
+        let step = writing.finish();
+        let mut out = plan_json(&plan, body.dry_run, report);
+        out["stamp"] = json!(done);
+        out["step"] = json!(step);
+        Ok(Json(out))
     })
     .await
 }

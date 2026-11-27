@@ -29,11 +29,14 @@ export interface Palette {
   plain: string;
   biome: Record<Biome, string>;
   exit: Record<ExitSort, string>;
+  /** A stamp being placed: new rooms and exits, rooms joined, exits in the way, exits replaced, cells left alone. */
+  stamp: { fresh: string; join: string; clash: string; replace: string; kept: string };
 }
 
 const DAY: Palette = {
   bg: '#f6f7ff', dot: '#dcd8f2', line: '#2e2650', path: '#b4acd8', ink: '#2e2650', halo: '#f6f7ff',
   sel: '#8a6bff', badge: '#ffffff', oneway: '#d22c63', portal: '#8a6bff', missing: '#c0245e', plain: '#ffffff',
+  stamp: { fresh: '#1f9d5c', join: '#2f74d0', clash: '#d98a00', replace: '#d9472b', kept: '#8f89ad' },
   biome: {
     street: '#efeafc', shop: '#ff9ac8', house: '#ffd9c4', park: '#c9f2dc', forest: '#93dfb8', farm: '#ffe9a3',
     water: '#a3d9ff', grave: '#d9ccff', slum: '#ffc1a3', cave: '#d8d3ea', other: '#ffffff',
@@ -47,6 +50,7 @@ const DAY: Palette = {
 const NIGHT: Palette = {
   bg: '#110f26', dot: '#262150', line: '#0b0a1a', path: '#5d5597', ink: '#f2efff', halo: '#110f26',
   sel: '#ffe27a', badge: '#1f1b3d', oneway: '#ff8dc4', portal: '#b8a5ff', missing: '#ff9fc1', plain: '#4a4380',
+  stamp: { fresh: '#5ee3a0', join: '#7fb6ff', clash: '#ffc94d', replace: '#ff8f70', kept: '#8a84b0' },
   biome: {
     street: '#5a5296', shop: '#ff8dc4', house: '#e9a487', park: '#7cd9ad', forest: '#46b184', farm: '#e3c461',
     water: '#58a9e6', grave: '#9f8cf2', slum: '#e8865d', cave: '#77709f', other: '#4a4380',

@@ -170,6 +170,23 @@ never in the game's files: it is not published, and Ctrl+Z takes a move back lik
 **Show** exports every map's layout to a file another builder can import, and lays a map
 out by its exits again.
 
+**Stamps** (or `S`) put a shape of rooms down at once: a corridor, an L-bend, a T, a
+crossroads, an open hall, a ring, a plaza, a spiral, a maze, a stairwell, a gatehouse, a lair
+spur, a shop row, a forest patch, a cave or a one-way drop. `1` to `9` pick the first nine,
+and the one held follows the pointer see-through, its way in under the pointer: `R` turns it,
+`X` and `Y` mirror it, `[` `]` and `{` `}` size it, Space rolls another maze, forest or cave,
+and the arrows and Enter aim and put it down from the keys (on a phone, a tap aims it and a
+second tap puts it down). Where a cell lands on a room, that room is joined, keeping all it
+has; an exit is only made where both rooms have that way free, so a link with an exit in its
+way is left (marked `!`) rather than made one way. **Join the rooms it touches** (`J`) also
+joins the rooms beside it, **Leave rooms under it alone** (Shift) keeps it off the rooms
+already there, and **Replace the exits in its way** (Alt) replaces those exits. The drawer
+says what the stamp would do where it is before it goes down. New rooms take the numbers after
+the map's highest and copy the first room the stamp lands on or joins (else the room picked),
+as a dig does, and stay where the stamp drew them. A stamp is one step: its toast or one
+Ctrl+Z takes back its rooms, its exits and their places together (the server answers the
+same at `POST /api/map/stamp`).
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
@@ -180,6 +197,7 @@ out by its exits again.
 | `F` | Full screen (Esc comes back) |
 | `B` | Build mode: the arrows and `U` `D` dig, join or walk; digits first for a line, `.` again, Enter to name the room, Esc when done |
 | Shift+arrows | In Build mode, move the room a cell (or drag it) |
+| `S` | Stamps: `1` to `9` pick one; `R` turn, `X` `Y` mirror, `[` `]` `{` `}` size, Space roll, `J` join what it touches, arrows and Enter aim and put it down, Shift and Alt held leave rooms alone or replace exits, Esc puts it away |
 
 **The Library** has the world's records a table at a time: the list (found by name or
 number, narrowed by chips such as Weapons or Map 3, or **Changed** for what changed since
