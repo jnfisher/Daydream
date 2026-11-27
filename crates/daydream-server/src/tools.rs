@@ -6,8 +6,8 @@
 //! | `POST /api/tools/import?options={...}` | body: a `.mdb` or NMR JSON export; the import's reports |
 //! | `POST /api/tools/delete` | `{table, range?, dry_run}`; the deleter's report |
 //! | `POST /api/tools/merge-users?dry_run=` | body: a user file (`.DAT` or `.db`); what was copied |
-//! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify) and `dry_run`; every change, then the write's report |
-//! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
+//! | `POST /api/tools/modify` | a [`Modify`](daydream_nmr::modify::Modify), `dry_run` and `label?` (the history's name for it); every change, then the write's report and the history's `step` |
+//! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)), `dry_run` and `label?`; as `modify` |
 //! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) (`count` digs a line of new rooms) and `dry_run`; as `modify` |
 //! | `POST /api/map/stamp` | a [`Stamp`](daydream_nmr::map::Stamp) and `dry_run`; as `modify`, with `stamp` (`{rooms, exits, joined, left}`) and the history's `step` |
 //! | `POST /api/map/set` | a [`Bulk`](daydream_nmr::map::Bulk) (`{map, rooms, values: [[column, value]], what}`) and `dry_run`; as `modify` |
@@ -112,7 +112,7 @@ pub(crate) async fn import(
             return Err(bad("send the .mdb (or JSON export) as the request body"));
         }
         let data = read_export(&body)?;
-        let (_writing, dir) = s.lock_write(o.dry_run, "Import")?;
+        let (writing, dir) = s.lock_write(o.dry_run, "Import")?;
         let realm = Realm::open(&dir)?;
         let opts = ImportOptions {
             skip_existing: o.skip_existing,
@@ -134,7 +134,10 @@ pub(crate) async fn import(
             .iter()
             .map(daydream_nmr::rows::report_json)
             .collect();
-        Ok(Json(json!({ "dry_run": opts.dry_run, "reports": reports })))
+        let step = writing.finish();
+        Ok(Json(
+            json!({ "dry_run": opts.dry_run, "reports": reports, "step": step }),
+        ))
     })
     .await
 }
@@ -160,7 +163,7 @@ pub(crate) async fn delete(
         if body.range.is_none() && !body.all {
             return Err(bad("give a range, or all: true to delete every record"));
         }
-        let (_writing, dir) =
+        let (writing, dir) =
             s.lock_write(body.dry_run, &format!("Delete {} records", body.table))?;
         let realm = Realm::open(&dir)?;
         let range = body.range.map(|mut r| {
@@ -175,9 +178,11 @@ pub(crate) async fn delete(
             body.dry_run,
         )
         .map_err(|e| bad(e.to_string()))?;
+        let step = writing.finish();
         Ok(Json(json!({
             "dry_run": body.dry_run,
             "report": daydream_nmr::rows::report_json(&report),
+            "step": step,
         })))
     })
     .await
@@ -212,7 +217,7 @@ pub(crate) async fn merge_users(
             WbtrvDb::convert(&dat, &p).map_err(|e| bad(format!("not a user file: {e}")))?;
             p
         };
-        let (_writing, dir) = s.lock_write(q.dry_run, "Merge users")?;
+        let (writing, dir) = s.lock_write(q.dry_run, "Merge users")?;
         let realm = Realm::open(&dir)?;
         let into_path = realm
             .files_of(daydream_wcc::tables::Table::Users)
@@ -232,20 +237,34 @@ pub(crate) async fn merge_users(
                     .to_string()
             })
             .collect();
+        // the source and the realm's user file close before the step is kept
+        drop((source, into));
+        let step = writing.finish();
         Ok(Json(
-            json!({ "dry_run": q.dry_run, "copied": r.copied, "skipped": skipped }),
+            json!({ "dry_run": q.dry_run, "copied": r.copied, "skipped": skipped, "step": step }),
         ))
     })
     .await
 }
 
-/// The body of a Universal Modifier run: the run itself, and whether to only preview it.
+/// The body of a Universal Modifier run: the run itself, whether to only preview it, and
+/// what to call it in the history (left out, [`Modify::label`](daydream_nmr::modify::Modify::label)).
 #[derive(Debug, Deserialize)]
 pub struct ModifyJson {
     #[serde(flatten)]
     modify: daydream_nmr::modify::Modify,
     #[serde(default)]
     dry_run: bool,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// The history's name for a run: the one asked for (trimmed, and not too long), or its own.
+fn label_or(asked: Option<String>, own: impl FnOnce() -> String) -> String {
+    match asked.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        Some(l) => l.chars().take(120).collect(),
+        None => own(),
+    }
 }
 
 /// The most changes an answer lists; the count is always whole.
@@ -255,26 +274,31 @@ pub(crate) async fn modify(
     State(s): State<Arc<AppState>>,
     Json(body): Json<ModifyJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, "Modify".into(), move |realm, layout| {
+    let label = label_or(body.label, || body.modify.label());
+    run_plan(s, body.dry_run, label, move |realm, layout| {
         daydream_nmr::modify::plan(realm, &body.modify, layout).map_err(|e| bad(e.to_string()))
     })
     .await
 }
 
-/// The body of one of NMR's fixes: the fix, and whether to only preview it.
+/// The body of one of NMR's fixes: the fix, whether to only preview it, and what to call it
+/// in the history (left out, [`Preset::label`](daydream_nmr::presets::Preset::label)).
 #[derive(Debug, Deserialize)]
 pub struct PresetJson {
     #[serde(flatten)]
     preset: daydream_nmr::presets::Preset,
     #[serde(default)]
     dry_run: bool,
+    #[serde(default)]
+    label: Option<String>,
 }
 
 pub(crate) async fn preset(
     State(s): State<Arc<AppState>>,
     Json(body): Json<PresetJson>,
 ) -> Result<Json<Value>, ApiError> {
-    run_plan(s, body.dry_run, "Fix".into(), move |realm, layout| {
+    let label = label_or(body.label, || body.preset.label());
+    run_plan(s, body.dry_run, label, move |realm, layout| {
         daydream_nmr::presets::plan(realm, &body.preset, layout).map_err(|e| bad(e.to_string()))
     })
     .await
@@ -388,7 +412,7 @@ pub(crate) async fn renumber(
     Json(body): Json<RenumberJson>,
 ) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (_writing, dir) = s.lock_write(body.dry_run, "Change record numbers")?;
+        let (writing, dir) = s.lock_write(body.dry_run, "Change record numbers")?;
         let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
         let plans = daydream_nmr::renumber::plan(&realm, &body.run, layout)
@@ -407,7 +431,10 @@ pub(crate) async fn renumber(
             .zip(reports)
             .map(|(p, r)| plan_json(p, body.dry_run, r))
             .collect();
-        Ok(Json(json!({ "dry_run": body.dry_run, "tables": tables })))
+        let step = writing.finish();
+        Ok(Json(
+            json!({ "dry_run": body.dry_run, "tables": tables, "step": step }),
+        ))
     })
     .await
 }

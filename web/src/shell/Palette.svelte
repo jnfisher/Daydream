@@ -1,6 +1,7 @@
 <!--
   Ctrl+K: one box for everything. Records by name or number (`item sword`, `r 1/224`,
-  `868`), the commands (Publish, Undo, a theme), and the places and tables to go to.
+  `868`), the commands (Publish, Undo, a theme), the Workshop's tools (by NMR's names too:
+  `universal modifier`), and the places and tables to go to.
   Enter opens a record beside the page; Shift+Enter opens its full page.
 -->
 <script lang="ts">
@@ -14,6 +15,7 @@
   import Search from '@lucide/svelte/icons/search';
   import Undo2 from '@lucide/svelte/icons/undo-2';
   import Volume2 from '@lucide/svelte/icons/volume-2';
+  import Wrench from '@lucide/svelte/icons/wrench';
   import type { Cell } from '../api';
   import { kindOf, TABLE_ORDER } from './kinds';
   import Mascot from './Mascot.svelte';
@@ -21,6 +23,7 @@
   import { THEMES, prefs, setSound, setTheme } from './prefs.svelte';
   import { keyLabel, PLAYER_TABLES, recordHref } from './routes';
   import { app, inspect, redo, rowsOf, undo, type RecordRef } from './state.svelte';
+  import { named, toolHref, type Tool } from '../workshop/catalogue';
 
   const mod = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
 
@@ -135,12 +138,23 @@
   const matches = (c: Cmd) => words.every((w) => `${c.label} ${c.words}`.toLowerCase().includes(w));
   const shownCommands = $derived(words.length ? commands.filter(matches) : commands.slice(0, 4));
   const shownPlaces = $derived(words.length ? destinations.filter(matches).slice(0, 8) : destinations.slice(0, PLACES.length));
+  const shownTools = $derived(words.length ? named(words.join(' ')).slice(0, 5) : []);
   const recent = $derived(words.length ? [] : app.recent.slice(0, 5));
-  const nothing = $derived(words.length > 0 && !searching && !hits.length && !shownCommands.length && !shownPlaces.length);
+  const nothing = $derived(words.length > 0 && !searching && !hits.length && !shownCommands.length && !shownTools.length && !shownPlaces.length);
 
   // the first answer is the one Enter takes, as the answers change
   $effect(() => {
-    const first = recent[0] ? `rec:${refId(recent[0])}` : hits[0] ? `rec:${refId(hits[0])}` : shownCommands[0] ? `cmd:${shownCommands[0].id}` : shownPlaces[0] ? `go:${shownPlaces[0].id}` : '';
+    const first = recent[0]
+      ? `rec:${refId(recent[0])}`
+      : hits[0]
+        ? `rec:${refId(hits[0])}`
+        : shownCommands[0]
+          ? `cmd:${shownCommands[0].id}`
+          : shownTools[0]
+            ? `tool:${shownTools[0].id}`
+            : shownPlaces[0]
+              ? `go:${shownPlaces[0].id}`
+              : '';
     selected = first;
   });
 
@@ -174,6 +188,11 @@
   function run(c: Cmd) {
     close();
     c.run();
+  }
+
+  function openTool(t: Tool) {
+    close();
+    location.hash = toolHref(t);
   }
 </script>
 
@@ -231,6 +250,19 @@
                       <span class="tile"><c.icon size={16} /></span>
                       <span class="txt"><span class="nm">{c.label}</span>{#if c.hint}<span class="sub">{c.hint}</span>{/if}</span>
                       {#if c.kbd}<span class="end"><span class="kbd">{c.kbd}</span></span>{/if}
+                    </Command.Item>
+                  {/each}
+                </Command.GroupItems>
+              </Command.Group>
+            {/if}
+            {#if shownTools.length}
+              <Command.Group value="tools">
+                <Command.GroupHeading class="grp eyebrow">Workshop</Command.GroupHeading>
+                <Command.GroupItems>
+                  {#each shownTools as t (t.id)}
+                    <Command.Item value={`tool:${t.id}`} class="opt" onSelect={() => openTool(t)}>
+                      <span class="tile"><Wrench size={16} /></span>
+                      <span class="txt"><span class="nm">{t.name}</span><span class="sub">{t.was.length ? `In NMR: ${t.was.join(', ')}` : t.about}</span></span>
                     </Command.Item>
                   {/each}
                 </Command.GroupItems>

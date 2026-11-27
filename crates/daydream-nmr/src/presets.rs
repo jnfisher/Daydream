@@ -130,6 +130,40 @@ pub enum Preset {
     },
 }
 
+impl Preset {
+    /// What the fix is called in the history of saves (and in the Workshop, which names it
+    /// the same way).
+    pub fn label(&self) -> String {
+        match self {
+            Preset::NoLimitedItems => "Lift item game limits".into(),
+            Preset::NoLevelRestrictions => "Lift item level restrictions".into(),
+            Preset::FixItemUses => "Fix uses on items".into(),
+            Preset::FixDropUses => "Fix uses on item drops".into(),
+            Preset::MultiplyExp { by, .. } => format!("Multiply experience by {by}"),
+            Preset::DivideExp { by } => format!("Divide experience by {by}"),
+            Preset::CombineExp => "Fold Exp Multiplier into Experience".into(),
+            Preset::ResetKillTimes => "Clear the kill timers".into(),
+            Preset::SetKillTimes { year, month, day } => {
+                format!("Set kill times to {year}-{month:02}-{day:02}")
+            }
+            Preset::ItemDropPct(d) if d.set => format!("Set drop rates to {}%", d.value),
+            Preset::ItemDropPct(d) => format!("Change drop rates by {:+}%", d.value),
+            Preset::RestockShops => "Restock the shops".into(),
+            Preset::StripTextblocks { .. } => "Strip text block endings".into(),
+            Preset::CombineRoomItems => "Tidy the floors".into(),
+            Preset::InsertBufferRooms { map: Some(m) } => format!("Insert buffer rooms on map {m}"),
+            Preset::InsertBufferRooms { map: None } => "Insert buffer rooms".into(),
+            Preset::DeleteBufferRooms { map: Some(m) } => format!("Delete buffer rooms on map {m}"),
+            Preset::DeleteBufferRooms { map: None } => "Delete buffer rooms".into(),
+            Preset::ChangeMonsterIndexes { table, .. } => match table {
+                IndexTable::Monsters => "Change monster groups and indexes".into(),
+                IndexTable::Rooms => "Change rooms' monster indexes".into(),
+            },
+            Preset::ReviveCharacter { user, .. } => format!("Revive {user}"),
+        }
+    }
+}
+
 /// Where Revive Character moves a user: NMR's "move them that many rooms back" (1 to 19,
 /// from their trail), the Halls of the Dead (1/2189) or a map and room.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -892,6 +926,34 @@ fn revive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fix_is_named_for_the_history() {
+        let fix = |v: serde_json::Value| serde_json::from_value::<Preset>(v).unwrap().label();
+        assert_eq!(
+            fix(
+                serde_json::json!({"preset": "set_kill_times", "year": 2026, "month": 3, "day": 7})
+            ),
+            "Set kill times to 2026-03-07"
+        );
+        assert_eq!(
+            fix(serde_json::json!({"preset": "insert_buffer_rooms", "map": 2})),
+            "Insert buffer rooms on map 2"
+        );
+        assert_eq!(
+            fix(serde_json::json!({"preset": "delete_buffer_rooms", "map": null})),
+            "Delete buffer rooms"
+        );
+        let drops = |set: bool, value: i64| {
+            fix(serde_json::json!({
+                "preset": "item_drop_pct", "set": set, "value": value, "only_if": ["ge", 0],
+                "weapons": true, "armour": true, "keys": true, "containers": true, "scrolls": true,
+            }))
+        };
+        assert_eq!(drops(true, 20), "Set drop rates to 20%");
+        assert_eq!(drops(false, -5), "Change drop rates by -5%");
+        assert_eq!(drops(false, 5), "Change drop rates by +5%");
+    }
 
     #[test]
     fn exp_splits_as_nmrs() {

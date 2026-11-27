@@ -119,6 +119,59 @@ pub struct Modify {
     pub only_if: Vec<Condition>,
 }
 
+impl Modify {
+    /// What the run is called in the history of saves: "Experience × 1.5 on Monsters".
+    pub fn label(&self) -> String {
+        let t = &self.table;
+        let n = |v: f64| {
+            let s = format!("{v}");
+            s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
+        };
+        let math = |what: &str, op: Op, v: f64| match op {
+            Op::Add if v < 0.0 => format!("{what} − {} on {t}", n(-v)),
+            Op::Add => format!("{what} + {} on {t}", n(v)),
+            Op::Sub => format!("{what} − {} on {t}", n(v)),
+            Op::Mul => format!("{what} × {} on {t}", n(v)),
+            Op::Div => format!("{what} ÷ {} on {t}", n(v)),
+            Op::Percent => format!("{what} to {}% on {t}", n(v)),
+            Op::Set => format!("Set {what} to {} on {t}", n(v)),
+        };
+        match &self.action {
+            Action::Math {
+                columns, op, value, ..
+            } => {
+                let what = match columns.as_slice() {
+                    [one] => one.clone(),
+                    [first, ..] => {
+                        // a numbered family: `Item Drop % 0` .. `Item Drop % 9`
+                        let stem = first
+                            .trim_end_matches(|c: char| c.is_ascii_digit())
+                            .trim_end();
+                        if columns.iter().all(|c| c.starts_with(stem)) {
+                            stem.to_string()
+                        } else {
+                            format!("{} fields", columns.len())
+                        }
+                    }
+                    [] => "nothing".into(),
+                };
+                math(&what, *op, *value)
+            }
+            Action::ChangeAbility {
+                ability, op, value, ..
+            } => math(&format!("ability {ability}"), *op, *value),
+            Action::GiveAbility { ability, value } => {
+                format!("Give ability {ability} ({value}) on {t}")
+            }
+            Action::TakeAbility { ability, .. } => format!("Take ability {ability} off {t}"),
+            Action::Set { values } => match values.as_slice() {
+                [(column, _)] => format!("Set {column} on {t}"),
+                _ => format!("Set {} fields on {t}", values.len()),
+            },
+        }
+    }
+}
+
 /// One changed value.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Change {
@@ -567,5 +620,41 @@ mod tests {
         assert_eq!(math(1.0, Op::Sub, 5.0, Some((Cmp::Ge, 0.0)), int), 0.0);
         assert_eq!(math(30000.0, Op::Mul, 2.0, None, int), 32767.0);
         assert_eq!(math(3.0, Op::Sub, 9.0, None, (0.0, 255.0)), 0.0);
+    }
+
+    #[test]
+    fn a_run_is_named_for_the_history() {
+        let run = |action: serde_json::Value| -> Modify {
+            serde_json::from_value(serde_json::json!({"table": "Monsters", "action": action}))
+                .unwrap()
+        };
+        let math = |columns: serde_json::Value, op: &str, value: f64| {
+            run(serde_json::json!({"kind": "math", "columns": columns, "op": op, "value": value}))
+                .label()
+        };
+        assert_eq!(
+            math(serde_json::json!(["Experience"]), "mul", 1.5),
+            "Experience × 1.5 on Monsters"
+        );
+        assert_eq!(
+            math(serde_json::json!(["Experience"]), "add", -10.0),
+            "Experience − 10 on Monsters"
+        );
+        assert_eq!(
+            math(
+                serde_json::json!(["Item Drop % 0", "Item Drop % 1"]),
+                "percent",
+                50.0
+            ),
+            "Item Drop % to 50% on Monsters"
+        );
+        assert_eq!(
+            math(serde_json::json!(["Experience", "Gold"]), "set", 0.0),
+            "Set 2 fields to 0 on Monsters"
+        );
+        assert_eq!(
+            run(serde_json::json!({"kind": "take_ability", "ability": 135})).label(),
+            "Take ability 135 off Monsters"
+        );
     }
 }

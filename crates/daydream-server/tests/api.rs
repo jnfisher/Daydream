@@ -591,10 +591,15 @@ async fn the_deleter_needs_a_range_or_all() {
         del(serde_json::json!({"table": "Races", "all": true, "dry_run": true})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["report"]["deleted"], 2);
+    assert!(body["step"].is_null(), "a preview is no step: {body}");
     let (_, body) =
         del(serde_json::json!({"table": "Races", "range": {"table": "", "from": 2, "to": 9}}))
             .await;
     assert_eq!(body["report"]["deleted"], 1);
+    assert!(
+        body["step"].is_i64(),
+        "a delete is one step, to undo: {body}"
+    );
     let (_, races) = get(dir.path(), "/api/tables/Races/rows").await;
     assert_eq!(races["rows"].as_array().unwrap().len(), 1);
 }
@@ -702,6 +707,34 @@ async fn the_modifier_previews_then_writes() {
     )
     .await;
     assert_eq!(row["values"]["CP"], 120);
+    // one step of the history, named for what it did, which the answer gives to undo
+    let (_, history) = get(dir.path(), "/api/history").await;
+    assert_eq!(
+        history["steps"][0]["label"], "Set CP to 120 on Races",
+        "{history}"
+    );
+    assert_eq!(body["step"], history["steps"][0]["step"], "{history}");
+
+    // or named as asked
+    let (_, body) = send(
+        dir.path(),
+        "POST",
+        "/api/tools/modify",
+        serde_json::json!({
+            "table": "Races",
+            "action": {"kind": "math", "columns": ["CP"], "op": "add", "value": 5},
+            "label": "  CP + 5 on every race  ",
+        }),
+    )
+    .await;
+    let (_, history) = get(dir.path(), "/api/history").await;
+    let named = history["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["step"] == body["step"])
+        .unwrap_or_else(|| panic!("{body} {history}"));
+    assert_eq!(named["label"], "CP + 5 on every race");
 
     let (status, _) = send(
         dir.path(),

@@ -7,7 +7,7 @@
 import { build } from 'esbuild';
 import svelte from 'esbuild-svelte';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 const here = (p) => new URL(p, import.meta.url).pathname;
 const out = here('../crates/daydream-server/src/');
@@ -72,6 +72,17 @@ writeFileSync(
     notices.join('\n') +
     `\n== SCOWL (Spell Checker Oriented Word Lists), as wordlist-english 1.2.1 ships it ==\n\n${scowl}\n`,
 );
+
+// A chunk is named by a hash of its code and of the paths of the files in it. A component's
+// external styles come in under their absolute path, so a chunk holding them would be named for
+// where the checkout lives, and CI would build it under another name.
+for (const [file, output] of Object.entries(result.metafile.outputs)) {
+  const styles = Object.keys(output.inputs).find((input) => input.startsWith('fakecss:'));
+  if (styles && file.endsWith('.js') && file.includes('/chunks/')) {
+    const component = relative(here('.'), styles.replace(/^fakecss:/, '').replace(/\.esbuild-svelte-fake-css$/, '.svelte'));
+    throw new Error(`${file.slice(file.lastIndexOf('/') + 1)} holds the styles of ${component}: give it <svelte:options css="injected" />`);
+  }
+}
 
 // the server serves each chunk by name (crates/daydream-server/src/chunks.rs)
 const appCss = readFileSync(join(out, 'app.css'), 'utf8');
