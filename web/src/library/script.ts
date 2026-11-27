@@ -257,6 +257,44 @@ export function alternatives(pattern: string): string[] {
 }
 
 /**
+ * Whether typed text matches one alternative of a room's command (`match_wildcard_pattern`):
+ * letters compare without case; a `*` lets the typed words stop short from there (a typed
+ * space skips the rest of the pattern's word); all the typed text must be used, and the
+ * pattern too unless what is left of it is a `*` or the words may stop short.
+ */
+function matchOne(pattern: string, text: string): boolean {
+  let [cp, tp] = [0, 0];
+  const at = (s: string, i: number) => (i < s.length ? s.charCodeAt(i) : 0);
+  const low = (c: number) => (c >= 65 && c <= 90 ? c + 32 : c);
+  const BAR = 124;
+  const SPACE = 32;
+  let abbrev = false;
+  while (at(pattern, cp) !== 0 && at(pattern, cp) !== BAR && at(text, tp) !== 0) {
+    const c = at(pattern, cp);
+    const t = at(text, tp);
+    if (c === 42) abbrev = true;
+    else if (abbrev && t === SPACE) {
+      while (at(pattern, cp) !== 0 && at(pattern, cp) !== BAR && at(pattern, cp) !== SPACE) cp++;
+      if (at(pattern, cp) === SPACE) cp++;
+      tp++;
+      continue;
+    } else if (low(c) === low(t)) tp++;
+    else return false;
+    cp++;
+  }
+  const rest = at(pattern, cp);
+  return at(text, tp) === 0 && (abbrev || rest === 0 || rest === BAR || rest === 42);
+}
+
+/** Whether typed text runs a line of a room's commands: any of its first 20 alternatives
+ * matches it (`wildcard_match`). */
+export function wildcardMatch(pattern: string, text: string): boolean {
+  const starts = [0];
+  for (let i = 0; i < pattern.length && starts.length < MAXALTS; i++) if (pattern[i] === '|') starts.push(i + 1);
+  return starts.some((a) => matchOne(pattern.slice(a), text));
+}
+
+/**
  * How a text block reads: a script run as a whole, a talk block's topics, a room's commands
  * (`words:clauses`), a random block's chances (`percent:clauses`), a monster's name list, what
  * it says now and then (`chance text`), or text to show.

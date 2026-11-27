@@ -262,6 +262,9 @@ export const api = {
       `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}${nonzero.length ? `&nonzero=${encodeURIComponent(nonzero.join(','))}` : ''}`,
     ),
   row: (table: string, key: Cell[]) => call<Row>('GET', `${t(table)}/row${k(key)}`),
+  /** A row, or no values when the world lacks it (rather than a 404). */
+  rowIfAny: (table: string, key: Cell[]) =>
+    call<Omit<Row, 'values'> & { values: Row['values'] | null }>('GET', `${t(table)}/row${k(key)}&missing=null`),
   /** Where a monster group spawns: its monsters by Index, and its rooms by Index range. */
   spawns: (group: number) => call<Ladder>('GET', `/api/spawns?group=${group}`),
   /** The rows of every table that name a record. */

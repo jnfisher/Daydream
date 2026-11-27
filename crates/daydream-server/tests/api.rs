@@ -252,6 +252,13 @@ async fn rows_list_their_keys_and_titles() {
     assert_eq!(body["key"], serde_json::json!([2]));
     assert_eq!(body["values"]["Name"], "Dwarf");
     assert_eq!(body["values"]["Number"], 2);
+    // a row the realm lacks: a 404, or no values when asked so
+    let lacking = format!("/api/tables/Races/row?key={}", key(serde_json::json!([9])));
+    assert_eq!(get(dir.path(), &lacking).await.0, StatusCode::NOT_FOUND);
+    let (status, body) = get(dir.path(), &format!("{lacking}&missing=null")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["values"], Value::Null);
+    assert_eq!(body["key"], serde_json::json!([9]));
 }
 
 #[tokio::test]
