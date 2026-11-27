@@ -1814,3 +1814,93 @@ async fn the_checks_read_the_world_and_keep_accepted_words() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+/// The health checks over the races: a leftover ability value is found, a preview of its fix
+/// writes nothing, and the fix is one step of the history.
+#[tokio::test]
+async fn the_health_checks_find_and_fix_in_one_step() {
+    let dir = realm();
+    let check = |body: &Value, id: &str| -> Value {
+        body["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap_or_else(|| panic!("{id}: {body}"))
+            .clone()
+    };
+    let (status, body) = get(dir.path(), "/api/checks/health").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<&str> = body["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "uses",
+            "blank_blows",
+            "exits",
+            "drop_uses",
+            "leftovers",
+            "spaces",
+            "limited"
+        ]
+    );
+    assert!(
+        body["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["level"] == "ok"),
+        "{body}"
+    );
+
+    // the first race's empty slot 0 keeps a value
+    let (status, report) = send(
+        dir.path(),
+        "PUT",
+        &format!("/api/tables/Races/row?key={}", key(serde_json::json!([1]))),
+        serde_json::json!({"values": {"Ability Value 0": "8224"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let (_, body) = get(dir.path(), "/api/checks/health").await;
+    let leftovers = check(&body, "leftovers");
+    assert_eq!(leftovers["level"], "note", "{leftovers}");
+    assert_eq!(leftovers["records"], 1);
+    assert_eq!(leftovers["values"], 1);
+    assert_eq!(
+        leftovers["list"],
+        serde_json::json!([{"table": "Races", "key": [1]}])
+    );
+    assert_eq!(leftovers["fix"], "Clear leftover ability values");
+
+    let fix = |body: Value| send(dir.path(), "POST", "/api/checks/health/fix", body);
+    let (status, body) = fix(serde_json::json!({"check": "leftovers", "dry_run": true})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["records"], 1, "{body}");
+    assert_eq!(body["values"], 1);
+    assert!(body["step"].is_null(), "a preview is no step: {body}");
+    let (_, after) = get(dir.path(), "/api/checks/health").await;
+    assert_eq!(check(&after, "leftovers")["level"], "note", "{after}");
+
+    let (status, body) = fix(serde_json::json!({"check": "leftovers"})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, history) = get(dir.path(), "/api/history").await;
+    assert_eq!(
+        history["steps"][0]["label"], "Clear leftover ability values",
+        "{history}"
+    );
+    assert_eq!(body["step"], history["steps"][0]["step"], "{history}");
+    let (_, after) = get(dir.path(), "/api/checks/health").await;
+    assert_eq!(check(&after, "leftovers")["level"], "ok", "{after}");
+
+    // exits have no sure fix, and there is no check by another name
+    for name in ["exits", "nope"] {
+        let (status, body) = fix(serde_json::json!({"check": name})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
+    }
+}

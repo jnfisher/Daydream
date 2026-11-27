@@ -8,12 +8,15 @@
 //! - `cases`: the batch of edits and new records the NMR job imports, through Daydream alone.
 //! - `mme`: the MME export, against NMR's own export of the stock world.
 //! - `wiring`: the checks that read the wiring, against what they find in the stock world.
+//! - `health`: the health checks and their fixes, on records set up for each case and on the
+//!   stock world.
 //! - `windows_nmr`: real Nightmare Redux imports that batch exactly as Daydream does
 //!   (Windows only, with NMR set up as the `windows` workflow does).
 
 mod support;
 
 mod cases;
+mod health;
 mod mdb_read;
 mod mme;
 mod modify;

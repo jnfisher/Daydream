@@ -44,6 +44,7 @@
   import Wrench from '@lucide/svelte/icons/wrench';
   import type { Component } from 'svelte';
   import { tick } from 'svelte';
+  import Health from '../shell/Health.svelte';
   import Sky from '../shell/Sky.svelte';
   import { GROUPS, search, toolById, toolHref, type Group, type Tool } from './catalogue';
   import BulkEdit from './BulkEdit.svelte';
@@ -164,6 +165,9 @@
           <h2 id="ws-{group.id}-h">{group.title}</h2>
           <span>{group.about}</span>
         </div>
+        {#if group.id === 'health'}
+          <section class="card hpanel" aria-label="Health checks"><Health place="workshop" full /></section>
+        {/if}
         <div class="cards">
           {#each tools as t (t.id)}
             {#if t.later}
@@ -211,6 +215,7 @@
   .find input { width: 100%; height: 42px; padding-left: 36px; border-radius: 14px; background: var(--surface); font-weight: 700; }
   .grp { margin-top: 26px; scroll-margin-top: 14px; border-radius: 22px; }
   .grp.glow { animation: glow 1.6s ease-out; }
+  .hpanel { margin-bottom: 12px; padding: 8px 16px; }
   @keyframes glow { from { box-shadow: 0 0 0 6px var(--focus); } }
   @media (prefers-reduced-motion: reduce) { .grp.glow { animation: none; } }
   .grp-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }

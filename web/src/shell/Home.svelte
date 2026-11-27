@@ -1,7 +1,7 @@
 <!--
   Home: the open world at a glance. A greeting with what needs doing, the changes waiting to
-  publish, the saves that can be undone, the checks that read the wiring, the records opened
-  lately, and what is in the world.
+  publish, the world's health with a fix on each line, the checks that read the wiring, what is
+  in the world, the saves that can be undone, and the records opened lately.
 -->
 <script lang="ts">
   import CloudUpload from '@lucide/svelte/icons/cloud-upload';
@@ -60,8 +60,10 @@
 
   // the checks across the world: their code loads once a world is open
   let Checks = $state<typeof import('./Checks.svelte').default | null>(null);
+  let Health = $state<typeof import('./Health.svelte').default | null>(null);
   $effect(() => {
     if (c && !Checks) void import('./Checks.svelte').then((m) => (Checks = m.default));
+    if (c && !Health) void import('./Health.svelte').then((m) => (Health = m.default));
   });
 </script>
 
@@ -104,6 +106,26 @@
       </section>
 
       <section class="card span-5">
+        {#if Health}<Health place="home" />{:else}<h3>Health</h3>{/if}
+      </section>
+
+      {#if Checks}<Checks />{/if}
+
+      <section class="card span-12">
+        <h3>In this world</h3>
+        <div class="tiles">
+          {#each TABLE_ORDER.filter((t) => app.tables.some((x) => x.name === t) && !['Users', 'BankBooks', 'Gangs'].includes(t)) as t (t)}
+            {@const k = kindOf(t)}
+            <a class="stile {k.cls}" href={recordHref(t)}>
+              <span class="tile"><k.icon size={16} /></span>
+              <b class="tnum">{counts[t]?.toLocaleString() ?? '…'}</b>
+              <span>{k.many}</span>
+            </a>
+          {/each}
+        </div>
+      </section>
+
+      <section class="card span-7">
         <h3>Recent saves</h3>
         {#if steps.length}
           <ol class="steps">
@@ -122,22 +144,6 @@
         {:else}
           <p class="quiet">No saves yet in this world.</p>
         {/if}
-      </section>
-
-      {#if Checks}<Checks />{/if}
-
-      <section class="card span-7">
-        <h3>In this world</h3>
-        <div class="tiles">
-          {#each TABLE_ORDER.filter((t) => app.tables.some((x) => x.name === t) && !['Users', 'BankBooks', 'Gangs'].includes(t)) as t (t)}
-            {@const k = kindOf(t)}
-            <a class="stile {k.cls}" href={recordHref(t)}>
-              <span class="tile"><k.icon size={16} /></span>
-              <b class="tnum">{counts[t]?.toLocaleString() ?? '…'}</b>
-              <span>{k.many}</span>
-            </a>
-          {/each}
-        </div>
       </section>
 
       <section class="card span-5">
