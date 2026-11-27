@@ -5,17 +5,22 @@
 /// A chunk's code, by its file name.
 pub(crate) fn get(name: &str) -> Option<&'static str> {
     Some(match name {
-        "Library-2EYKPIDY.js" => include_str!("chunks/Library-2EYKPIDY.js"),
-        "World-ZTJ7GS63.js" => include_str!("chunks/World-ZTJ7GS63.js"),
-        "chunk-2GNIB3DY.js" => include_str!("chunks/chunk-2GNIB3DY.js"),
-        "chunk-4QYZIXSO.js" => include_str!("chunks/chunk-4QYZIXSO.js"),
-        "chunk-A43Q4WR6.js" => include_str!("chunks/chunk-A43Q4WR6.js"),
-        "chunk-BFRLSUJZ.js" => include_str!("chunks/chunk-BFRLSUJZ.js"),
-        "chunk-EUXJJYII.js" => include_str!("chunks/chunk-EUXJJYII.js"),
-        "chunk-KJY54EVY.js" => include_str!("chunks/chunk-KJY54EVY.js"),
-        "chunk-L7TO5KE7.js" => include_str!("chunks/chunk-L7TO5KE7.js"),
-        "chunk-MGXZ74XK.js" => include_str!("chunks/chunk-MGXZ74XK.js"),
-        "parts-Y6QUGGLQ.js" => include_str!("chunks/parts-Y6QUGGLQ.js"),
+        "Grid-6OGEMXXX.js" => include_str!("chunks/Grid-6OGEMXXX.js"),
+        "Library-H7VXXAHH.js" => include_str!("chunks/Library-H7VXXAHH.js"),
+        "World-UQCAZRN6.js" => include_str!("chunks/World-UQCAZRN6.js"),
+        "chunk-6HIFS5IG.js" => include_str!("chunks/chunk-6HIFS5IG.js"),
+        "chunk-C2RVLTJG.js" => include_str!("chunks/chunk-C2RVLTJG.js"),
+        "chunk-EFIQIKOR.js" => include_str!("chunks/chunk-EFIQIKOR.js"),
+        "chunk-G7LNNTT2.js" => include_str!("chunks/chunk-G7LNNTT2.js"),
+        "chunk-G7RXW27E.js" => include_str!("chunks/chunk-G7RXW27E.js"),
+        "chunk-JM4Q5MQD.js" => include_str!("chunks/chunk-JM4Q5MQD.js"),
+        "chunk-KUBBZR54.js" => include_str!("chunks/chunk-KUBBZR54.js"),
+        "chunk-NDCY5STL.js" => include_str!("chunks/chunk-NDCY5STL.js"),
+        "chunk-NDKXFK4B.js" => include_str!("chunks/chunk-NDKXFK4B.js"),
+        "chunk-RZG5H7DT.js" => include_str!("chunks/chunk-RZG5H7DT.js"),
+        "chunk-SD5X2VAL.js" => include_str!("chunks/chunk-SD5X2VAL.js"),
+        "chunk-T3TXTIK2.js" => include_str!("chunks/chunk-T3TXTIK2.js"),
+        "parts-NIBXPGQ7.js" => include_str!("chunks/parts-NIBXPGQ7.js"),
         _ => return None,
     })
 }

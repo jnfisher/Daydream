@@ -192,7 +192,10 @@ drawn among its peers' (every 1H Sharp weapon) to read in context, and a weapon'
 against its Speed among theirs, its own dot moving as you type and each of theirs opening it. A field changed since
 publishing shows what it was, struck through, and the header counts those changes and takes
 them back. **All fields** lays out every column as NMR's forms do, and **Copy** makes a new
-record from the open one, as NMR's Insert does. A monster's card plays its attacks as a fight
+record from the open one, as NMR's Insert does. **Grid** shows the whole table as a
+spreadsheet, with a link of its own (`#/items?grid`): the rows the search and chips leave,
+the columns you pick under the card's headings (remembered in this browser), sorted by a
+header's click; **CSV** writes what it shows, numbers as the records hold them. A monster's card plays its attacks as a fight
 does: how often each is picked (the Attack % add up), how many blows its Energy buys, the
 lines each outcome sends to the player hit and to the room, and **Roll another round** for a
 round drawn as the game draws one. It also shows where the monster spawns (the rooms that

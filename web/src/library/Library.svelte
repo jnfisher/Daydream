@@ -1,21 +1,23 @@
 <!--
   The Library: the world's records, a table at a time. The list on the left (found by name
   or number, narrowed by chips, what changed since publishing dotted), the open record's card
-  on the right (Card.svelte). The frame routes here with `show`, and `[` and `]` step through
+  on the right (Card.svelte), or the whole table as a spreadsheet grid (Grid.svelte). The frame routes here with `show`, and `[` and `]` step through
   the list as NMR's arrows do. Users, gangs and bank books are the Players place's.
 -->
 <svelte:options css="injected" />
 
 <script lang="ts">
+  import LayoutList from '@lucide/svelte/icons/layout-list';
   import Plus from '@lucide/svelte/icons/plus';
   import SearchIcon from '@lucide/svelte/icons/search';
+  import Sheet from '@lucide/svelte/icons/sheet';
   import { onMount, tick } from 'svelte';
   import { titleOf } from '../ansi';
   import { api, type Cell, type Row, type TableInfo } from '../api';
   import { kindOf, TABLE_ORDER } from '../shell/kinds';
   import Mascot from '../shell/Mascot.svelte';
   import { sfx } from '../shell/prefs.svelte';
-  import { PLAYER_TABLES, recordHref, type Route } from '../shell/routes';
+  import { gridHref, PLAYER_TABLES, recordHref, type Route } from '../shell/routes';
   import { addGuard, app, remember, undo } from '../shell/state.svelte';
   import { messageOf, toast } from '../shell/toasts.svelte';
   import Card from './Card.svelte';
@@ -49,6 +51,13 @@
   let version = $state(0);
   /** On a phone: the list shown over the card. */
   let browsing = $state(false);
+  /** The table as a spreadsheet grid, in place of the list and card. */
+  let grid = $state(false);
+  // the grid's code loads the first time it is shown
+  let Grid = $state<typeof import('./Grid.svelte').default | null>(null);
+  $effect(() => {
+    if (grid && !Grid) void import('./Grid.svelte').then((m) => (Grid = m.default));
+  });
   /** Our own writes: the list need not be read again for them. */
   let writing = false;
   /** Something else wrote: the list is read again when next shown. */
@@ -171,6 +180,7 @@
     }
     if (draft?.dirty && !confirm('Discard the changes to this record?')) return false;
     const gen = ++seq;
+    grid = !k && r.view === 'grid';
     if (t !== table) {
       table = t;
       rows = [];
@@ -198,7 +208,7 @@
   }
 
   /** The link of what the Library shows now. */
-  export const here = (): string => (table ? recordHref(table.name, key) : '#/library');
+  export const here = (): string => (!table ? '#/library' : grid ? gridHref(table.name) : recordHref(table.name, key));
 
   /** The previous (-1) or next (1) record in the list, as NMR's arrows step. */
   export function step(by: number): void {
@@ -351,12 +361,12 @@
   });
 </script>
 
-<div class="lib" class:has-card={!!key} class:browsing>
+<div class="lib" class:has-card={!!key} class:browsing class:grid>
   <aside class="lib-side" aria-label={k.many}>
     <nav class="tables" aria-label="Tables">
       {#each tables as t (t.name)}
         {@const tk = kindOf(t.name)}
-        <a class="tabchip {tk.cls}" class:on={t === table} href={t === table ? here() : recordHref(t.name)} aria-current={t === table ? 'page' : undefined}>
+        <a class="tabchip {tk.cls}" class:on={t === table} href={t === table ? here() : grid ? gridHref(t.name) : recordHref(t.name)} aria-current={t === table ? 'page' : undefined}>
           <span class="tile"><tk.icon size={12} /></span>{tk.many}
         </a>
       {/each}
@@ -383,6 +393,11 @@
       </div>
       <div class="count">
         <span>{reading && !rows.length ? '' : counted}</span>
+        {#if grid}
+          <a class="btn sm ghost" href={recordHref(table.name)} title="Back to the list and the {one} cards"><LayoutList size={14} /> List</a>
+        {:else}
+          <a class="btn sm ghost" href={gridHref(table.name)} title="Every {one} in a spreadsheet grid, with the columns you pick and CSV out"><Sheet size={14} /> Grid</a>
+        {/if}
         <NewRecord
           {table}
           offer={() => nextKey(table!.name, numeric, rows, near())}
@@ -432,7 +447,13 @@
   </aside>
 
   <main class="lib-main">
-    {#if table && key && draft}
+    {#if table && grid}
+      {#if Grid}
+        {#key table.name}<Grid {table} rows={shown} {changed} />{/key}
+      {:else}
+        <p class="pad faint">Laying out the grid…</p>
+      {/if}
+    {:else if table && key && draft}
       <Card
         {draft}
         {table}
@@ -485,7 +506,8 @@
   }
   .types button.on { background: var(--lilac-2); color: var(--lilac-ink); border-color: transparent; }
   .cdot { color: var(--butter); width: 7px; height: 7px; }
-  .count { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 4px 14px; color: var(--ink-3); font-size: 12px; font-weight: 800; }
+  .count { display: flex; align-items: center; gap: 4px; padding: 0 8px 4px 14px; color: var(--ink-3); font-size: 12px; font-weight: 800; }
+  .count > span { flex: 1; }
   .list { flex: 1; overflow: auto; padding: 0 6px 12px; min-height: 0; }
   .rows { position: relative; }
   .li {
@@ -508,10 +530,22 @@
   .none p, .empty p { margin: 0; }
   .empty { min-height: 60%; align-content: center; }
   .small { font-size: 12.5px; max-width: 34rem; overflow-wrap: anywhere; }
+  /* the grid: the list's tables, search and chips over it, its rows in place of the list */
+  .lib.grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .lib.grid .lib-side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0 8px; border-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .lib.grid .tables { flex-basis: 100%; padding-bottom: 6px; }
+  .lib.grid .find { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 0 0 0 12px; }
+  .lib.grid .search { width: 20rem; max-width: 100%; }
+  .lib.grid .count { padding: 0 8px 0 4px; margin-left: auto; }
+  .lib.grid .list { display: none; }
   @media (max-width: 760px) {
     .lib { grid-template-columns: minmax(0, 1fr); }
     .lib.has-card .lib-side { display: none; }
     .lib.has-card.browsing .lib-side { display: flex; position: absolute; inset: 0; z-index: 5; }
     .lib:not(.has-card) .lib-main { display: none; }
+    /* the grid is the page: its tables, search and chips above it */
+    .lib.grid .lib-main { display: block; }
+    .lib.grid .find { padding: 0 12px; }
+    .lib.grid .search { width: 100%; }
   }
 </style>
