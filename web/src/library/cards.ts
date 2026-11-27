@@ -19,6 +19,8 @@ import {
   type Grid,
   type Options,
 } from '../layouts';
+import { monsterProblems, type Lines } from './combat';
+import type { Problem } from './problems';
 import type { FieldSpec, Section } from './sections';
 
 export type Get = (col: string) => Cell;
@@ -47,6 +49,9 @@ export interface CardDef {
   peers?: Peers;
   /** The chips beside the record's number in its header. */
   tags?: (get: Get) => string[];
+  /** What is wrong with a record beyond what every card checks; `lines` reads a message
+   * (undefined while it is read, null when the world has none). */
+  problems?: (get: Get, look: { lines: (n: number) => Lines | null | undefined }) => Problem[];
 }
 
 const num = (v: Cell) => (typeof v === 'number' ? v : Number(v ?? 0) || 0);
@@ -208,6 +213,7 @@ const MONSTERS: CardDef = {
     says: (mine) => `every ${label(MONSTER_GROUP, mine('Group'))} monster`,
   },
   tags: (get) => [label(MONSTER_GROUP, get('Group')), label(MONSTER_TYPE, get('Type')), ...(num(get('Undead')) ? ['Undead'] : [])],
+  problems: (get, look) => monsterProblems(get, look.lines),
   sections: [
     {
       id: 'tough',

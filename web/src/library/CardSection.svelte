@@ -14,7 +14,7 @@
   import { shown, type Draft } from './draft.svelte';
   import FieldInput from './FieldInput.svelte';
   import GameText from './GameText.svelte';
-  import type { Section } from './sections';
+  import { columnsOf, type Section } from './sections';
   import Strip from './Strip.svelte';
   import Where from './Where.svelte';
 
@@ -42,6 +42,14 @@
   $effect(() => {
     void section.id;
     open = !section.folded;
+  });
+  // a problem's Show opens the section that holds its field
+  $effect(() => {
+    const reveal = (e: Event) => {
+      if (!open && columnsOf(section).includes((e as CustomEvent<string>).detail)) open = true;
+    };
+    window.addEventListener('dd:reveal', reveal);
+    return () => window.removeEventListener('dd:reveal', reveal);
   });
 
   // a monster's own parts come in the first time one is shown

@@ -86,7 +86,8 @@ pub(crate) async fn tables() -> Json<Value> {
                 .iter()
                 .map(|c| {
                     let (ty, size) = rows::column_type(c.ty);
-                    json!({ "name": c.name, "type": ty, "size": size })
+                    let range = rows::column_range(c).map(|(lo, hi)| [lo, hi]);
+                    json!({ "name": c.name, "type": ty, "size": size, "range": range })
                 })
                 .collect();
             json!({

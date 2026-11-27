@@ -3,16 +3,10 @@
 
 import { ABILITIES } from '../abilities';
 import { titleOf } from '../ansi';
-import type { Cell } from '../api';
 import { rowsOf } from '../shell/state.svelte';
 import type { Choice } from './sections';
 
-/** The key of the record a number names: a room on its map, a text block's first part. */
-export function refKey(table: string, n: number, map = 0): Cell[] {
-  if (table === 'Rooms') return [map, n];
-  if (table === 'Textblocks') return [n, 0];
-  return [n];
-}
+export { refKey } from './problems';
 
 /** A table's records as choices, by number and name (the rooms of `map`). */
 export async function recordChoices(table: string, map = 0): Promise<Choice[]> {

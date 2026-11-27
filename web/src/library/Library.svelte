@@ -233,6 +233,11 @@
     if (!t || !d?.row) return true;
     const values = d.changed();
     if (!Object.keys(values).length) return true;
+    if (d.invalid.length) {
+      sfx('nope');
+      toast(`Fix ${d.invalid.length === 1 ? 'the field' : `the ${d.invalid.length} fields`} marked in red first: ${d.invalid.join(', ')}.`, { kind: 'error' });
+      return false;
+    }
     saving = writing = true;
     try {
       const report = await api.save(t.name, d.row.key, values);

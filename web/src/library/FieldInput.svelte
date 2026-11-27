@@ -45,9 +45,11 @@
   const isNum = $derived(draft.isNumber(col));
 
   const set = (v: string) => draft.set(col, v);
+  /** Why what it holds will not do, checked as it is typed. */
+  const problem = $derived(draft.check(col));
 </script>
 
-<span class="fi" class:compact>
+<span class="fi" class:compact data-col={col}>
   {#if draft.isKey(col)}
     <input type="text" class="num" value={value} disabled aria-label={label} title="The record's key: Copy it to a new one to use another" />
   {:else if options}
@@ -58,18 +60,30 @@
       {/each}
     </select>
   {:else if info?.type === 'memo'}
-    <textarea rows="4" spellcheck="false" class:changed={draft.edited(col)} aria-label={label} value={value} oninput={(e) => set(e.currentTarget.value)}></textarea>
+    <textarea
+      rows="4"
+      spellcheck="false"
+      class:changed={draft.edited(col)}
+      class:invalid={!!problem}
+      aria-invalid={!!problem}
+      aria-label={label}
+      title={problem ?? undefined}
+      value={value}
+      oninput={(e) => set(e.currentTarget.value)}
+    ></textarea>
   {:else}
     <input
       type="text"
       class:num={isNum}
       class:wide={!isNum}
       class:changed={draft.edited(col)}
+      class:invalid={!!problem}
+      aria-invalid={!!problem}
       inputmode={isNum ? 'numeric' : undefined}
       spellcheck="false"
       maxlength={info?.type === 'text' && info.size ? info.size : undefined}
       aria-label={label}
-      title={hint}
+      title={problem ?? hint}
       value={value}
       oninput={(e) => set(e.currentTarget.value)}
     />
@@ -83,6 +97,7 @@
       <Picker what="a {kindOf(target).one.toLowerCase()}" choices={() => recordChoices(target!, map)} onpick={(v) => set(String(v))} />
     {/if}
   {/if}
+  {#if problem && !compact}<span class="why-not" role="status">{problem}</span>{/if}
 </span>
 
 <style>
@@ -96,4 +111,7 @@
   .fi textarea { width: 100%; font: 13px/1.35 var(--font-mono); }
   .ab { font-weight: 800; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12rem; }
   :global(.fi .pick) { flex: none; }
+  /* over a changed field's colours, which are !important */
+  .fi :is(input, textarea).invalid { border-color: var(--bad) !important; background: var(--bad-bg) !important; }
+  .why-not { color: var(--bad); font-size: 12px; font-weight: 800; line-height: 1.2; min-width: 6rem; }
 </style>

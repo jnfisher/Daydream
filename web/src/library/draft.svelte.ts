@@ -3,6 +3,7 @@
 
 import { toShown, toWire } from '../ansi';
 import type { Cell, ColumnInfo, Row, TableInfo } from '../api';
+import { checkValue } from './problems';
 
 /** A value as an input shows it: escapes as ␛. */
 export const shown = (v: Cell | undefined) => (v === null || v === undefined ? '' : toShown(String(v)));
@@ -64,6 +65,21 @@ export class Draft {
     }
     return toWire(t);
   };
+
+  /** Why what an input holds will not do (not a number, more than the field holds, a
+   * character the game cannot store), or null when it will. */
+  check(col: string): string | null {
+    const c = this.columns.get(col);
+    if (!c || this.isKey(col) || !(col in this.edits)) return null;
+    // text is checked as it is stored: ␛ is ESC
+    const typed = this.isNumber(col) ? this.typed(col) : toWire(this.typed(col));
+    return checkValue(c, typed, this.table.name === 'Textblocks' && col === 'Data');
+  }
+
+  /** The columns whose inputs will not do. */
+  get invalid(): string[] {
+    return Object.keys(this.edits).filter((col) => this.check(col) !== null);
+  }
 
   /** The value as saved. */
   saved(col: string): Cell {

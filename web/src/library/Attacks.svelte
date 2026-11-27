@@ -14,7 +14,27 @@
   import X from '@lucide/svelte/icons/x';
   import { renderAnsi } from '../ansi';
   import { pickFor } from '../layouts';
-  import { attacksOf, blowLines, blowsOf, NORMAL, ROB, roundOf, SAMPLE_VICTIM, shares, SPELL, spellsOf, verbsOf, type Attack, type Outcome, type Texts } from './combat';
+  import {
+    attackProblems,
+    attacksOf,
+    blankLine,
+    blowLines,
+    blowsOf,
+    holdsNumbers,
+    knownType,
+    liveSlot,
+    NORMAL,
+    ROB,
+    roundOf,
+    SAMPLE_VICTIM,
+    shares,
+    SPELL,
+    spellsOf,
+    verbsOf,
+    type Attack,
+    type Outcome,
+    type Texts,
+  } from './combat';
   import type { Draft } from './draft.svelte';
   import FieldInput from './FieldInput.svelte';
   import { nameOf } from './names.svelte';
@@ -80,7 +100,6 @@
   const energy = $derived(num(draft.get('Energy')));
   const odds = $derived(shares(attacks));
   const mon = $derived(text(draft.get('Name')) || 'it');
-  const top = (i: number) => Math.max(0, ...attacks.slice(0, i).map((a) => Math.min(100, a.pct)));
 
   // its weapon names the words its messages leave to the weapon
   const weaponNo = $derived(num(draft.get('Weapon Number')));
@@ -97,30 +116,15 @@
   }
 
   const opened = (i: number) => !!draft.opened[`attack:${i}`];
-  const known = (type: number) => type === NORMAL || type === SPELL || type === ROB;
-  const leftover = (a: Attack) => [a.type, a.pct, a.acc, a.min, a.max, a.energy, a.hit, a.dodge, a.miss, a.spell].some((v) => v !== 0);
-  /** The slots a person works with: an attack, or one a blow can pick. */
-  const live = $derived(attacks.map((a, i) => known(a.type) || odds.share[i]! > 0 || opened(i)));
+  /** The slots a person works with: an attack, one a blow can pick, or one opened to fill. */
+  const live = $derived(attacks.map((a, i) => liveSlot(a, odds.share[i]!) || opened(i)));
   /** Empty slots that still hold an old attack's numbers. */
-  const left = $derived(attacks.map((a, i) => !live[i] && leftover(a)));
+  const left = $derived(attacks.map((a, i) => !live[i] && holdsNumbers(a)));
+  const issues = $derived(attackProblems(attacks, energy));
   const free = $derived.by(() => {
     const clean = attacks.findIndex((_, i) => !live[i] && !left[i]);
     return clean >= 0 ? clean : attacks.findIndex((_, i) => !live[i]);
   });
-
-  /** What is wrong with an attack, for a person. */
-  function problems(a: Attack, i: number): string[] {
-    const out: string[] = [];
-    const share = odds.share[i]!;
-    if (a.type !== 0 && !known(a.type)) out.push(`Type ${a.type} is not an attack type, so its blows do nothing.`);
-    if (a.type === 0 && share > 0) out.push(`It has no type, so the ${share}% of blows that pick it do nothing.`);
-    if (a.type !== 0 && share === 0)
-      out.push(a.pct === 0 ? 'Its Attack% is 0, so no blow picks it.' : `No blow picks it: the attacks above it already take every roll under ${top(i)}%, and the % add up.`);
-    if (a.type === NORMAL && share > 0 && blowsOf(energy, a.energy) === 0)
-      out.push(`A blow costs ${a.energy.toLocaleString()} energy, more than its whole round of ${energy.toLocaleString()}, so it never lands.`);
-    if (a.type === NORMAL && a.min > a.max) out.push('Its least damage is more than its most.');
-    return out;
-  }
 
   function clear(i: number) {
     for (const c of COLS) draft.set(col(c.template, i), '0');
@@ -140,8 +144,7 @@
   /** Whether a slot reads as lines, so the choice of reader matters. */
   const reads = $derived(attacks.some((a, i) => a.type === NORMAL && live[i]));
   const picked = $derived(odds.share.some((s) => s > 0));
-  /** A line with nothing to read but its colour. */
-  const blank = (line: string) => !line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
+
 
   function ansi(node: HTMLElement, line: string) {
     const draw = (t: string) => node.replaceChildren(renderAnsi(t));
@@ -182,7 +185,7 @@
       {#if picked}
         <div class="bar" role="img" aria-label="How often each attack is picked">
           {#each odds.share as s, i (i)}
-            {#if s > 0}<span class="seg" class:none={!known(attacks[i]!.type)} style:flex-grow={s} style:--c={COLOURS[i]} title="Attack {i + 1}: {s}% of blows"></span>{/if}
+            {#if s > 0}<span class="seg" class:none={!knownType(attacks[i]!.type)} style:flex-grow={s} style:--c={COLOURS[i]} title="Attack {i + 1}: {s}% of blows"></span>{/if}
           {/each}
           {#if odds.rest > 0}<span class="seg rest" style:flex-grow={odds.rest} title="{odds.rest}%: the attack the last blow used"></span>{/if}
         </div>
@@ -210,7 +213,6 @@
     {#if live[i]}
       {@const share = odds.share[i]!}
       {@const means = MEANS[a.type] ?? {}}
-      {@const issues = problems(a, i)}
       {@const texts = a.type === NORMAL ? textsOf(a) : undefined}
       {@const shownCols = COLS.filter((c) => c.template in means || num(draft.get(col(c.template, i))) !== 0)}
       {@const nums = shownCols.filter((c) => !linkTo(c.template, a.type))}
@@ -229,7 +231,7 @@
           </span>
           <button type="button" class="btn icon sm ghost" aria-label="Clear attack {i + 1}" title="Clear this attack" onclick={() => clear(i)}><X size={14} /></button>
         </header>
-        {#each issues as p (p)}
+        {#each issues[i]! as p (p)}
           <p class="callout warn"><TriangleAlert size={15} /><span>{p}</span></p>
         {/each}
         {#if a.type === ROB}
@@ -265,7 +267,7 @@
                 {@const line = view === 'you' ? l.you : l.room}
                 <div class="tl">
                   <span class="why">{label}</span>
-                  {#if blank(line)}<span class="say aside">(an empty line)</span>{:else}<span class="say" use:ansi={line}></span>{/if}
+                  {#if blankLine(line)}<span class="say aside">(an empty line)</span>{:else}<span class="say" use:ansi={line}></span>{/if}
                 </div>
               {/each}
             </div>
@@ -308,7 +310,7 @@
               {@const line = view === 'you' ? l.you : l.room}
               <div class="tl">
                 <span class="why" style:--c={COLOURS[s.slot]}>{s.outcome}</span>
-                {#if blank(line)}<span class="say aside">(an empty line)</span>{:else}<span class="say" use:ansi={line}></span>{/if}
+                {#if blankLine(line)}<span class="say aside">(an empty line)</span>{:else}<span class="say" use:ansi={line}></span>{/if}
               </div>
               {#if s.spell}<div class="tl"><span class="why">spell</span><span class="say aside">and casts {spellName(s.spell)}</span></div>{/if}
             {/if}

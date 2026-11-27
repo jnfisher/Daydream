@@ -14,9 +14,10 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
   import { Popover } from 'bits-ui';
+  import { tick } from 'svelte';
   import { titleOf } from '../ansi';
   import type { Cell, TableInfo } from '../api';
-  import { layoutFor } from '../layouts';
+  import { exitParam, layoutFor, targetOf } from '../layouts';
   import { kindOf } from '../shell/kinds';
   import { read, write } from '../shell/prefs.svelte';
   import { app, takeBack } from '../shell/state.svelte';
@@ -24,7 +25,11 @@
   import { CARDS } from './cards';
   import { shown, type Draft } from './draft.svelte';
   import { keyLabel, nextKey, type ListRow } from './list';
+  import { nameOf } from './names.svelte';
   import NewRecord from './NewRecord.svelte';
+  import { byLevel, clampTo, labelsOf, leftoverProblem, refOf, storable, trailingSpaces, TWO_SPACES, type Problem, type Targets } from './problems';
+  import Problems from './Problems.svelte';
+  import { linesOf } from './records.svelte';
   import { complete, fromLayout, type Section } from './sections';
 
   let {
@@ -102,6 +107,77 @@
 
   let deleting = $state(false);
   const taken = (l: string) => rows.some((r) => r.label === l);
+
+  // ---- what is wrong with it -------------------------------------------------------------
+
+  const TARGETS: Targets = { targetOf, exitLinks: (ty, para) => exitParam(ty, para)?.links };
+  /** The sections its problems are read from: its card's (whichever view is open), or NMR's tabs. */
+  const checked = $derived(def ? def.sections : fromLayout(layoutFor(table), columns, table.key));
+  const labels = $derived(labelsOf(checked));
+  const labelOf = (col: string) => labels.get(col) ?? col;
+  const fmt = (n: number) => n.toLocaleString('en-US');
+
+  const problems = $derived.by((): Problem[] => {
+    if (!draft.row) return [];
+    const out: Problem[] = [];
+    // what an input holds that will not do
+    for (const col of draft.invalid) {
+      const info = draft.column(col)!;
+      const typed = draft.typed(col);
+      let fix: Problem['fix'];
+      if (info.range && Number.isFinite(Number(typed))) {
+        const v = clampTo(info.range, Number(typed));
+        fix = { label: `Make it ${fmt(v)}`, set: { [col]: String(v) } };
+      } else if (!draft.isNumber(col)) {
+        fix = { label: 'Take them out', set: { [col]: storable(typed, table.name === 'Textblocks' && col === 'Data') } };
+      }
+      out.push({ level: 'error', text: `${labelOf(col)}: ${draft.check(col)}`, cols: [col], fix });
+    }
+    // numbers that name a record the world does not have
+    for (const c of table.columns) {
+      if (draft.isKey(c.name) || draft.check(c.name)) continue;
+      const r = refOf(table.name, c.name, draft.get, TARGETS);
+      if (!r || nameOf(r.table, r.key) !== null) continue;
+      // the game takes such a number (it shows nothing, or falls back): one to look at
+      const kind = kindOf(r.table).one.toLowerCase();
+      const n = Number(draft.get(c.name));
+      out.push({
+        level: 'warn',
+        text: `${labelOf(c.name)} names ${kind} ${r.table === 'Textblocks' ? n : keyLabel(r.key)}, which the world does not have${n === TWO_SPACES ? ` (${n} is two spaces an old tool left)` : ''}.`,
+        cols: [c.name],
+        fix: { label: 'Set it to 0', set: { [c.name]: '0' } },
+      });
+    }
+    // empty slots that still hold an old entry
+    for (const s of checked) {
+      if (!s.grid || s.custom) continue;
+      const p = leftoverProblem(s.grid, s.title.toLowerCase(), draft.get, (c) => draft.has(c));
+      if (p) out.push(p);
+    }
+    // what the card's own table knows
+    out.push(...(def?.problems?.(draft.get, { lines: linesOf }) ?? []));
+    if (table.name === 'Textblocks' && draft.has('Data')) {
+      const p = trailingSpaces('Data', 'The text', draft.typed('Data'));
+      if (p) out.push(p);
+    }
+    return byLevel(out);
+  });
+
+  function fix(set: Record<string, string>) {
+    for (const [col, v] of Object.entries(set)) if (draft.has(col)) draft.set(col, v);
+  }
+
+  /** Brings a column's field into view: its section opened first, when it is folded. */
+  function show(col: string): boolean {
+    window.dispatchEvent(new CustomEvent('dd:reveal', { detail: col }));
+    void tick().then(() => {
+      const el = document.querySelector<HTMLElement>(`.rcard [data-col="${CSS.escape(col)}"]`);
+      if (!el) return;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.querySelector<HTMLElement>('input, select, textarea')?.focus({ preventScroll: true });
+    });
+    return true;
+  }
 </script>
 
 <article class="rcard" aria-label="{k.one} {label}">
@@ -142,6 +218,7 @@
               </Popover.Portal>
             </Popover.Root>
           {/if}
+          <Problems {problems} onfix={fix} onshow={show} />
         </div>
         <h1>{name || `${k.one} ${label}`}</h1>
       </div>
@@ -149,7 +226,13 @@
         {#if draft.dirty}
           <button type="button" class="btn sm ghost" onclick={() => draft.discard()} title="Put the fields back as saved">Discard</button>
         {/if}
-        <button type="button" class="btn sm primary" disabled={!draft.dirty || saving} onclick={onsave} title="Save the changes (Ctrl+S)">
+        <button
+          type="button"
+          class="btn sm primary"
+          disabled={!draft.dirty || saving || draft.invalid.length > 0}
+          onclick={onsave}
+          title={draft.invalid.length ? 'Fix the fields marked in red first' : 'Save the changes (Ctrl+S)'}
+        >
           {saving ? 'Saving…' : 'Save'}
         </button>
         <NewRecord

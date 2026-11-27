@@ -140,6 +140,111 @@ export function blowsOf(energy: number, attackEnergy: number): number {
   return blows;
 }
 
+/** An attack type the game plays: normal, spell or rob. */
+export const knownType = (type: number) => type === NORMAL || type === SPELL || type === ROB;
+
+/** Whether a slot is an attack, or one a blow can pick. */
+export const liveSlot = (a: Attack, share: number) => knownType(a.type) || share > 0;
+
+/** Whether an empty slot still holds an old attack's numbers. */
+export const holdsNumbers = (a: Attack) => [a.type, a.pct, a.acc, a.min, a.max, a.energy, a.hit, a.dodge, a.miss, a.spell].some((v) => v !== 0);
+
+/** What is wrong with each attack slot, for a person (nothing for an empty one). */
+export function attackProblems(attacks: readonly Attack[], energy: number): string[][] {
+  const { share } = shares(attacks);
+  const top = (i: number) => Math.max(0, ...attacks.slice(0, i).map((a) => Math.min(100, a.pct)));
+  return attacks.map((a, i) => {
+    const out: string[] = [];
+    const s = share[i]!;
+    if (a.type !== 0 && !knownType(a.type)) out.push(`Type ${a.type} is not an attack type, so its blows do nothing.`);
+    if (a.type === 0 && s > 0) out.push(`It has no type, so the ${s}% of blows that pick it do nothing.`);
+    if (a.type !== 0 && s === 0)
+      out.push(a.pct === 0 ? 'Its Attack% is 0, so no blow picks it.' : `No blow picks it: the attacks above it already take every roll under ${top(i)}%, and the % add up.`);
+    if (a.type === NORMAL && s > 0 && blowsOf(energy, a.energy) === 0)
+      out.push(`A blow costs ${a.energy.toLocaleString('en-US')} energy, more than its whole round of ${energy.toLocaleString('en-US')}, so it never lands.`);
+    if (a.type === NORMAL && a.min > a.max) out.push('Its least damage is more than its most.');
+    return out;
+  });
+}
+
+/** The columns of attack slot `i`. */
+export const attackCols = (i: number) =>
+  ['Type', '%', 'Accu/Spell', 'Min Hit/Cast %', 'Max Hit/Cast LVL', 'Energy', 'Hit Msg', 'Dodge Msg', 'Miss Msg', 'Hit Spell'].map((c) => `Attack ${c} ${i}`);
+
+/** A line with nothing to read but its colour. */
+export const blankLine = (line: string) => !line.replace(/\x1b\[[0-9;]*[A-Za-z]?/g, '').trim();
+
+/** A monster's problem: what is wrong, the columns it is about, and its fix when there is one. */
+export interface MonsterProblem {
+  level: 'warn' | 'tidy';
+  text: string;
+  cols: string[];
+  fix?: { label: string; set: Record<string, string> };
+}
+
+/**
+ * What is wrong with a monster's attacks and messages: each attack's problems, empty slots
+ * that still hold an old attack's numbers, and messages players read that are empty (stock
+ * data names message 1, a blank one, as a placeholder). `lines` reads a message: undefined
+ * while it is read, null when the world has none.
+ */
+export function monsterProblems(get: (col: string) => unknown, lines: (n: number) => Lines | null | undefined): MonsterProblem[] {
+  const attacks = attacksOf(get);
+  const energy = n(get('Energy'));
+  const { share } = shares(attacks);
+  const issues = attackProblems(attacks, energy);
+  const out: MonsterProblem[] = [];
+  const empty = (m: number, which: number[]) => {
+    const l = m ? lines(m) : null;
+    return !!l && which.every((k) => blankLine(l[k]!));
+  };
+  attacks.forEach((a, i) => {
+    const name = `Attack ${i + 1}`;
+    if (!liveSlot(a, share[i]!)) {
+      if (holdsNumbers(a))
+        out.push({
+          level: 'tidy',
+          text: `${name} is empty but still holds an old attack's numbers. No blow picks it.`,
+          cols: attackCols(i),
+          fix: { label: 'Clear it', set: Object.fromEntries(attackCols(i).map((c) => [c, '0'])) },
+        });
+      return;
+    }
+    for (const t of issues[i]!) out.push({ level: 'warn', text: `${name}: ${t}`, cols: attackCols(i) });
+    if (a.type !== NORMAL || share[i] === 0) return;
+    for (const [m, label, col] of [
+      [a.hit, 'hit', `Attack Hit Msg ${i}`],
+      [a.dodge, 'dodge', `Attack Dodge Msg ${i}`],
+      [a.miss, 'miss', `Attack Miss Msg ${i}`],
+    ] as const) {
+      if (empty(m, [0, 1, 2]))
+        out.push({
+          level: 'warn',
+          text: `${name}'s ${label} message is ${m}, which is empty, so players read blank lines.`,
+          cols: [col],
+          fix: { label: "Use the game's own lines", set: { [col]: '0' } },
+        });
+    }
+  });
+  const move = n(get('Move Msg'));
+  if (empty(move, [0]))
+    out.push({
+      level: 'warn',
+      text: `Its Move Msg is ${move}, whose first line is empty, so a room reads a blank line when it appears.`,
+      cols: ['Move Msg'],
+      fix: { label: "Use the game's own line", set: { 'Move Msg': '0' } },
+    });
+  const death = n(get('Death Msg'));
+  if (empty(death, [2]))
+    out.push({
+      level: 'warn',
+      text: `Its Death Msg is ${death}, whose third line is empty, so a room reads a blank line when it dies.`,
+      cols: ['Death Msg'],
+      fix: { label: 'Set it to 0', set: { 'Death Msg': '0' } },
+    });
+  return out;
+}
+
 export type Outcome = 'hit' | 'armour' | 'dodge' | 'miss';
 
 /** A monster's weapon's words: its hit message's lines, its miss message's (else the hit's)
