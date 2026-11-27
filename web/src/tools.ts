@@ -1,16 +1,11 @@
 // Today's forms for the Workshop's tools not rebuilt yet: the Database Importer, Merge Users,
-// the Export to MMUD Explorer (mme.ts), writing back to the WCC files, to and from a silvermere
-// database, the Record Number Changer, the Monster Group/Index Changer and the Mass Room Editor,
-// over the server's /api/tools, /api/mme and /api/reports routes. The Workshop shows each in its
-// tool's page (workshop/Legacy.svelte); each goes as its tool is rebuilt.
+// the Export to MMUD Explorer (mme.ts), and writing back to the WCC files and to and from a
+// silvermere database, over the server's /api/tools and /api/mme routes. The Workshop shows
+// each in its tool's page (workshop/Legacy.svelte); each goes as its tool is rebuilt.
 
-import { toShown } from './ansi';
-import { type Report, type TableInfo } from './api';
+import { type Report } from './api';
 import { games } from './games';
-import { indexChanger } from './indexchanger';
-import { massRoomEditor } from './massroom';
 import { mmeExport } from './mme';
-import { recordNumberChanger } from './renumber';
 
 /** The tables NMR's importer lists, in its order. */
 const TABLES = ['Items', 'Monsters', 'Spells', 'Shops', 'Races', 'Classes', 'Rooms', 'Actions', 'Messages', 'Textblocks'];
@@ -457,37 +452,8 @@ export function silvermere(changed: () => void): HTMLElement {
   return card;
 }
 
-/** A value as a record reads it: text up to its NUL, with ESC shown. */
-const shownCell = (v: unknown) => (typeof v === 'string' ? toShown(v.split('\0')[0]!) : String(v));
-
-function modifyResult(res: any): HTMLElement {
-  const box = h('div', { class: 'tool-result' });
-  const would = res.dry_run ? 'would change' : 'changed';
-  box.append(
-    h(
-      'p',
-      {},
-      `${res.records} record${res.records === 1 ? '' : 's'} ${would} (${res.changed} value${res.changed === 1 ? '' : 's'}); ` +
-        `${res.unchanged} already as set; ${res.skipped} left out by its conditions.` +
-        (res.dry_run ? ' Preview: nothing was written.' : ''),
-    ),
-  );
-  if (res.notes?.length) box.append(h('p', {}, 'Worth a look (not changed):'), h('pre', { class: 'errors' }, res.notes.join('\n')));
-  if (res.report?.errors?.length) box.append(h('pre', { class: 'errors' }, res.report.errors.join('\n')));
-  if (res.changes.length) {
-    const body = h('tbody');
-    for (const c of res.changes) {
-      body.append(h('tr', {}, ...[c.key.join(' / '), c.column, shownCell(c.before), shownCell(c.after)].map((v) => h('td', {}, v))));
-    }
-    box.append(h('table', { class: 'grid changes' }, h('thead', {}, h('tr', {}, ...['Record', 'Field', 'Before', 'After'].map((c) => h('th', {}, c)))), body));
-    if (res.changes.length < res.changed) box.append(h('p', { class: 'hint' }, `The first ${res.changes.length} changes are listed.`));
-  }
-  return box;
-}
-
 /** The old forms that do a Workshop tool's work, by its id; `changed` runs after each write. */
-export function legacyTool(id: string, tables: TableInfo[], changed: () => void): HTMLElement[] {
-  const json = (url: string, body: string) => post(url, body, true);
+export function legacyTool(id: string, changed: () => void): HTMLElement[] {
   switch (id) {
     case 'nmr':
       return [importer(changed)];
@@ -499,14 +465,6 @@ export function legacyTool(id: string, tables: TableInfo[], changed: () => void)
       return [silvermere(changed)];
     case 'mme':
       return [mmeExport(failure)];
-    case 'renumber':
-      return [recordNumberChanger(json, modifyResult, failure, changed)];
-    case 'spawns':
-      return [indexChanger(json, modifyResult, failure, changed)];
-    case 'rooms': {
-      const rooms = tables.find((t) => t.name === 'Rooms');
-      return rooms ? [massRoomEditor(rooms, json, modifyResult, changed)] : [];
-    }
     default:
       return [];
   }

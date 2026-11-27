@@ -410,6 +410,11 @@ one step of the history, so Undo (the toast's, Ctrl+Z or Changes) takes it all b
 publish. NMR's lists (the limited items and where their copies are, where one item is, the
 control rooms and the rooms that name them, who stands where, and the monsters of each group
 and index) stay current as you edit, open each record beside the page, and download as CSV.
+Renumber moves records to new numbers, or a map's rooms to another map, and lists every
+record, ability and script it rewrites before it runs; a card's More menu opens it on that
+record (`#/workshop/renumber/items/868`). Monster groups moves a run of a group's indexes
+along with the rooms that spawn them, and Edit rooms together sets fields on a run of rooms
+by number, as NMR's Mass Room Editor does.
 
 **Health**, on Home and at the top of the Workshop's health checks, counts what is wrong
 across the world that has a sure fix, and fixes each kind in one click: items with 0 uses,

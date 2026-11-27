@@ -81,8 +81,45 @@ export interface Plan {
   step?: number | null;
 }
 
+/** A run over several tables (a renumbering, a move of monster groups and indexes): each
+ * table's plan, in the order they are written, and the one step of the history they make. */
+export interface Plans {
+  dry_run: boolean;
+  tables: Plan[];
+  step?: number | null;
+}
+
 /** A Workshop run's request: previewed (`dry_run`) first, then written. */
 export type RunBody = Record<string, unknown>;
+
+/** One record's new number. */
+export interface Move {
+  from: number;
+  to: number;
+}
+
+/** A Record Number Changer run (`daydream_nmr::renumber::Renumber`): records of a table move
+ * (rooms within one map), or a whole map's rooms move to another map. */
+export type Renumber =
+  | { kind: 'records'; table: string; map?: number; moves: Move[]; users: boolean }
+  | { kind: 'map'; from: number; to: number; exits: boolean; normal: boolean; textblocks: boolean; spells: boolean; users: boolean };
+
+/** A line of the Monster Group/Index Changer: monsters of one group and index take another. */
+export interface IndexChange {
+  from_group: number;
+  from_index: number;
+  to_group: number;
+  to_index: number;
+}
+
+/** Rooms that spawn one group over the same run of indexes (their Min to Max Index). */
+export interface SpawnRun {
+  group: number;
+  from: number;
+  to: number;
+  /** Each room's map and number. */
+  rooms: [number, number][];
+}
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
@@ -477,7 +514,6 @@ export const api = {
   health: () => call<{ checks: Health[] }>('GET', '/api/checks/health'),
   /** Puts a health check right as one step of the history. */
   healthFix: (check: HealthId, dryRun = false) => call<HealthFix>('POST', '/api/checks/health/fix', { check, dry_run: dryRun }, dryRun),
-  /** Spelling leaves a word alone from now on (or, with `accept` false, checks it again). */
   /** NMR's lists: every limited item and where its copies are. */
   limitedItems: (scan: Scan) => call<{ items: LimitedItem[] }>('GET', `/api/reports/limited-items?${scanned(scan)}`),
   /** Every place one item is. */
@@ -485,6 +521,9 @@ export const api = {
   controlRooms: () => call<{ rooms: ControlRoom[] }>('GET', '/api/reports/control-rooms'),
   monsterGroups: () => call<{ groups: GroupIndex[] }>('GET', '/api/reports/monster-groups'),
   npcRooms: () => call<{ rooms: NpcRoom[] }>('GET', '/api/reports/npc-rooms'),
+  /** The runs of indexes rooms spawn, each with its rooms. */
+  spawnRuns: () => call<{ runs: SpawnRun[] }>('GET', '/api/reports/room-indexes'),
+  /** Spelling leaves a word alone from now on (or, with `accept` false, checks it again). */
   acceptWord: (word: string, accept = true) => call<{ words: string[] }>('POST', '/api/checks/words', { word, accept }, true),
   save: (table: string, key: Cell[], values: Record<string, Cell>) =>
     call<Report>('PUT', `${t(table)}/row${k(key)}`, { values }),
@@ -543,6 +582,12 @@ export const api = {
   /** One of NMR's fixes (`daydream_nmr::presets::Preset`): previewed, or written as one step. */
   fix: (body: RunBody, dryRun: boolean, label?: string) =>
     call<Plan>('POST', '/api/tools/preset', { ...body, dry_run: dryRun, label }, dryRun),
+  /** The Record Number Changer: previewed, or written as one step, called `label` there. */
+  renumber: (body: Renumber, dryRun: boolean, label?: string) =>
+    call<Plans>('POST', '/api/tools/renumber', { ...body, dry_run: dryRun, label }, dryRun),
+  /** The Monster Group/Index Changer: the monsters, then the rooms that spawn them, as one step. */
+  moveIndexes: (changes: IndexChange[], dryRun: boolean, label?: string) =>
+    call<Plans>('POST', '/api/tools/monster-indexes', { changes, dry_run: dryRun, label }, dryRun),
   /** Deletes a table's records: a range of them, or `all`. Previewed, or written as one step. */
   deleteRecords: (body: { table: string; range: { map?: number; from: number; to: number } | null; all: boolean }, dryRun: boolean) =>
     call<{ dry_run: boolean; report: Report; step?: number | null }>('POST', '/api/tools/delete', { ...body, dry_run: dryRun }, dryRun),

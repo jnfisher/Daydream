@@ -339,6 +339,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/tools/modify", post(tools::modify))
         .route("/api/tools/preset", post(tools::preset))
         .route("/api/tools/renumber", post(tools::renumber))
+        .route("/api/tools/monster-indexes", post(tools::monster_indexes))
         .route("/api/tools/write-dat", post(tools::write_dat))
         .route("/api/publish", get(publish::get).post(publish::start))
         .route("/api/publish/job", get(publish::job))
