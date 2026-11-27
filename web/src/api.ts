@@ -254,9 +254,13 @@ export const api = {
   realm: () => call<{ dir: string }>('GET', '/api/realm'),
   tables: () => call<{ tables: TableInfo[] }>('GET', '/api/tables').then((r) => r.tables),
   rows: (table: string) => call<RowList>('GET', `${t(table)}/rows`),
-  /** Each row's key, title and the values of `columns`. */
-  rowsWith: (table: string, columns: string[]) =>
-    call<{ rows: [Cell[], Cell, Cell[]][] }>('GET', `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}`),
+  /** Each row's key, title and the values of `columns`; with `nonzero`, only the rows where
+   * one of those columns holds a number other than 0 or some text. */
+  rowsWith: (table: string, columns: string[], nonzero: string[] = []) =>
+    call<{ rows: [Cell[], Cell, Cell[]][] }>(
+      'GET',
+      `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}${nonzero.length ? `&nonzero=${encodeURIComponent(nonzero.join(','))}` : ''}`,
+    ),
   row: (table: string, key: Cell[]) => call<Row>('GET', `${t(table)}/row${k(key)}`),
   /** Where a monster group spawns: its monsters by Index, and its rooms by Index range. */
   spawns: (group: number) => call<Ladder>('GET', `/api/spawns?group=${group}`),

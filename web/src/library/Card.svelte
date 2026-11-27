@@ -13,6 +13,7 @@
   import MapIcon from '@lucide/svelte/icons/map';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
+  import Workflow from '@lucide/svelte/icons/workflow';
   import { Popover } from 'bits-ui';
   import { tick } from 'svelte';
   import { titleOf } from '../ansi';
@@ -20,6 +21,7 @@
   import { exitParam, layoutFor, targetOf } from '../layouts';
   import { kindOf } from '../shell/kinds';
   import { read, write } from '../shell/prefs.svelte';
+  import { storyHref } from '../shell/routes';
   import { app, takeBack } from '../shell/state.svelte';
   import CardSection from './CardSection.svelte';
   import { CARDS } from './cards';
@@ -62,6 +64,13 @@
   const label = $derived(keyLabel(key));
   const name = $derived(table.title ? titleOf(shown(draft.get(table.title))) : '');
   const tags = $derived(def?.tags?.(draft.get).filter(Boolean) ?? []);
+  /** Whether a story starts here: a monster that talks, a room with commands, a text block. */
+  const tells = $derived.by(() => {
+    const has = (col: string) => (Number(draft.get(col)) || 0) > 0;
+    if (table.name === 'Monsters') return has('Greet Txt') || has('Talk Txt');
+    if (table.name === 'Rooms') return has('Command Text');
+    return table.name === 'Textblocks';
+  });
 
   let view = $state<'card' | 'all'>(read('dd-lib-view', 'card') === 'all' ? 'all' : 'card');
   const setView = (v: 'card' | 'all') => {
@@ -251,6 +260,9 @@
         {/if}
         {#if table.name === 'Rooms'}
           <a class="btn sm" href="#/world/{key[0]}/{key[1]}" title="Open the map at this room"><MapIcon size={14} /> On the map</a>
+        {/if}
+        {#if tells && key.length}
+          <a class="btn sm" href={storyHref(table.name, key)} title="See where this {one} leads, as a map"><Workflow size={14} /> In Story</a>
         {/if}
         <Popover.Root bind:open={deleting}>
           <Popover.Trigger class="btn sm icon ghost danger" aria-label="Delete {one} {label}" title="Delete {one} {label}"><Trash2 size={15} /></Popover.Trigger>

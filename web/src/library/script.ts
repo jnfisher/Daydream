@@ -305,8 +305,14 @@ export interface Ref {
   map?: number;
 }
 
+/**
+ * What a record is to the clause that names it: said or shown, said when a test fails, given,
+ * taken, needed, run, moved to, its exit worked, cast or summoned.
+ */
+export type Role = 'says' | 'else' | 'gives' | 'takes' | 'needs' | 'runs' | 'moves' | 'works' | 'casts' | 'summons';
+
 /** A piece of a clause in words: text, a record, an ability, or an amount of money in copper. */
-export type Bit = string | { ref: Ref } | { ability: number } | { copper: number };
+export type Bit = string | { ref: Ref; role: Role } | { ability: number } | { copper: number };
 
 /**
  * What kind of step a clause is, for its icon: a test, money paid, something taken, given or
@@ -320,14 +326,14 @@ export interface Step {
   clause: Clause;
 }
 
-const ref = (t: Ref['t'], n: number, map?: number): Bit => ({ ref: map === undefined ? { t, n } : { t, n, map } });
+const ref = (t: Ref['t'], n: number, role: Role, map?: number): Bit => ({ ref: map === undefined ? { t, n } : { t, n, map }, role });
 const num = (n: number) => n.toLocaleString('en-US');
 const plural = (n: number, one: string, many = `${one}s`) => `${num(n)} ${n === 1 || n === -1 ? one : many}`;
 
 /** `, or say {msg} and stop`, or `, or stop` without a message. */
-const orSay = (msg: number): Bit[] => (msg > 0 ? [', or say ', ref('Messages', msg), ' and stop'] : [', or stop']);
+const orSay = (msg: number): Bit[] => (msg > 0 ? [', or say ', ref('Messages', msg, 'else'), ' and stop'] : [', or stop']);
 /** `, else say {msg} and stop`, for a test. */
-const elseSay = (msg: number): Bit[] => (msg > 0 ? [', else say ', ref('Messages', msg), ' and stop'] : [', else stop']);
+const elseSay = (msg: number): Bit[] => (msg > 0 ? [', else say ', ref('Messages', msg, 'else'), ' and stop'] : [', else stop']);
 
 /** An amount of copper in the coins it makes, largest first: `20 platinum`, `12 gold, 3 copper`. */
 export function coinsOf(copper: number): string {
@@ -369,14 +375,14 @@ export function words(c: Clause): { kind: StepKind; bits: Bit[] } {
     case 'price':
       return n.copper! > 0 ? pay(['Take ', { copper: n.copper! }, ...orSay(n.msg!)]) : skip([`Nothing: a price of ${num(n.copper!)} is always paid`]);
     case 'cast':
-      return other(['Cast ', ref('Spells', n.spell!), ' as an item casts it, or stop when the cast is refused']);
+      return other(['Cast ', ref('Spells', n.spell!, 'casts'), ' as an item casts it, or stop when the cast is refused']);
     case 'giveability':
       return give(['Give ', { ability: n.ability! }, ` ${num(n.value!)} (raising a lower one), or stop when every ability slot is taken`]);
     case 'addability':
       return give(['Add ', num(n.amount!), ' to ', { ability: n.ability! }, ', or stop when every ability slot is taken']);
     case 'teleport':
       if (c.word) return move([`Teleport to a random room of ${TELEPORTS[c.word]}, or stop when it does not land`]);
-      return n.room && n.map ? move(['Teleport to ', ref('Rooms', n.room, n.map), ', or stop when it does not land']) : skip(['Nothing: a teleport needs a room and a map']);
+      return n.room && n.map ? move(['Teleport to ', ref('Rooms', n.room, 'moves', n.map), ', or stop when it does not land']) : skip(['Nothing: a teleport needs a room and a map']);
     case 'removeability':
       return take(['Take away ', { ability: n.ability! }, ', or stop when the player has none']);
     case 'nomonsters':
@@ -384,25 +390,25 @@ export function words(c: Clause): { kind: StepKind; bits: Bit[] } {
     case 'monsters':
       return test(['Only with monsters here', ...elseSay(n.msg!)]);
     case 'needmonster':
-      return test(['Only with ', ref('Monsters', n.monster!), ' here', ...elseSay(n.msg!)]);
+      return test(['Only with ', ref('Monsters', n.monster!, 'needs'), ' here', ...elseSay(n.msg!)]);
     case 'summon':
-      return other(['Summon ', ref('Monsters', n.monster!), ' here as an ally, or stop when it cannot come']);
+      return other(['Summon ', ref('Monsters', n.monster!, 'summons'), ' here as an ally, or stop when it cannot come']);
     case 'message':
-      return n.msg! > 0 ? say(['Say ', ref('Messages', n.msg!)]) : skip([`Nothing: there is no message ${num(n.msg!)}`]);
+      return n.msg! > 0 ? say(['Say ', ref('Messages', n.msg!, 'says')]) : skip([`Nothing: there is no message ${num(n.msg!)}`]);
     case 'takeitem':
-      return take(['Take ', ref('Items', n.item!), ...orSay(n.msg!)]);
+      return take(['Take ', ref('Items', n.item!, 'takes'), ...orSay(n.msg!)]);
     case 'addexp':
       return give([`Give ${plural(n.exp!, 'experience point')}`]);
     case 'giveitem':
-      return give(['Give ', ref('Items', n.item!), '; one the player cannot carry drops to the floor and ends the line']);
+      return give(['Give ', ref('Items', n.item!, 'gives'), '; one the player cannot carry drops to the floor and ends the line']);
     case 'hideitem':
-      return other(['Hide ', ref('Items', n.item!), ' in the room, and end the line']);
+      return other(['Hide ', ref('Items', n.item!, 'gives'), ' in the room, and end the line']);
     case 'checkability':
       return test(['Only with ', { ability: n.ability! }, ` of ${num(n.min!)} or more, else stop`]);
     case 'class':
-      return test(['Only for the class ', ref('Classes', n.class!), ', else stop']);
+      return test(['Only for the class ', ref('Classes', n.class!, 'needs'), ', else stop']);
     case 'race':
-      return test(['Only for the race ', ref('Races', n.race!), ', else stop']);
+      return test(['Only for the race ', ref('Races', n.race!, 'needs'), ', else stop']);
     case 'goodaligned':
       return test([`Only with ${plural(n.limit!, 'evil point')} or fewer`, ...elseSay(n.msg!)]);
     case 'evilaligned':
@@ -412,19 +418,19 @@ export function words(c: Clause): { kind: StepKind; bits: Bit[] } {
     case 'maxlevel':
       return test([`Only up to level ${num(n.level!)}`, ...elseSay(n.msg!)]);
     case 'checkitem':
-      return test(['Only when carrying ', ref('Items', n.item!), ...elseSay(n.msg!)]);
+      return test(['Only when carrying ', ref('Items', n.item!, 'needs'), ...elseSay(n.msg!)]);
     case 'failitem':
-      return test(['Only when not carrying ', ref('Items', n.item!), ...elseSay(n.msg!)]);
+      return test(['Only when not carrying ', ref('Items', n.item!, 'needs'), ...elseSay(n.msg!)]);
     case 'text':
-      return say(['Show ', ref('Textblocks', n.block!)]);
+      return say(['Show ', ref('Textblocks', n.block!, 'says')]);
     case 'roomtext':
-      return say(['Show ', ref('Textblocks', n.block!), ' to the whole room']);
+      return say(['Show ', ref('Textblocks', n.block!, 'says'), ' to the whole room']);
     case 'roomitem':
-      return test(['Only with ', ref('Items', n.item!), ' in the room', ...elseSay(n.msg!)]);
+      return test(['Only with ', ref('Items', n.item!, 'needs'), ' in the room', ...elseSay(n.msg!)]);
     case 'failroomitem':
-      return test(['Only without ', ref('Items', n.item!), ' in the room', ...elseSay(n.msg!)]);
+      return test(['Only without ', ref('Items', n.item!, 'needs'), ' in the room', ...elseSay(n.msg!)]);
     case 'clearitem':
-      return n.item ? take(['Take ', ref('Items', n.item!), ' from the room', ...orSay(n.msg!)]) : take(['Clear every item from the room']);
+      return n.item ? take(['Take ', ref('Items', n.item!, 'takes'), ' from the room', ...orSay(n.msg!)]) : take(['Clear every item from the room']);
     case 'addevil':
       return other([n.points! < 0 ? `Take away ${plural(-n.points!, 'evil point')}` : `Add ${plural(n.points!, 'evil point')}`]);
     case 'testability':
@@ -434,18 +440,18 @@ export function words(c: Clause): { kind: StepKind; bits: Bit[] } {
     case 'remoteaction': {
       const e = n.exit!;
       if (e < 0 || e > 10) return skip([`Nothing: exit ${e} is not one of 0 to 10`]);
-      const said: Bit[] = n.msg! > 0 ? ['Say ', ref('Messages', n.msg!), ', then work'] : ['Work'];
-      if (e === 10) return n.msg! > 0 ? say(['Say ', ref('Messages', n.msg!), ' (exit 10 has no direction to work)']) : skip(['Nothing: exit 10 has no direction']);
-      return other([...said, ` the ${DIRS[e]} exit of `, ref('Rooms', n.room!), n.action ? `, clearing block ${num(n.action)} if it is a hidden exit` : '']);
+      const said: Bit[] = n.msg! > 0 ? ['Say ', ref('Messages', n.msg!, 'says'), ', then work'] : ['Work'];
+      if (e === 10) return n.msg! > 0 ? say(['Say ', ref('Messages', n.msg!, 'says'), ' (exit 10 has no direction to work)']) : skip(['Nothing: exit 10 has no direction']);
+      return other([...said, ` the ${DIRS[e]} exit of `, ref('Rooms', n.room!, 'works'), n.action ? `, clearing block ${num(n.action)} if it is a hidden exit` : '']);
     }
     case 'random':
-      return run(['Run one line of ', ref('Textblocks', n.block!), ' by chance']);
+      return run(['Run one line of ', ref('Textblocks', n.block!, 'runs'), ' by chance']);
     case 'adddelay':
       return other([`Make the player wait ${plural(n.ticks! & 255, 'tick')} more`]);
     case 'testskill': {
       const [name, range] = skillOf(c);
       const m = n.modifier!;
-      return test([`Roll 0 to ${range - 1}${m ? ` ${m > 0 ? 'plus' : 'minus'} ${Math.abs(m)}` : ''}: above the player's ${name}, run `, ref('Textblocks', n.block!), ' and stop']);
+      return test([`Roll 0 to ${range - 1}${m ? ` ${m > 0 ? 'plus' : 'minus'} ${Math.abs(m)}` : ''}: above the player's ${name}, run `, ref('Textblocks', n.block!, 'runs'), ' and stop']);
     }
     case 'checkskill': {
       const [name] = skillOf(c);
@@ -456,11 +462,11 @@ export function words(c: Clause): { kind: StepKind; bits: Bit[] } {
     case 'test_tournament':
       return test(['Only while tournament play is on, else stop']);
     case 'checkspell':
-      return test(['Only while ', ref('Spells', n.spell!), ' is on the player, else run ', ref('Textblocks', n.block!), ' and stop']);
+      return test(['Only while ', ref('Spells', n.spell!, 'needs'), ' is on the player, else run ', ref('Textblocks', n.block!, 'runs'), ' and stop']);
     case 'flag':
       return n.flag! >= 1 && n.flag! <= 64 ? skip([`Nothing: flag ${n.flag} never takes effect`]) : test([`Stop: flag ${n.flag} is not one of 1 to 64`]);
     case 'learnspell':
-      return give(['Teach ', ref('Spells', n.spell!), ', or stop when the player cannot learn it']);
+      return give(['Teach ', ref('Spells', n.spell!, 'gives'), ', or stop when the player cannot learn it']);
   }
 }
 

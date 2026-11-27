@@ -232,6 +232,17 @@ async fn rows_list_their_keys_and_titles() {
     );
     let (status, _) = get(dir.path(), "/api/tables/races/rows?columns=Nope").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    // only the rows where a column holds something
+    let (_, body) = get(dir.path(), "/api/tables/races/rows?nonzero=Name").await;
+    assert_eq!(body["rows"].as_array().unwrap().len(), 2);
+    let (_, body) = get(
+        dir.path(),
+        "/api/tables/races/rows?nonzero=Min%20STR,Max%20STR",
+    )
+    .await;
+    assert_eq!(body["rows"], serde_json::json!([]));
+    let (status, _) = get(dir.path(), "/api/tables/races/rows?nonzero=Nope").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = get(
         dir.path(),
         &format!("/api/tables/Races/row?key={}", key(serde_json::json!([2]))),

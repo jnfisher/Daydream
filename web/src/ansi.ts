@@ -1,4 +1,5 @@
-// MajorMUD text as a terminal shows it: ANSI colour escapes rendered, other escapes dropped.
+// MajorMUD text as a terminal shows it: ANSI colour escapes rendered, a step of the cursor
+// forward as the spaces it leaves (some blocks space their words so), other escapes dropped.
 // In the editors' inputs ESC shows as ␛ (U+241B), which can be typed or pasted; `toWire`
 // turns it back into ESC before a save.
 
@@ -12,6 +13,16 @@ const COLOURS = [
   '#000000', '#aa0000', '#00aa00', '#aa5500', '#0000aa', '#aa00aa', '#00aaaa', '#aaaaaa',
   '#555555', '#ff5555', '#55ff55', '#ffff55', '#5555ff', '#ff55ff', '#55ffff', '#ffffff',
 ];
+
+/** How many columns a cursor-forward escape's number moves, as a terminal reads it. */
+const forward = (n: string) => ' '.repeat(Math.min(Math.max(Number(n) || 1, 1), 80));
+
+/** Text without its escapes, a step of the cursor forward as its spaces. */
+export function plainOf(text: string): string {
+  return toWire(text)
+    .replace(/\x1b\[([0-9]*)C/g, (_, n: string) => forward(n))
+    .replace(/\x1b\[[0-9;]*[A-Za-z]?/g, '');
+}
 
 interface Pen {
   fg: number;
@@ -43,7 +54,12 @@ export function renderAnsi(text: string): DocumentFragment {
     const m = /^\[([0-9;]*)([A-Za-z])/.exec(s.slice(i + 1));
     if (!m) continue;
     i += m[0].length;
-    if (m[2] !== 'm') continue; // cursor and screen controls: no colour
+    if (m[2] === 'C' && !m[1]!.includes(';')) {
+      // the cursor forward: the columns it skips show as spaces
+      run += forward(m[1]!);
+      continue;
+    }
+    if (m[2] !== 'm') continue; // other cursor and screen controls: nothing shown
     flush();
     const codes = (m[1] || '0').split(';').map((x) => Number(x || 0));
     for (const code of codes) {
@@ -62,6 +78,6 @@ export function renderAnsi(text: string): DocumentFragment {
  * A NUL ends the text: what follows one is an older value's leftovers. */
 export function titleOf(text: string): string {
   const line = toWire(text).split('\0')[0]!.split(/[\r\n]/).find((l) => l.trim()) ?? '';
-  const clean = line.replace(/\x1b\[[0-9;]*[A-Za-z]?/g, '').trim();
+  const clean = plainOf(line).trim();
   return clean.length > 60 ? `${clean.slice(0, 60)}...` : clean;
 }

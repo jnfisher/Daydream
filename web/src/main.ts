@@ -22,7 +22,6 @@ import PublishSheet from './shell/PublishSheet.svelte';
 import Rail from './shell/Rail.svelte';
 import { parse, recordHref, type Place, type Route } from './shell/routes';
 import { app, closeInspector, loadRecent, realmChanged, redo, refreshNow, refreshStatus, undo } from './shell/state.svelte';
-import Story from './shell/Story.svelte';
 import { messageOf, toast } from './shell/toasts.svelte';
 import ToastStack from './shell/ToastStack.svelte';
 import TopBar from './shell/TopBar.svelte';
@@ -49,6 +48,7 @@ let theMap: ReturnType<typeof mapPage> | null = null;
 let world: { show: (rest: string[], fresh: boolean) => Promise<void> } | null = null;
 let library: { show: (r: Route) => Promise<boolean>; here: () => string; step: (by: number) => void } | null = null;
 let worlds: { load: (refresh?: boolean) => Promise<void> } | null = null;
+let story: { show: (rest: string[]) => void } | null = null;
 const made = new Set<string>();
 
 function once(id: string, make: () => void) {
@@ -84,6 +84,8 @@ function canonical(r: Route): string {
       return r.rest.length ? `#/world/${r.rest.join('/')}` : '#/world';
     case 'workshop':
       return r.rest[0] === 'lists' ? '#/workshop/lists' : '#/workshop';
+    case 'story':
+      return ['#/story', ...r.rest.map(encodeURIComponent)].join('/');
     default:
       return `#/${r.place}`;
   }
@@ -152,7 +154,12 @@ async function route() {
       else worlds = mount(Worlds, { target: $('games') });
       break;
     case 'story':
-      once('story', () => mount(Story, { target: $('story') }));
+      if (!story) {
+        // Story's code loads the first time it is opened
+        const { default: Story } = await import('./story/Story.svelte');
+        story ??= mount(Story, { target: $('story') });
+      }
+      story.show(r.rest);
       break;
     case 'publish':
       once('publish', () => mount(Publish, { target: $('publish') }));
