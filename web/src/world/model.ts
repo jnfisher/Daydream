@@ -26,8 +26,11 @@ export interface MapRoom {
   exit_room: number;
   /** `Type`: 0 normal, 1 shop, 2 arena, 3 lair, 4 hotel, 5 colliseum, 6 jail, 7 library. */
   room_type: number;
-  /** `Mon Type`: which monsters come. */
+  /** `Mon Type`: which monsters come, and which of the group (`Min Index` to `Max Index`) and how many at most (`Max Regen`). */
   mon_type: number;
+  min_index: number;
+  max_index: number;
+  max_regen: number;
   light: number;
 }
 

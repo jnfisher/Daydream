@@ -99,3 +99,92 @@ async fn a_stamp_is_one_step_and_leaves_the_exits_in_its_way() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {out}");
     }
 }
+
+/// Fields set on the rooms picked on the map: those rooms alone, as one step.
+#[tokio::test]
+async fn a_set_on_picked_rooms_reaches_those_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    empty_realm(dir);
+    for n in 1..=4 {
+        add(
+            dir,
+            "Rooms",
+            json!({"Map Number": 1, "Room Number": n, "Name": format!("Wood {n}"), "Light": 5}),
+        )
+        .await;
+    }
+    add(
+        dir,
+        "Rooms",
+        json!({"Map Number": 2, "Room Number": 2, "Name": "Elsewhere", "Light": 5}),
+    )
+    .await;
+    let body = json!({
+        "map": 1,
+        "rooms": [1, 3],
+        "values": [["Light", -40], ["Mon Type", 6], ["Name", "Dark wood"]],
+        "what": "Light, Monsters and Name",
+    });
+    let room = |m: i64, n: i64| format!("/api/tables/Rooms/row?key={}", key(json!([m, n])));
+
+    let (status, out) = send(dir, "POST", "/api/map/set", Some(body.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["records"], 2, "{out}");
+    let history = get(dir, "/api/history").await;
+    assert_eq!(
+        history["steps"][0]["label"], "Set Light, Monsters and Name on 2 rooms of map 1",
+        "{history}"
+    );
+    for (m, n, set) in [
+        (1, 1, true),
+        (1, 2, false),
+        (1, 3, true),
+        (1, 4, false),
+        (2, 2, false),
+    ] {
+        let r = get(dir, &room(m, n)).await;
+        let v = &r["values"];
+        assert_eq!(v["Light"], json!(if set { -40 } else { 5 }), "{m}/{n}: {r}");
+        assert_eq!(
+            v["Mon Type"],
+            json!(if set { 6 } else { 0 }),
+            "{m}/{n}: {r}"
+        );
+        assert_eq!(v["Name"] == json!("Dark wood"), set, "{m}/{n}: {r}");
+    }
+
+    // one room: its own label; and undo takes the set back
+    let one = json!({"map": 1, "rooms": [2], "values": [["Light", 9]], "what": "Light"});
+    let (status, _) = send(dir, "POST", "/api/map/set", Some(one)).await;
+    assert_eq!(status, StatusCode::OK);
+    let history = get(dir, "/api/history").await;
+    assert_eq!(
+        history["steps"][0]["label"], "Set Light on room 1/2",
+        "{history}"
+    );
+    let (status, out) = send(dir, "POST", "/api/undo", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(get(dir, &room(1, 2)).await["values"]["Light"], json!(5));
+
+    // the map's rooms carry what the bar shows of their monsters
+    let view = get(dir, "/api/map?map=1").await;
+    assert_eq!(view["rooms"][0]["mon_type"], 6, "{view}");
+    for k in ["min_index", "max_index", "max_regen"] {
+        assert_eq!(view["rooms"][0][k], 0, "{k}: {view}");
+    }
+
+    // refused: no rooms, a room not on the map, no fields, a key column, no map, a number
+    // the record cannot hold
+    for bad in [
+        json!({"map": 1, "rooms": [], "values": [["Light", 1]]}),
+        json!({"map": 1, "rooms": [9], "values": [["Light", 1]]}),
+        json!({"map": 1, "rooms": [1], "values": []}),
+        json!({"map": 1, "rooms": [1], "values": [["Room Number", 7]]}),
+        json!({"map": 0, "rooms": [1], "values": [["Light", 1]]}),
+        json!({"map": 1, "rooms": [1], "values": [["Light", 40000]]}),
+    ] {
+        let (status, out) = send(dir, "POST", "/api/map/set", Some(bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {out}");
+    }
+}

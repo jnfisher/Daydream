@@ -363,6 +363,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/checks/words", post(checks::words))
         .route("/api/map/dig", post(tools::dig))
         .route("/api/map/stamp", post(tools::stamp))
+        .route("/api/map/set", post(tools::bulk))
         .route("/api/map/pins", get(pins::get).post(pins::set))
         .route("/api/map/pins/import", post(pins::import))
         .route("/api/quests", get(reports::quests))

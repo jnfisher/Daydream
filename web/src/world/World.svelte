@@ -16,6 +16,10 @@
   Stamps (S) put a shape of rooms down at once: the shape follows the pointer see-through, each
   cell tinted by what it would do, and a click puts it down as one save, which one undo takes
   back with the places its rooms were drawn in.
+
+  Select (V) picks rooms with a box, a lasso, a brush or the wand (the rooms joined to one in its
+  colour), and its panel sets their name, light, monsters, control room or room type together,
+  as one save.
 -->
 <!-- loaded when the World is first opened, so its styles travel with its code -->
 <svelte:options css="injected" />
@@ -37,6 +41,7 @@
   import Plus from '@lucide/svelte/icons/plus';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Scan from '@lucide/svelte/icons/scan';
+  import SquareDashedMousePointer from '@lucide/svelte/icons/square-dashed-mouse-pointer';
   import StampIcon from '@lucide/svelte/icons/stamp';
   import Upload from '@lucide/svelte/icons/upload';
   import X from '@lucide/svelte/icons/x';
@@ -49,6 +54,7 @@
   import { COLOUR_BY, EXIT_LEGEND, palette, ROOM_LEGEND, type ColourBy, type ExitLook, type IconName } from './look';
   import { cellKey, STEP, type Spot } from './layout';
   import { DIR_WORDS, kindName, type MapFile, type MapRoom, type PinCells } from './model';
+  import { after, BRUSH_SIZES, mapValue, onRooms, PICK_TOOLS, withValues, type PickField, type PickHow, type PickMode, type PickTool } from './picks';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
   import type { Placed, StampKind, StampOptions, StampRequest, Turn } from './stamps';
 
@@ -132,7 +138,32 @@
   /** The held stamp as it would go down where it is aimed, and the room its new rooms copy. */
   let ghost = $state<Placed | null>(null);
   let ghostBrush = $state<number | null>(null);
+  // Picking rooms
+  /** The Select tool's panel, once it has been taken up. */
+  let picker = $state<typeof import('./picking') | null>(null);
+  /** The Select tool, while it is on. */
+  let picking = $state<PickTool | null>(null);
+  /** The way it picks (kept for next time), and what a pick does with no key held. */
+  let pickTool = $state<PickTool>(pickToolFrom(read('dd-map-pick', 'box')));
+  let pickMode = $state<PickMode>('set');
+  /** How many rooms across the brush takes (kept for next time). */
+  let brushSize = $state(brushFrom(read('dd-map-brush', '3')));
+  /** The rooms picked, on this map. */
+  let picked = $state.raw<ReadonlySet<number>>(new Set());
+  /** Counts the times the map's rooms changed, so what is worked out from them follows. */
+  let roomsSeen = $state(0);
+  /** Space held down: a drag with the Select tool moves the map. */
+  let panKey = false;
 
+
+  function brushFrom(v: string): number {
+    const n = Number(v);
+    return BRUSH_SIZES.includes(n) ? n : 3;
+  }
+
+  function pickToolFrom(v: string): PickTool {
+    return PICK_TOOLS.find((t) => t.id === v)?.id ?? 'box';
+  }
 
   function colourFrom(v: string): ColourBy {
     return COLOUR_BY.some((c) => c.id === v) ? (v as ColourBy) : 'place';
@@ -189,6 +220,7 @@
         scene.select(null);
         selected = null;
         aim = null;
+        if (picked.size) setPicked(new Set());
       }
       map = a.map;
       maps = a.maps;
@@ -201,6 +233,9 @@
         pinCount = pins.size;
       }
       scene.setRooms(a.rooms, pins);
+      roomsSeen++;
+      // rooms an undo took away are no longer picked
+      if ([...picked].some((n) => !scene!.by.has(n))) setPicked(new Set([...picked].filter((n) => scene!.by.has(n))));
       startRoom = scene.start;
       stale = false;
       failed = '';
@@ -348,7 +383,7 @@
       if (h.ghost.to === null) return { title: `Dig a room ${way}`, sub: `A copy of ${from}, with an exit each way.` };
       return { title: `Join ${way} to ${named(h.ghost.to)}`, sub: `An exit each way between ${from} and room ${map}/${h.ghost.to}.` };
     }
-    if (h.stub) {
+    if (h.stub && !picking) {
       const e = h.stub.exit;
       const way = cap(DIR_WORDS[e.dir] ?? 'An exit');
       const kind = e.kind ? `${kindName(e.kind)} exit` : 'Exit';
@@ -358,6 +393,11 @@
       return { title: `${way} to ${t?.name || `room ${e.to}`}`, sub: `${kind} to room ${map}/${e.to}, drawn elsewhere. Click to go there.` };
     }
     const r = h.room!;
+    if (picking === 'wand') {
+      const k = scene?.regionOf(r.room).length ?? 1;
+      return { title: r.name || `Room ${r.room}`, sub: `Room ${map}/${r.room}. ${k === 1 ? 'Click to pick it: no room joined to it shares its colour.' : `Click to pick the ${k.toLocaleString()} rooms joined to it in its colour.`}` };
+    }
+    if (picking) return { title: r.name || `Room ${r.room}`, sub: `Room ${map}/${r.room}${picked.has(r.room) ? ', picked' : ''}` };
     return { title: r.name || `Room ${r.room}`, sub: building ? `Room ${map}/${r.room}. Drag to move it.` : `Room ${map}/${r.room}` };
   }
 
@@ -470,6 +510,7 @@
     if (!scene) return;
     edits++;
     scene.setRooms(rooms);
+    roomsSeen++;
     count = rooms.length;
     maps = maps.map(([m, c]) => [m, m === map ? rooms.length : c]);
     selected = selected ? (scene.by.get(selected.room) ?? null) : null;
@@ -477,16 +518,18 @@
     reghost();
   }
 
-  /** Sends an edit once those before it are in; `done` says what it did, in a toast that can undo it. */
-  function send(work: () => Promise<{ notes?: string[] } | unknown>, done: string) {
+  /** Sends an edit once those before it are in; `done` says what it did (from its answer), in a toast that can undo it. */
+  function send<T>(work: () => Promise<T>, done: string | ((out: T) => string)) {
     pending++;
     chain = chain.then(async () => {
       if (broken) return;
       try {
-        const out = (await work()) as { notes?: string[] } | undefined;
-        const notes = out?.notes?.length ? ` ${out.notes.join(' ')}` : '';
+        const out = await work();
+        const said = typeof done === 'function' ? done(out) : done;
+        const n = (out as { notes?: string[] } | undefined)?.notes;
+        const notes = n?.length ? ` ${n.join(' ')}` : '';
         dismiss(buildToast);
-        buildToast = toast(`${done}.${notes}`, { action: 'Undo', onAction: () => void undo() });
+        buildToast = toast(`${said}.${notes}`, { action: 'Undo', onAction: () => void undo() });
       } catch (e) {
         // what came after it rested on it: the map is read again as the server has it
         broken = true;
@@ -675,6 +718,7 @@
       }
     }
     stamping = on;
+    if (on && picking) void setPicking(false);
     if (on && !building) setBuilding(true);
     if (!on) {
       pickStamp(null);
@@ -949,6 +993,159 @@
     }
   }
 
+  // ---- picking rooms --------------------------------------------------------------------
+
+  /** The Select tool taken up (its panel with it) or put away; the rooms picked wait for it. */
+  async function setPicking(on: boolean) {
+    if (on === !!picking) return;
+    if (on && !picker) {
+      try {
+        picker = await import('./picking');
+      } catch (e) {
+        toast(messageOf(e), { kind: 'error' });
+        return;
+      }
+    }
+    if (on && stamping) await setStamping(false);
+    picking = on ? pickTool : null;
+    tip = null;
+    if (!on) setPanKey(false);
+    scene?.setPicking(picking);
+    scene?.setPickMode(pickMode);
+    scene?.setBrushSize(brushSize);
+    scene?.setPicked(on ? picked : new Set());
+    say(on ? (coarse ? 'Select: pick rooms with a finger, then set their fields.' : 'Select: drag a box around rooms (1 to 4 pick other ways), then set their fields.') : 'Select put away.', true);
+    sfx('toggle');
+  }
+
+  function setPickTool(t: PickTool) {
+    pickTool = t;
+    write('dd-map-pick', t);
+    if (!picking) return;
+    picking = t;
+    tip = null;
+    scene?.setPicking(t);
+  }
+
+  function setPickMode(m: PickMode) {
+    pickMode = m;
+    scene?.setPickMode(m);
+  }
+
+  function setBrushSize(n: number) {
+    brushSize = n;
+    write('dd-map-brush', String(n));
+    scene?.setBrushSize(n);
+  }
+
+  /** The brush a size larger or smaller. */
+  function sizeBrush(by: number) {
+    const i = BRUSH_SIZES.indexOf(brushSize) + by;
+    if (i >= 0 && i < BRUSH_SIZES.length) setBrushSize(BRUSH_SIZES[i]!);
+  }
+
+  function setPicked(next: ReadonlySet<number>) {
+    picked = next;
+    scene?.setPicked(picking ? next : new Set());
+  }
+
+  /** A pick on the map: a box, a lasso, a brush stroke, a click or the wand's region. */
+  function pickRooms(rooms: number[], how: PickHow) {
+    const next = after(picked, rooms, how);
+    if (next.size === picked.size && [...next].every((n) => picked.has(n))) return;
+    setPicked(next);
+    live = next.size ? `${next.size.toLocaleString()} room${next.size === 1 ? '' : 's'} picked.` : 'No rooms picked.';
+  }
+
+  function pickAll() {
+    if (!scene) return;
+    setPicked(new Set(scene.rooms.map((r) => r.room)));
+    say(`All ${scene.rooms.length.toLocaleString()} rooms of map ${map} picked.`, true);
+  }
+
+  function setPanKey(down: boolean) {
+    if (down === panKey) return;
+    panKey = down;
+    scene?.setPanKey(down);
+  }
+
+  /** The rooms picked, as the map has them, in room order. */
+  const pickedRooms = $derived.by(() => {
+    void roomsSeen;
+    const by = scene?.by;
+    if (!by || !picked.size) return [];
+    return [...picked]
+      .map((n) => by.get(n))
+      .filter((r): r is MapRoom => !!r)
+      .sort((a, b) => a.room - b.room);
+  });
+
+  /** The whole numbers each Rooms column holds. */
+  const roomRanges = $derived(Object.fromEntries((app.tables.find((t) => t.name === 'Rooms')?.columns ?? []).map((c) => [c.name, c.range ?? null])));
+
+  /** Sets a field on the rooms picked: shown at once, written as one save that one undo takes back. */
+  function setOnPicked(f: PickField, values: [string, string | number][]) {
+    if (!scene || !pickedRooms.length) return;
+    const rooms = pickedRooms.map((r) => r.room);
+    const what = f.label.toLowerCase();
+    const same = (r: MapRoom) => values.every(([c, v]) => mapValue(r, c) === (typeof v === 'string' ? v.trim() : v));
+    if (pickedRooms.every(same)) {
+      say(rooms.length === 1 ? `Room ${map}/${rooms[0]} has that ${what} already.` : `Those rooms have that ${what} already.`);
+      return;
+    }
+    const set = new Set(rooms);
+    patch(scene.rooms.map((r) => (set.has(r.room) ? withValues(r, values) : r)));
+    const m = map;
+    send(
+      () => api.mapSet({ map: m, rooms, values, what: f.label }),
+      (out) =>
+        out.changed >= rooms.length || !out.changed
+          ? `Set ${what} ${onRooms(m, rooms)}`
+          : `Set ${what} on ${out.changed.toLocaleString()} of the ${rooms.length.toLocaleString()} rooms (the others had it already)`,
+    );
+    sfx('pop');
+  }
+
+  /** The Select tool's keys: 1 to 4 pick how, Esc lets go of the rooms picked and then puts it away. Answers whether the key was one. */
+  function pickKeys(e: KeyboardEvent): boolean {
+    if (e.key === 'Escape') {
+      if (scene?.sweeping) scene.cancelSweep();
+      else if (picked.size) setPicked(new Set());
+      else void setPicking(false);
+      e.preventDefault();
+      return true;
+    }
+    if (!e.shiftKey && /^Digit[1-4]$/.test(e.code)) {
+      setPickTool(PICK_TOOLS[Number(e.code.slice(5)) - 1]!.id);
+      e.preventDefault();
+      return true;
+    }
+    if (picking === 'brush' && (e.key === '[' || e.key === ']')) {
+      sizeBrush(e.key === ']' ? 1 : -1);
+      e.preventDefault();
+      return true;
+    }
+    return false;
+  }
+
+  /** Space held down moves the map with a drag, and Ctrl+A picks every room, while the Select tool is on. */
+  function onPickKeys(e: KeyboardEvent) {
+    // let go of, wherever the key is let go
+    if (e.type === 'keyup' && e.code === 'Space') setPanKey(false);
+    if (!picking || !here() || e.type !== 'keydown') return;
+    const t = e.target;
+    if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (e.code === 'Space') {
+      // a button keeps its Space
+      if (t instanceof HTMLElement && /^(BUTTON|A)$/.test(t.tagName)) return;
+      e.preventDefault();
+      setPanKey(true);
+    } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      pickAll();
+    }
+  }
+
   // ---- what the map shows --------------------------------------------------------------
 
   function setColour(by: ColourBy) {
@@ -1099,6 +1296,7 @@
       if (t.closest('#dd-inspector, #dd-top, #dd-rail, .pop')) return;
     }
     if (stamping && stampKeys(e)) return;
+    if (picking && pickKeys(e)) return;
     if (e.key === 'Escape') {
       if (scene?.carrying) scene.dropCarry();
       else if (countText) countText = '';
@@ -1137,6 +1335,7 @@
     else if (k === 'd') building ? build(9, takeCount()) : walk(9);
     else if (k === 'b') setBuilding(!building);
     else if (k === 's') void setStamping(!stamping);
+    else if (k === 'v') void setPicking(!picking);
     else if (k === '.' && building) {
       if (lastMove) build(lastMove.dir, lastMove.count);
     } else if ((e.key === 'Enter' || e.key === 'F2') && building) {
@@ -1191,6 +1390,7 @@
         reghost();
       },
       stamp: (x, y, m) => putStamp(x, y, m),
+      choose: (rooms, how) => pickRooms(rooms, how),
     });
     scene.setColour(colourBy);
     scene.setLayers(layers);
@@ -1210,7 +1410,10 @@
     document.addEventListener('keydown', onKey);
     document.addEventListener('keydown', onMods);
     document.addEventListener('keyup', onMods);
+    document.addEventListener('keydown', onPickKeys);
+    document.addEventListener('keyup', onPickKeys);
     const letGo = () => {
+      setPanKey(false);
       if (mods.shift || mods.alt) {
         mods = { shift: false, alt: false };
         reghost();
@@ -1229,6 +1432,8 @@
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('keydown', onMods);
       document.removeEventListener('keyup', onMods);
+      document.removeEventListener('keydown', onPickKeys);
+      document.removeEventListener('keyup', onPickKeys);
       window.removeEventListener('blur', letGo);
       window.removeEventListener('dd:wrote', written);
       window.removeEventListener('dd:realm', written);
@@ -1327,6 +1532,16 @@
       title={stamping ? 'Put the stamps away (S)' : 'Stamps: a shape of rooms put down at once (S)'}
     >
       <StampIcon size={15} /><span>Stamps</span>
+    </button>
+    <button
+      type="button"
+      class="btn glass build-btn"
+      class:on={!!picking}
+      aria-pressed={!!picking}
+      onclick={() => void setPicking(!picking)}
+      title={picking ? 'Done selecting (V)' : 'Select: pick rooms and set their fields together (V)'}
+    >
+      <SquareDashedMousePointer size={15} /><span>Select</span>{#if picking && picked.size}<b class="count tnum">{picked.size.toLocaleString()}</b>{/if}
     </button>
     {#if pending}<span class="pill lilac">Saving…</span>{:else if loading}<span class="pill lilac">Reading map…</span>{/if}
   </div>
@@ -1473,6 +1688,29 @@
     />
   {/if}
 
+  {#if picking && picker}
+    <picker.PickBar
+      tool={picking}
+      mode={pickMode}
+      rooms={pickedRooms}
+      total={count}
+      {map}
+      touch={coarse}
+      ranges={roomRanges}
+      brush={brushSize}
+      {nameMax}
+      named={(n) => (scene?.by.has(n) ? called(n) : null)}
+      ontool={setPickTool}
+      onmode={setPickMode}
+      onbrush={sizeBrush}
+      onset={setOnPicked}
+      onall={pickAll}
+      onclear={() => setPicked(new Set())}
+      onshow={() => scene?.frameRooms(picked)}
+      onclose={() => void setPicking(false)}
+    />
+  {/if}
+
   {#if roomy}
     <div class="float hint map-hint glass" aria-hidden="true">
       {#if note}
@@ -1481,6 +1719,8 @@
         <b class="mode">Stamp</b> click to put it down <span class="kbd">R</span> turn <span class="kbd">X</span><span class="kbd">Y</span> mirror {#if stampKind.sizes.length}<span class="kbd">[</span><span class="kbd">]</span> size {/if}{#if stampKind.random}<span class="kbd">Space</span> roll {/if}<span class="kbd">J</span> join <span class="kbd">Esc</span> put away
       {:else if stamping}
         <b class="mode">Stamps</b> pick a shape <span class="kbd">1</span>…<span class="kbd">9</span> <span class="kbd">S</span> put them away
+      {:else if picking}
+        <b class="mode">Select</b> <span class="kbd">1</span>…<span class="kbd">4</span> how {#if picking === 'brush'}<span class="kbd">[</span><span class="kbd">]</span> size {/if}<span class="kbd">Shift</span> add <span class="kbd">Alt</span> take away <span class="kbd">Space</span> pan <span class="kbd">Esc</span> {picked.size ? 'let go' : 'done'}
       {:else if building}
         <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
@@ -1534,6 +1774,10 @@
   .map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
   .map:global(.panning), .map:global(.carrying) { cursor: grabbing; }
   .map:global(.stamping) { cursor: crosshair; }
+  .map:global(.picking) { cursor: crosshair; }
+  .map:global(.picking[data-tool='wand']) { cursor: pointer; }
+  .map:global(.picking.pan-key) { cursor: grab; }
+  .map:global(.picking.panning) { cursor: grabbing; }
   .map:focus-visible { box-shadow: inset 0 0 0 3px var(--focus); }
 
   .float { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; }

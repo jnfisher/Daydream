@@ -10,6 +10,7 @@
 //! | `POST /api/tools/preset` | one of NMR's fixes ([`Preset`](daydream_nmr::presets::Preset)) and `dry_run`; as `modify` |
 //! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) (`count` digs a line of new rooms) and `dry_run`; as `modify` |
 //! | `POST /api/map/stamp` | a [`Stamp`](daydream_nmr::map::Stamp) and `dry_run`; as `modify`, with `stamp` (`{rooms, exits, joined, left}`) and the history's `step` |
+//! | `POST /api/map/set` | a [`Bulk`](daydream_nmr::map::Bulk) (`{map, rooms, values: [[column, value]], what}`) and `dry_run`; as `modify` |
 //! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
 //! | `POST /api/tools/write-dat` | `{wcc?, out?, backup, dry_run, force}`; `{files: [{stem, dest, action, records}], backup?}` |
 //!
@@ -332,6 +333,27 @@ pub(crate) async fn stamp(
         out["stamp"] = json!(done);
         out["step"] = json!(step);
         Ok(Json(out))
+    })
+    .await
+}
+
+/// The body of a set on rooms picked on the World map.
+#[derive(Debug, Deserialize)]
+pub struct BulkJson {
+    #[serde(flatten)]
+    bulk: daydream_nmr::map::Bulk,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// Sets fields on the rooms picked on the World map, as one step of the history.
+pub(crate) async fn bulk(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<BulkJson>,
+) -> Result<Json<Value>, ApiError> {
+    let label = body.bulk.label();
+    run_plan(s, body.dry_run, label, move |realm, layout| {
+        daydream_nmr::map::bulk(realm, layout, &body.bulk).map_err(|e| bad(e.to_string()))
     })
     .await
 }

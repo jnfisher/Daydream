@@ -147,8 +147,8 @@ undoable) and **Publish**.
 whose cell is taken goes to the nearest free one), and the layout holds still as you look
 around. Drag to pan, scroll or pinch to zoom, double-click to close in. A click on a room
 opens its card beside the map, and the keys walk its exits from there. Rooms are coloured by
-place (guessed from their names), area, monsters, light or your own edits; a click on a
-colour in the legend picks its rooms out. An exit that takes something to pass (a door, a
+place (guessed from their names), area, monsters, light (in the game's words, from daylight
+to pitch black) or your own edits; a click on a colour in the legend picks its rooms out. An exit that takes something to pass (a door, a
 key, a toll, a trap) carries its symbol, a one-way exit an arrow, and an exit to a room drawn
 elsewhere, to another map (a click goes there) or to a room the map does not have ends in a
 chip. **Show** turns names, symbols and grid dots on and off and says what the marks mean.
@@ -187,6 +187,19 @@ as a dig does, and stay where the stamp drew them. A stamp is one step: its toas
 Ctrl+Z takes back its rooms, its exits and their places together (the server answers the
 same at `POST /api/map/stamp`).
 
+**Select** (or `V`) picks rooms to change together. **Box** (`1`) picks the rooms a drag
+draws around, **Lasso** (`2`) the rooms a drawn line goes around, **Brush** (`3`) the rooms
+painted over (`[` and `]` size it), and **Wand** (`4`) the rooms joined to the one clicked
+through rooms of its colour: colour the map by area, monsters or light to pick a control
+room's area, a monster region or a dark patch in one click. A click picks one room; Shift
+adds to the rooms picked, Alt takes away, Shift or Ctrl and a click flips one, and **New**,
+**Add** and **Take away** do the same for a finger. Space and a drag (or two fingers) moves
+the map meanwhile, Ctrl+A picks every room of the map, and Esc lets go of them. The panel
+shows what the rooms picked share, or **Mixed**, of their name, light, monsters (Mon Type,
+Min Index, Max Index and Max Regen), control room and room type, and sets any of them on them
+all as one step that one Ctrl+Z takes back: NMR's Mass Room Editor on just those rooms (the
+server answers the same at `POST /api/map/set`, and refuses a number its field cannot hold).
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
@@ -198,6 +211,7 @@ same at `POST /api/map/stamp`).
 | `B` | Build mode: the arrows and `U` `D` dig, join or walk; digits first for a line, `.` again, Enter to name the room, Esc when done |
 | Shift+arrows | In Build mode, move the room a cell (or drag it) |
 | `S` | Stamps: `1` to `9` pick one; `R` turn, `X` `Y` mirror, `[` `]` `{` `}` size, Space roll, `J` join what it touches, arrows and Enter aim and put it down, Shift and Alt held leave rooms alone or replace exits, Esc puts it away |
+| `V` | Select: `1` to `4` box, lasso, brush, wand; Shift adds, Alt takes away, `[` `]` size the brush, Space and a drag moves the map, Ctrl+A picks every room, Esc lets go of them, then puts it away |
 
 **The Library** has the world's records a table at a time: the list (found by name or
 number, narrowed by chips such as Weapons or Map 3, or **Changed** for what changed since

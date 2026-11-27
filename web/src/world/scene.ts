@@ -12,6 +12,7 @@
 import { cellKey, OPPOSITE, STEP, type Layout, layOut, type Spot } from './layout';
 import { biomeOf, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type Palette, type Tint } from './look';
 import type { MapExit, MapRoom } from './model';
+import { after, clickHow, howOf, inside, regionOf, type PickHow, type PickMode, type PickTool } from './picks';
 import type { LinkSort, Placed } from './stamps';
 
 /** A grid cell, in pixels at 100%. */
@@ -103,6 +104,8 @@ export interface SceneEvents {
   aim(x: number, y: number): void;
   /** A stamp is held: put it down with its first cell at (x, y). */
   stamp(x: number, y: number, mods: { shift: boolean; alt: boolean }): void;
+  /** The Select tool: rooms picked by a box, a lasso, the brush, a click or the wand. */
+  choose(rooms: number[], how: PickHow): void;
 }
 
 /** A room being carried, in Build mode: where it is held, and the cell under it. */
@@ -150,6 +153,29 @@ export class Scene {
   private stamped: Placed | null = null;
   /** The cell the held stamp was last aimed at. */
   private aimed: string | null = null;
+  /** The Select tool, while it is on: a drag picks rooms (a box, a lasso, the brush), a click one, the wand its region. */
+  private picking: PickTool | null = null;
+  /** What a pick does with no key held (Shift adds and Alt takes away, for a moment). */
+  private pickMode: PickMode = 'set';
+  /** How many rooms across the brush takes. */
+  private brushSize = 3;
+  /** The rooms picked, drawn washed over. */
+  private picked: ReadonlySet<number> = new Set();
+  /**
+   * A pick being drawn, and how it picks: the box's corners or the lasso's points (on the map,
+   * so a zoom meanwhile keeps them where they were drawn), or the rooms the brush has been over.
+   */
+  private sweep: { tool: PickTool; how: PickHow; pts: [number, number][]; rooms: Set<number> } | null = null;
+  /** The rooms drawn picked while a pick is drawn: as they would be once it is let go. */
+  private preview: { of: unknown; rooms: ReadonlySet<number> } | null = null;
+  /** Where the brush is over the map, and whether it takes rooms away (Alt). */
+  private brushAt: { x: number; y: number; drop: boolean } | null = null;
+  /** Space held down: a drag pans the map, even with the Select tool. */
+  private panKey = false;
+  /** The pick being drawn was let go of (Esc): the press it began with ends doing nothing. */
+  private dropped = false;
+  /** The rooms the wand would take from the room under the pointer. */
+  private wandAt: { n: number; of: MapRoom[]; rooms: ReadonlySet<number> } | null = null;
 
   private readonly ctx: CanvasRenderingContext2D;
   private readonly mctx: CanvasRenderingContext2D;
@@ -299,6 +325,125 @@ export class Scene {
   setStamp(p: Placed | null): void {
     this.stamped = p;
     this.draw();
+  }
+
+  /** The Select tool on (with its way of picking) or off. */
+  setPicking(tool: PickTool | null): void {
+    this.picking = tool;
+    this.sweep = null;
+    this.preview = null;
+    this.brushAt = null;
+    this.wandAt = null;
+    if (tool) {
+      this.carry = null;
+      this.canvas.classList.remove('carrying');
+    }
+    this.canvas.classList.toggle('picking', !!tool);
+    this.canvas.dataset.tool = tool ?? '';
+    this.draw();
+  }
+
+  /** What a pick does with no key held. */
+  setPickMode(mode: PickMode): void {
+    this.pickMode = mode;
+  }
+
+  /** How many rooms across the brush takes. */
+  setBrushSize(n: number): void {
+    this.brushSize = n;
+    this.draw();
+  }
+
+  /** The rooms picked, drawn washed over. */
+  setPicked(rooms: ReadonlySet<number>): void {
+    this.picked = rooms;
+    this.preview = null;
+    this.draw();
+  }
+
+  /** Whether a pick is being drawn. */
+  get sweeping(): boolean {
+    return !!this.sweep;
+  }
+
+  /** Lets go of the pick being drawn, picking nothing. */
+  cancelSweep(): void {
+    if (this.sweep) this.dropped = true;
+    this.sweep = null;
+    this.preview = null;
+    this.draw();
+  }
+
+  /** Space held down (or let go): a drag pans the map. */
+  setPanKey(down: boolean): void {
+    this.panKey = down;
+    this.canvas.classList.toggle('pan-key', down);
+  }
+
+  /** The wand's region from room `n`: the rooms joined to it through rooms of its colour. */
+  regionOf(n: number): number[] {
+    return regionOf(this.by, n, (m) => this.tints.get(m)?.key);
+  }
+
+  /** The rooms whose middles a box (two corners) or a lasso (its points), on the map, holds. */
+  private roomsIn(tool: PickTool, pts: [number, number][]): number[] {
+    const l = this.layout;
+    if (!l || !pts.length) return [];
+    let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (const [x, y] of tool === 'lasso' ? pts : [pts[0]!, pts.at(-1)!]) {
+      [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, y), Math.max(y1, y)];
+    }
+    const out: number[] = [];
+    for (const [n, p] of l.at) {
+      const [x, y] = [(p.x + 0.5) * S, (p.y + 0.5) * S];
+      if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+      if (tool !== 'lasso' || inside(x, y, pts)) out.push(n);
+    }
+    return out;
+  }
+
+  /** The brush drawn from (x0, y0) to (x1, y1) on the canvas: the rooms it passes over join its stroke. */
+  private paint(x0: number, y0: number, x1: number, y1: number) {
+    const s = this.sweep;
+    if (!s) return;
+    const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (this.brushReach() * 0.75)));
+    for (let i = 1; i <= steps; i++) {
+      for (const n of this.brushRooms(x0 + ((x1 - x0) * i) / steps, y0 + ((y1 - y0) * i) / steps)) s.rooms.add(n);
+    }
+  }
+
+  /** The rooms to draw picked: those picked, or while a pick is drawn, as they would be once it is let go. */
+  private shownPicks(): ReadonlySet<number> {
+    const s = this.sweep;
+    if (!s) return this.picked;
+    const key = s.tool === 'brush' ? s.rooms.size : s.pts.length === 0 ? 0 : `${s.pts.length},${s.pts.at(-1)!.join(',')}`;
+    if (this.preview?.of !== key) {
+      const rooms = s.tool === 'brush' ? [...s.rooms] : s.pts.length > 1 ? this.roomsIn(s.tool, s.pts) : [];
+      this.preview = { of: key, rooms: after(this.picked, rooms, s.how) };
+    }
+    return this.preview.rooms;
+  }
+
+  /** How far the brush reaches from its middle to the middles of the rooms it takes, on the canvas. */
+  private brushReach(): number {
+    return Math.max(4, ((this.brushSize - 1) / 2 + 0.55) * S * this.cam.z);
+  }
+
+  /** The rooms under the brush at (px, py). */
+  private brushRooms(px: number, py: number): number[] {
+    const l = this.layout;
+    if (!l) return [];
+    const r = this.brushReach();
+    const [wx0, wy0] = this.toWorld(px - r, py - r);
+    const [wx1, wy1] = this.toWorld(px + r, py + r);
+    const out: number[] = [];
+    for (let gx = Math.floor(wx0 / S); gx <= Math.floor(wx1 / S); gx++) {
+      for (let gy = Math.floor(wy0 / S); gy <= Math.floor(wy1 / S); gy++) {
+        const n = l.cell.get(cellKey(gx, gy));
+        if (n !== undefined && Math.hypot(this.sx(gx) - px, this.sy(gy) - py) <= r) out.push(n);
+      }
+    }
+    return out;
   }
 
   /** The cell under a point of the canvas. */
@@ -565,6 +710,19 @@ export class Scene {
     if (x0 <= x1) this.frame(x0, y0, x1, y1, 1.4, animate);
   }
 
+  /** Rooms in view, as large as fits (not closer than a room and its neighbours close up). */
+  frameRooms(rooms: Iterable<number>): void {
+    const l = this.layout;
+    if (!l) return;
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const n of rooms) {
+      const p = l.at.get(n);
+      if (!p) continue;
+      [x0, y0, x1, y1] = [Math.min(x0, p.x), Math.min(y0, p.y), Math.max(x1, p.x), Math.max(y1, p.y)];
+    }
+    if (x0 <= x1) this.frame(x0, y0, x1, y1, 1.8, true);
+  }
+
   /** A room and its neighbours, close up. */
   frameRoom(n: number): void {
     this.centreOn(n, { zoom: Math.max(this.cam.z, 1.8) });
@@ -584,7 +742,7 @@ export class Scene {
     if (!l) return null;
     const z = this.cam.z;
     // Build mode: the join marks, then the free cells around the selected room
-    if (this.building && z >= GHOSTS) {
+    if (this.building && !this.picking && z >= GHOSTS) {
       const ghosts = this.ghosts();
       for (const g of ghosts) {
         if (g.to === null) continue;
@@ -648,7 +806,8 @@ export class Scene {
     const cv = this.canvas;
     const pointers = new Map<number, [number, number]>();
     let drag: { x: number; y: number; cx: number; cy: number; moved: boolean; room: number | null; touch: boolean; at: number } | null = null;
-    let pinch: { d: number; z: number } | null = null;
+    /** Two fingers: how far apart they began, the zoom then, and the place on the map between them, which stays between them. */
+    let pinch: { d: number; z: number; at: [number, number] } | null = null;
     const pos = (e: PointerEvent | MouseEvent | WheelEvent): [number, number] => {
       const b = cv.getBoundingClientRect();
       return [e.clientX - b.left, e.clientY - b.top];
@@ -665,14 +824,37 @@ export class Scene {
       pointers.set(e.pointerId, pos(e));
       if (pointers.size === 2) {
         const [a, b] = [...pointers.values()] as [[number, number], [number, number]];
-        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: this.cam.z };
+        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: this.cam.z, at: this.toWorld((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) };
         drag = null;
+        // a second finger: the pick the first began is let go of
+        if (this.sweep) {
+          this.sweep = null;
+          this.brushAt = null;
+          this.draw();
+        }
         return;
       }
       const [x, y] = pos(e);
       this.land();
+      this.dropped = false;
+      // the Select tool: a drag draws a box or a lasso or brushes rooms (the wand's drag, Space
+      // held down and the middle button pan the map)
+      const tool = this.picking;
+      if (tool && tool !== 'wand' && e.button === 0 && !this.panKey) {
+        const plain = this.pickMode === 'set' && tool === 'brush' ? 'add' : this.pickMode;
+        this.sweep = { tool, how: howOf(e, plain), pts: [this.toWorld(x, y)], rooms: new Set() };
+        this.preview = null;
+        if (tool === 'brush') {
+          this.brushAt = { x, y, drop: this.sweep.how === 'drop' };
+          this.paint(x, y, x, y);
+        }
+        this.setHover(null, x, y);
+        drag = { x, y, cx: this.cam.x, cy: this.cam.y, moved: false, room: null, touch: e.pointerType === 'touch', at: performance.now() };
+        this.draw();
+        return;
+      }
       // Build mode: a room pressed on is carried, not the map (a finger holds it a moment first)
-      const hit = this.building && !this.holding ? this.hitAt(x, y) : null;
+      const hit = this.building && !this.holding && !tool ? this.hitAt(x, y) : null;
       const room = hit?.room && !hit.stub && !hit.ghost && e.button === 0 ? hit.room.room : null;
       drag = { x, y, cx: this.cam.x, cy: this.cam.y, moved: false, room, touch: e.pointerType === 'touch', at: performance.now() };
     });
@@ -680,8 +862,36 @@ export class Scene {
       const [x, y] = pos(e);
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, [x, y]);
       if (pinch && pointers.size === 2) {
+        // the fingers zoom, and move the map with them
         const [a, b] = [...pointers.values()] as [[number, number], [number, number]];
-        this.zoomNow((pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1])) / pinch.d, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+        const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, (pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1])) / pinch.d));
+        this.cam.z = z;
+        this.cam.x = pinch.at[0] - ((a[0] + b[0]) / 2 - this.W / 2) / z;
+        this.cam.y = pinch.at[1] - ((a[1] + b[1]) / 2 - this.H / 2) / z;
+        this.moved();
+        return;
+      }
+      const s = this.sweep;
+      if (s && drag) {
+        if (!drag.moved && Math.abs(x - drag.x) + Math.abs(y - drag.y) > 4) drag.moved = true;
+        if (s.tool === 'box') s.pts = [s.pts[0]!, this.toWorld(x, y)];
+        else if (s.tool === 'lasso') {
+          const last = s.pts.at(-1)!;
+          const w = this.toWorld(x, y);
+          if (Math.hypot(w[0] - last[0], w[1] - last[1]) * this.cam.z > 3) s.pts.push(w);
+        } else {
+          const b = this.brushAt;
+          this.paint(b?.x ?? x, b?.y ?? y, x, y);
+          this.brushAt = { x, y, drop: s.how === 'drop' };
+        }
+        this.draw();
+        return;
+      }
+      if (this.picking === 'brush' && !drag && e.pointerType !== 'touch') {
+        // the brush shows where it would go, and how much it takes
+        this.brushAt = { x, y, drop: e.altKey || (this.pickMode === 'drop' && !e.shiftKey) };
+        this.setHover(null, x, y);
+        this.draw();
         return;
       }
       if (this.carry) {
@@ -726,6 +936,21 @@ export class Scene {
       const d = drag;
       drag = null;
       cv.classList.remove('panning');
+      if (this.dropped) {
+        this.dropped = false;
+        return;
+      }
+      const s = this.sweep;
+      if (s) {
+        this.sweep = null;
+        if (e.pointerType === 'touch') this.brushAt = null;
+        this.draw();
+        if (cancelled) return;
+        if (s.tool === 'brush') this.on.choose([...s.rooms], s.how);
+        else if (d?.moved) this.on.choose(this.roomsIn(s.tool, s.pts), s.how);
+        else this.clickPick(...pos(e), e);
+        return;
+      }
       const c = this.carry;
       if (c) {
         this.carry = null;
@@ -740,6 +965,11 @@ export class Scene {
       }
       if (!d || d.moved || cancelled) return;
       const [x, y] = pos(e);
+      if (this.picking) {
+        // the wand (a drag with it pans), or a click with Space held down: nothing
+        if (!this.panKey && e.button === 0) this.clickPick(x, y, e);
+        return;
+      }
       if (this.holding) {
         // a click puts the stamp down; a tap moves it there first, and a second tap puts it down
         const [cx, cy] = this.cellAt(x, y);
@@ -756,7 +986,12 @@ export class Scene {
     add(cv, 'pointerup', (e) => end(e, false));
     add(cv, 'pointercancel', (e) => end(e, true));
     add(cv, 'pointerleave', (e) => {
-      if (!drag) this.setHover(null, ...pos(e));
+      if (drag) return;
+      this.setHover(null, ...pos(e));
+      if (this.brushAt) {
+        this.brushAt = null;
+        this.draw();
+      }
     });
     add(
       cv,
@@ -780,7 +1015,7 @@ export class Scene {
       { passive: false },
     );
     add(cv, 'dblclick', (e) => {
-      if (this.holding) return;
+      if (this.holding || this.picking) return;
       const [x, y] = pos(e);
       const hit = this.hitAt(x, y);
       if (hit?.ghost) return;
@@ -808,6 +1043,22 @@ export class Scene {
     });
   }
 
+  /**
+   * A click with the Select tool: the wand takes the rooms joined to the room clicked in its
+   * colour, the others that room (clickHow). Empty space lets go of every room, unless adding
+   * or taking away.
+   */
+  private clickPick(px: number, py: number, m: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }) {
+    const n = this.hitAt(px, py)?.room?.room;
+    const tool = this.picking;
+    if (n === undefined || !tool) {
+      if (this.pickMode === 'set' && !m.shiftKey && !m.altKey && !m.ctrlKey && !m.metaKey) this.on.choose([], 'set');
+      return;
+    }
+    if (tool === 'wand') this.on.choose(this.regionOf(n), howOf(m, this.pickMode));
+    else this.on.choose([n], clickHow(m, this.pickMode));
+  }
+
   /** The held stamp is over the cell at (px, py). */
   private aimAt(px: number, py: number) {
     const [x, y] = this.cellAt(px, py);
@@ -822,7 +1073,7 @@ export class Scene {
     this.hovered = hit;
     if (was?.room !== hit?.room || was?.stub !== hit?.stub || was?.ghost?.dir !== hit?.ghost?.dir) this.draw();
     // in Build mode a room can be picked up and carried
-    this.canvas.style.cursor = !hit ? '' : this.building && hit.room && !hit.stub && !hit.ghost ? 'grab' : 'pointer';
+    this.canvas.style.cursor = !hit || this.picking ? '' : this.building && hit.room && !hit.stub && !hit.ghost ? 'grab' : 'pointer';
     this.on.hover(hit, x, y);
   }
 
@@ -1021,7 +1272,7 @@ export class Scene {
 
     // Build mode: free cells to dig into around the selected room, and marks to join the rooms
     // drawn next to it
-    if (this.building && z >= GHOSTS && !carry && !this.holding) {
+    if (this.building && !this.picking && z >= GHOSTS && !carry && !this.holding) {
       for (const g of this.ghosts()) {
         const hot = this.hovered?.ghost?.dir === g.dir;
         if (g.to === null) {
@@ -1054,6 +1305,16 @@ export class Scene {
           if (c.r >= 6) this.icon('link-2', c.x, c.y, c.r * 1.25, hot ? P.badge : P.sel, 2.6);
         }
       }
+    }
+
+    // the Select tool: the rooms picked (as they would be while a pick is drawn), and those the
+    // wand would take from the room under the pointer
+    const picks = this.picking || this.picked.size ? this.shownPicks() : null;
+    if (picks?.size) this.drawPicks(picks, inView, 0.26, false);
+    const wr = this.picking === 'wand' && !this.sweep && !this.hovered?.stub ? this.hovered?.room : undefined;
+    if (wr) {
+      if (this.wandAt?.n !== wr.room || this.wandAt.of !== this.rooms) this.wandAt = { n: wr.room, of: this.rooms, rooms: new Set(this.regionOf(wr.room)) };
+      this.drawPicks(this.wandAt.rooms, inView, 0.12, true);
     }
 
     // marks on rooms, and the chips at the stubs' ends
@@ -1267,6 +1528,53 @@ export class Scene {
       }
     }
 
+    // the pick being drawn: the box or the lasso, and the brush
+    const sw = this.sweep;
+    if (sw && sw.tool !== 'brush' && sw.pts.length > 1) {
+      ctx.beginPath();
+      if (sw.tool === 'box') {
+        const [a, b] = [sw.pts[0]!, sw.pts.at(-1)!];
+        const [ax, ay] = [(a[0] - cam.x) * z + W / 2, (a[1] - cam.y) * z + H / 2];
+        const [bx, by] = [(b[0] - cam.x) * z + W / 2, (b[1] - cam.y) * z + H / 2];
+        ctx.rect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+      } else {
+        for (const [wx, wy] of sw.pts) ctx.lineTo((wx - cam.x) * z + W / 2, (wy - cam.y) * z + H / 2);
+        ctx.closePath();
+      }
+      ctx.fillStyle = P.sel;
+      ctx.globalAlpha = 0.08;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = P.sel;
+      ctx.lineWidth = 1.6;
+      ctx.lineJoin = 'round';
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    const bt = this.picking === 'brush' ? this.brushAt : null;
+    if (bt) {
+      const r = Math.max(6, this.brushReach());
+      ctx.beginPath();
+      ctx.arc(bt.x, bt.y, r, 0, TAU);
+      ctx.fillStyle = P.sel;
+      ctx.globalAlpha = sw ? 0.14 : 0.07;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = P.sel;
+      ctx.lineWidth = 2;
+      ctx.setLineDash(bt.drop ? [4, 4] : []);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Alt takes rooms away: a minus in the middle
+      if (bt.drop && r >= 10) {
+        ctx.beginPath();
+        ctx.moveTo(bt.x - 4, bt.y);
+        ctx.lineTo(bt.x + 4, bt.y);
+        ctx.stroke();
+      }
+    }
+
     // a stamp held: the map behind it faded back, so it shows over any room's colour
     if (this.stamped) {
       ctx.globalAlpha = 0.5;
@@ -1277,6 +1585,63 @@ export class Scene {
     }
 
     this.drawMini();
+  }
+
+  /**
+   * Rooms picked: their cells washed over and the edge of each patch of them drawn, so a patch
+   * reads as one place (dashed: the rooms the wand would take).
+   */
+  private drawPicks(rooms: ReadonlySet<number>, inView: (n: number) => boolean, wash: number, dashed: boolean) {
+    const { ctx, cam, W, H } = this;
+    const P = this.pal;
+    const l = this.layout;
+    if (!l) return;
+    const z = cam.z;
+    const c = S * z;
+    const shown: [number, number, number, number][] = [];
+    for (const n of rooms) {
+      if (!inView(n)) continue;
+      const p = l.at.get(n)!;
+      shown.push([p.x, p.y, (p.x * S - cam.x) * z + W / 2, (p.y * S - cam.y) * z + H / 2]);
+    }
+    if (!shown.length) return;
+    ctx.fillStyle = P.sel;
+    ctx.globalAlpha = wash;
+    ctx.beginPath();
+    for (const [, , x, y] of shown) ctx.rect(x, y, c, c);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // the edges with no room picked beyond them
+    const on = (gx: number, gy: number) => {
+      const m = l.cell.get(cellKey(gx, gy));
+      return m !== undefined && rooms.has(m);
+    };
+    ctx.beginPath();
+    for (const [gx, gy, x, y] of shown) {
+      if (!on(gx, gy - 1)) {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + c, y);
+      }
+      if (!on(gx, gy + 1)) {
+        ctx.moveTo(x, y + c);
+        ctx.lineTo(x + c, y + c);
+      }
+      if (!on(gx - 1, gy)) {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + c);
+      }
+      if (!on(gx + 1, gy)) {
+        ctx.moveTo(x + c, y);
+        ctx.lineTo(x + c, y + c);
+      }
+    }
+    ctx.strokeStyle = P.sel;
+    ctx.lineWidth = z < 0.4 ? 1.5 : 2.2;
+    ctx.lineCap = 'square';
+    ctx.setLineDash(dashed ? [5, 4] : []);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineCap = 'round';
   }
 
   /**
@@ -1566,6 +1931,15 @@ export class Scene {
       this.miniCache = c;
     }
     mctx.drawImage(this.miniCache, 0, 0);
+    // the rooms picked
+    if (this.picked.size) {
+      mctx.fillStyle = P.sel;
+      const d = Math.max(2 * this.dpr, s);
+      for (const n of this.picked) {
+        const p = l.at.get(n);
+        if (p) mctx.fillRect(ox + p.x * s - (d - s) / 2, oy + p.y * s - (d - s) / 2, d, d);
+      }
+    }
     // what the map shows now
     const [vx0, vy0] = this.toWorld(0, 0);
     const [vx1, vy1] = this.toWorld(this.W - this.cover, this.H);

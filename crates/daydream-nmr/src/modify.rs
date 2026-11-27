@@ -111,6 +111,10 @@ pub struct Modify {
     pub action: Action,
     #[serde(default)]
     pub range: Option<Range>,
+    /// Only these records of the range, by number (a room's, on the range's map), when any
+    /// are listed: the rooms picked on the World map.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<i64>,
     #[serde(default)]
     pub only_if: Vec<Condition>,
 }
@@ -164,6 +168,14 @@ pub enum ModifyError {
     NoColumn { table: String, column: String },
     #[error("{table}.{column} is not a number")]
     NotNumber { table: String, column: String },
+    #[error("{table}.{column} holds whole numbers from {lo} to {hi}, not {value}")]
+    OutOfRange {
+        table: String,
+        column: String,
+        value: f64,
+        lo: f64,
+        hi: f64,
+    },
     #[error("{0} has no abilities")]
     NoAbilities(String),
     #[error("{0} is part of the record's key and cannot be set")]
@@ -232,7 +244,8 @@ pub(crate) fn slots(rows: &NmrRows) -> Vec<(usize, usize)> {
         .collect()
 }
 
-fn in_range(t: &NmrTable, rows: &NmrRows, row: &[Value], range: &Range) -> bool {
+/// A record's map (rooms only) and number, from its key.
+fn number_of(t: &NmrTable, rows: &NmrRows, row: &[Value]) -> (Option<i64>, i64) {
     let index = t.index.as_ref().map(|i| i.columns).unwrap_or(&[]);
     let at = |i: usize| {
         index
@@ -240,11 +253,15 @@ fn in_range(t: &NmrTable, rows: &NmrRows, row: &[Value], range: &Range) -> bool 
             .and_then(|c| rows.position(c))
             .map(|p| num(&row[p]) as i64)
     };
-    let (map, number) = if t.table == Some(daydream_wcc::tables::Table::Rooms) {
+    if t.table == Some(daydream_wcc::tables::Table::Rooms) {
         (at(0), at(1).unwrap_or(0))
     } else {
         (None, at(0).unwrap_or(0))
-    };
+    }
+}
+
+fn in_range(t: &NmrTable, rows: &NmrRows, row: &[Value], range: &Range) -> bool {
+    let (map, number) = number_of(t, rows, row);
     range.map.is_none_or(|m| Some(m) == map) && (range.from..=range.to).contains(&number)
 }
 
@@ -311,10 +328,25 @@ pub fn plan(realm: &Realm, m: &Modify, layout: LayoutSet) -> Result<Plan, Modify
                     col.ty,
                     schema::ColumnType::Text(_) | schema::ColumnType::Memo
                 );
-                if !text && schema::number(v).is_err() {
+                if text {
+                    continue;
+                }
+                let Ok(n) = schema::number(v) else {
                     return Err(ModifyError::NotNumber {
                         table: t.name.to_string(),
                         column: c.clone(),
+                    });
+                };
+                // a number its record cannot hold would be cut short when written
+                if let Some((lo, hi)) = bounds(t, c)
+                    && (n.fract() != 0.0 || n < lo || n > hi)
+                {
+                    return Err(ModifyError::OutOfRange {
+                        table: t.name.to_string(),
+                        column: c.clone(),
+                        value: n,
+                        lo,
+                        hi,
                     });
                 }
             }
@@ -335,7 +367,11 @@ pub fn plan(realm: &Realm, m: &Modify, layout: LayoutSet) -> Result<Plan, Modify
         .first()
         .and_then(|&(_, v)| bounds(t, &rows.columns[v]))
         .unwrap_or((f64::from(i16::MIN), f64::from(i16::MAX)));
-    let in_scope = |row: &[Value]| m.range.as_ref().is_none_or(|r| in_range(t, &rows, row, r));
+    let only: std::collections::BTreeSet<i64> = m.only.iter().copied().collect();
+    let in_scope = |row: &[Value]| {
+        m.range.as_ref().is_none_or(|r| in_range(t, &rows, row, r))
+            && (only.is_empty() || only.contains(&number_of(t, &rows, row).1))
+    };
     let only_if = |row: &[Value]| m.only_if.iter().all(|c| passes(&rows, &slots, row, c));
     let each = |row: &[Value]| -> Step {
         if !in_scope(row) {
