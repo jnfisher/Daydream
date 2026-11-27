@@ -81,6 +81,17 @@ async function call<T>(method: string, url: string, body?: unknown, quiet = fals
   return json as T;
 }
 
+/** Where a monster group spawns (`/api/spawns`). */
+export interface Ladder {
+  group: number;
+  /** The group's monsters: number, name and Index, by Index then number. */
+  monsters: [number, string, number][];
+  /** Its spawning rooms by their Index range, with how many are on each map and have each name. */
+  ranges: { min: number; max: number; rooms: number; maps: [number, number][]; names: [string, number][] }[];
+  /** Its rooms that spawn nothing (no Max Index, no Max Regen, or a type that never spawns). */
+  idle: number;
+}
+
 /** One record changed since the realm was last read from its game or published (`/api/changes`). */
 export interface Change {
   stem: string;
@@ -245,6 +256,8 @@ export const api = {
   rowsWith: (table: string, columns: string[]) =>
     call<{ rows: [Cell[], Cell, Cell[]][] }>('GET', `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}`),
   row: (table: string, key: Cell[]) => call<Row>('GET', `${t(table)}/row${k(key)}`),
+  /** Where a monster group spawns: its monsters by Index, and its rooms by Index range. */
+  spawns: (group: number) => call<Ladder>('GET', `/api/spawns?group=${group}`),
   /** The rows of every table that name a record. */
   references: (table: string, key: Cell[]) =>
     call<References>('GET', `/api/references?table=${encodeURIComponent(table)}&key=${encodeURIComponent(JSON.stringify(key))}`),

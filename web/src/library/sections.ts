@@ -41,6 +41,11 @@ export interface Section {
   text?: { cols: string[]; label?: string };
   /** The rows of the world that name the record. */
   where?: boolean;
+  /**
+   * Drawn by a part of its own (a monster's attacks, how it is wired, where it spawns). Its
+   * fields and grid still say which columns it shows.
+   */
+  custom?: 'attacks' | 'wired' | 'spawns';
   /** Only for the records this says yes to (an item's fight, for a weapon). */
   when?: (get: (col: string) => Cell) => boolean;
   /** Closed until opened. */

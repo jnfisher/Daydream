@@ -44,6 +44,12 @@
     open = !section.folded;
   });
 
+  // a monster's own parts come in the first time one is shown
+  let parts = $state<typeof import('./parts') | null>(null);
+  $effect(() => {
+    if (section.custom && !parts) void import('./parts').then((m) => (parts = m));
+  });
+
   const fields = $derived((section.fields ?? []).filter((f) => draft.has(f.col)));
   const strips = $derived(fields.some((f) => f.strip));
   const own = $derived(Number(draft.get('Map Number')) || 0);
@@ -66,7 +72,17 @@
       <span class="hint">{section.hint}</span>
     {/if}
   </header>
-  {#if open}
+  {#if open && section.custom}
+    {#if !parts}
+      <p class="faint">Getting it ready…</p>
+    {:else if section.custom === 'attacks'}
+      <parts.Attacks {draft} />
+    {:else if section.custom === 'wired'}
+      <parts.Wired {draft} />
+    {:else}
+      <parts.Spawns {draft} {rowKey} {version} />
+    {/if}
+  {:else if open}
     {#if section.text}
       <GameText {draft} cols={section.text.cols} label={section.text.label} />
     {/if}

@@ -2,7 +2,8 @@
 //! and `links`), an exit's parameters by the exit's type, and the rooms that spawn a monster
 //! by its group and index. [`pointing_at`] lists the rows that name a record (the MCP
 //! server's `find_references`, and where a record card says a record is used); [`missing`]
-//! what a row names that the realm does not have (the MCP server's preview warnings).
+//! what a row names that the realm does not have (the MCP server's preview warnings);
+//! [`spawn_ladder`] a monster group's monsters by Index and the rooms that spawn from it.
 //!
 //! A value of 0 or less names nothing. A room's exits, control room and death room name a
 //! room on its own map, but a Map Change exit's room is on the map its Para1 names.
@@ -311,6 +312,48 @@ pub fn scan(
     Ok(())
 }
 
+/// A room's spawn fields, as silvermere's spawn passes read them (silvermere-engine
+/// `monsters/generate.rs`, `monsters/spawn_pass.rs`, `monsters/mod.rs`; silvermere-rules
+/// `spawn.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spawning {
+    /// `Mon Type`: the monster Group the room spawns from.
+    pub group: i64,
+    /// `Min Index`, `Max Index`: the Index range (a Min Index of 0 is no lower limit).
+    pub min: i64,
+    pub max: i64,
+    /// `Max Regen`: the most monsters it holds before it stops.
+    pub regen: i64,
+    /// `Type`.
+    pub room_type: i64,
+}
+
+impl Spawning {
+    /// The spawn fields of `row`, when the table has them.
+    pub fn of(rooms: &NmrRows, row: &[Value]) -> Option<Spawning> {
+        let v = |c: &str| rooms.position(c).map(|i| num(&row[i]).unwrap_or(0));
+        Some(Spawning {
+            group: v("Mon Type")?,
+            min: v("Min Index")?,
+            max: v("Max Index")?,
+            regen: v("Max Regen")?,
+            room_type: v("Type")?,
+        })
+    }
+
+    /// Whether the room spawns from its group at all: a type the passes fill (Normal, Shop,
+    /// Arena and Lair rooms; Shops only at start-up), room for a monster, and a Max Index
+    /// (a pick from the group needs one: `generate_monster`'s "nothing to choose from").
+    pub fn spawns(&self) -> bool {
+        self.regen > 0 && self.max != 0 && (0..=3).contains(&self.room_type)
+    }
+
+    /// Whether it spawns its group's monsters of `index`.
+    pub fn takes(&self, index: i64) -> bool {
+        self.spawns() && (self.min == 0 || index >= self.min) && index <= self.max
+    }
+}
+
 /// The rooms whose monster type is the monster's group, with its index in their range.
 fn spawning_rooms(
     tables: &mut Tables,
@@ -332,28 +375,118 @@ fn spawning_rooms(
         (group, gen_index)
     };
     let rooms = tables.rows(rooms_t)?;
-    let at = |c: &str| rooms.position(c);
-    let (Some(ty), Some(lo), Some(hi), Some(regen)) = (
-        at("Mon Type"),
-        at("Min Index"),
-        at("Max Index"),
-        at("Max Regen"),
-    ) else {
-        return Ok(());
-    };
     for row in &rooms.rows {
-        let v = |i: usize| num(&row[i]).unwrap_or(0);
-        if v(ty) == group
-            && v(regen) > 0
-            && (v(lo) == 0 || gen_index >= v(lo))
-            && (v(hi) == 0 || gen_index <= v(hi))
-        {
-            let by =
-                format!("spawns it (Mon Type {group}, Index {gen_index} within Min/Max Index)");
+        let Some(s) = Spawning::of(rooms, row) else {
+            return Ok(());
+        };
+        if s.group == group && s.takes(gen_index) {
+            let by = format!(
+                "spawns it (Mon Type {group}, Index {gen_index} within {} to {})",
+                s.min, s.max
+            );
             found.push(reference(rooms_t, rooms, row, None, by));
         }
     }
     Ok(())
+}
+
+/// Where a monster group spawns: its monsters by Index, and its rooms by the Index range
+/// they spawn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ladder {
+    /// The group's monsters: number, name and Index, by Index then number.
+    pub monsters: Vec<(i64, String, i64)>,
+    /// The rooms that spawn from the group, by their range (lowest Min Index first).
+    pub ranges: Vec<SpawnRange>,
+    /// The group's rooms that spawn nothing: no Max Index, no Max Regen, or a room type the
+    /// spawn passes leave alone.
+    pub idle: usize,
+}
+
+/// The rooms of a group with one Index range.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpawnRange {
+    pub min: i64,
+    pub max: i64,
+    pub rooms: usize,
+    /// How many are on each map, by map number.
+    pub maps: Vec<(i64, usize)>,
+    /// How many have each name, most first.
+    pub names: Vec<(String, usize)>,
+}
+
+/// A text cell up to its first NUL, as the editors show it.
+fn text_of(v: &Value) -> String {
+    match v {
+        Value::Text(s) => s.split('\0').next().unwrap_or("").to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The group `group`'s monsters and spawning rooms.
+pub fn spawn_ladder(tables: &mut Tables, group: i64) -> Result<Ladder, RowError> {
+    let mut ladder = Ladder::default();
+    {
+        let t = rows::record_table("Monsters")?;
+        let mons = tables.rows(t)?;
+        let at = |c: &str| mons.position(c);
+        if let (Some(n), Some(g), Some(ix), Some(name)) =
+            (at("Number"), at("Group"), at("Index"), at("Name"))
+        {
+            for row in &mons.rows {
+                if num(&row[g]) == Some(group) {
+                    let nm = text_of(&row[name]);
+                    ladder.monsters.push((
+                        num(&row[n]).unwrap_or(0),
+                        nm,
+                        num(&row[ix]).unwrap_or(0),
+                    ));
+                }
+            }
+        }
+        ladder.monsters.sort_by_key(|m| (m.2, m.0));
+    }
+    let t = rows::record_table("Rooms")?;
+    let rooms = tables.rows(t)?;
+    let (map, name) = (rooms.position("Map Number"), rooms.position("Name"));
+    type Tally = (HashMap<i64, usize>, HashMap<String, usize>, usize);
+    let mut by: HashMap<(i64, i64), Tally> = HashMap::new();
+    for row in &rooms.rows {
+        let Some(s) = Spawning::of(rooms, row) else {
+            break;
+        };
+        if s.group != group {
+            continue;
+        }
+        if !s.spawns() {
+            ladder.idle += 1;
+            continue;
+        }
+        let e = by.entry((s.min, s.max)).or_default();
+        *e.0.entry(map.and_then(|i| num(&row[i])).unwrap_or(0))
+            .or_default() += 1;
+        let nm = name.map_or_else(String::new, |i| text_of(&row[i]).trim().to_string());
+        *e.1.entry(nm).or_default() += 1;
+        e.2 += 1;
+    }
+    ladder.ranges = by
+        .into_iter()
+        .map(|((min, max), (maps, names, rooms))| {
+            let mut maps: Vec<_> = maps.into_iter().collect();
+            maps.sort();
+            let mut names: Vec<_> = names.into_iter().collect();
+            names.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            SpawnRange {
+                min,
+                max,
+                rooms,
+                maps,
+                names,
+            }
+        })
+        .collect();
+    ladder.ranges.sort_by_key(|r| (r.min, r.max));
+    Ok(ladder)
 }
 
 /// A value of a row that names a record the realm does not have.

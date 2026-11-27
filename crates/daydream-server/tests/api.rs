@@ -1062,6 +1062,16 @@ async fn a_row_says_what_it_was_when_last_published() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = get(dir.path(), "/api/references?table=Races&key=nope").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // where a monster group spawns: this realm has no monsters or rooms
+    let (status, body) = get(dir.path(), "/api/spawns?group=6").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        serde_json::json!({"group": 6, "monsters": [], "ranges": [], "idle": 0})
+    );
+    let (status, _) = get(dir.path(), "/api/spawns?group=six").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
