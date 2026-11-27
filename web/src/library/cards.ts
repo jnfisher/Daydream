@@ -47,6 +47,9 @@ export interface CardDef {
   summary?: (get: Get) => string;
   filters?: (rows: { key: Cell[]; get: Get }[]) => Filter[];
   peers?: Peers;
+  /** The numbers, of the list's columns, that say how alike two records are: Compare starts
+   * with the closest by them. */
+  measures?: string[];
   /** The chips beside the record's number in its header. */
   tags?: (get: Get) => string[];
   /** What is wrong with a record beyond what every card checks; `lines` reads a message
@@ -106,6 +109,7 @@ const ITEMS: CardDef = {
     return label(ITEM_TYPE, get('Type'));
   },
   filters: byList('Type', ITEM_TYPE),
+  measures: ['Min Hit', 'Max Hit', 'Speed', 'Accuracy', 'Req Str', 'Weight', 'AC', 'DR'],
   peers: {
     same: (mine, other) => {
       if (num(other('Type')) !== num(mine('Type'))) return false;
@@ -208,6 +212,7 @@ const MONSTERS: CardDef = {
     ...byList('Type', MONSTER_TYPE)!(rows),
     ...(rows.some((r) => num(r.get('Undead'))) ? [{ label: 'Undead', test: (get: Get) => num(get('Undead')) !== 0 }] : []),
   ],
+  measures: ['Hit Points', 'Experience', 'AC', 'DR', 'MR', 'Energy', 'HP Regen', 'BS Defense'],
   peers: {
     same: (mine, other) => num(other('Group')) === num(mine('Group')),
     says: (mine) => `every ${label(MONSTER_GROUP, mine('Group'))} monster`,

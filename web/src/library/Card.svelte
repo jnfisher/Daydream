@@ -8,6 +8,7 @@
 
 <script lang="ts">
   import Copy from '@lucide/svelte/icons/copy';
+  import GitCompare from '@lucide/svelte/icons/git-compare';
   import History from '@lucide/svelte/icons/history';
   import List from '@lucide/svelte/icons/list';
   import MapIcon from '@lucide/svelte/icons/map';
@@ -23,6 +24,7 @@
   import { app, takeBack } from '../shell/state.svelte';
   import CardSection from './CardSection.svelte';
   import { CARDS } from './cards';
+  import Compare from './Compare.svelte';
   import { shown, type Draft } from './draft.svelte';
   import { keyLabel, nextKey, type ListRow } from './list';
   import { nameOf } from './names.svelte';
@@ -106,6 +108,7 @@
   }
 
   let deleting = $state(false);
+  let comparing = $state(false);
   const taken = (l: string) => rows.some((r) => r.label === l);
 
   // ---- what is wrong with it -------------------------------------------------------------
@@ -246,6 +249,11 @@
         >
           <Copy size={14} /> Copy
         </NewRecord>
+        {#if numeric.every(Boolean) && rows.length > 1 && table.name !== 'Textblocks'}
+          <button type="button" class="btn sm" onclick={() => (comparing = true)} title="Put this {one} beside the most like it, the differences marked">
+            <GitCompare size={14} /> Compare
+          </button>
+        {/if}
         {#if table.name === 'Rooms'}
           <a class="btn sm" href="#/world/{key[0]}/{key[1]}" title="Open the map at this room"><MapIcon size={14} /> On the map</a>
         {/if}
@@ -277,6 +285,10 @@
       </div>
     {/if}
   </header>
+
+  {#if comparing}
+    <Compare bind:open={comparing} {draft} {table} {rows} sections={checked} {def} />
+  {/if}
 
   <div class="cols" class:single={!side.length}>
     <div class="col">

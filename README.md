@@ -201,7 +201,11 @@ says what is wrong with its record, each with a one-click fix that fills in the 
 Save keeps it and Undo takes it back): a value its field can't hold, checked as you type
 (Save waits until it is fixed), a number that names a record the world does not have, an
 empty slot still holding an old entry's values, and for a monster, an attack no blow picks
-or a blank placeholder message players would read. Players keep today's editor for now.
+or a blank placeholder message players would read. **Compare** puts the record beside the
+three most like it (a weapon among its weapon type and a monster among its group, by their
+numbers; a room beside the rooms next to it), field by field under the card's headings, the
+values that differ in yellow; a click copies one across, and any record of the table can be
+added. Players keep today's editor for now.
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
