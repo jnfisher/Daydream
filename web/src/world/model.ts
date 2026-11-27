@@ -69,6 +69,12 @@ export interface Dig {
 export const DIRS = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW', 'U', 'D'];
 export const DIR_WORDS = ['north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest', 'up', 'down'];
 
+/** The direction each key goes on the map: the arrows and the keys beside them, and the number pad. */
+export const KEY_DIR: Record<string, number> = {
+  ArrowUp: 0, ArrowDown: 1, ArrowRight: 2, ArrowLeft: 3, PageUp: 4, Home: 5, PageDown: 6, End: 7,
+  Numpad8: 0, Numpad2: 1, Numpad6: 2, Numpad4: 3, Numpad9: 4, Numpad7: 5, Numpad3: 6, Numpad1: 7,
+};
+
 /** The exit types' names (EXIT_TYPE in the editors' lists). */
 export const EXIT_KINDS = [
   'Normal', 'Spell', 'Key', 'Item', 'Toll', 'Action', 'Hidden', 'Door', 'Map change', 'Trap', 'Text', 'Gate',

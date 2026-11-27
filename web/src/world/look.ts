@@ -3,7 +3,7 @@
 
 import { ICONS, type IconNode } from './icons';
 import type { MapExit, MapRoom } from './model';
-import { LIGHT_WORDS } from './picks';
+import { LIGHT_WORDS } from './light';
 
 // ---- colours -------------------------------------------------------------------------
 

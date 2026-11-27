@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { MapRoom } from './model.ts';
-import { after, clickHow, howOf, inside, lightWord, PICK_FIELDS, regionOf, shared, sharedOf, withValues } from './picks.ts';
+import { lightWord } from './light.ts';
+import { after, clickHow, howOf, inside, PICK_FIELDS, regionOf, shared, sharedOf, withValues } from './picks.ts';
 
 const [N, S, E, W] = [0, 1, 2, 3];
 
