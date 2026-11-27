@@ -14,6 +14,7 @@
   import { shown, type Draft } from './draft.svelte';
   import FieldInput from './FieldInput.svelte';
   import GameText from './GameText.svelte';
+  import type { ListRow } from './list';
   import { columnsOf, type Section } from './sections';
   import Strip from './Strip.svelte';
   import Where from './Where.svelte';
@@ -25,6 +26,7 @@
     rowKey,
     version,
     peers,
+    peerRows,
     peersSay,
   }: {
     draft: Draft;
@@ -35,6 +37,8 @@
     version: number;
     /** The peers' values of a column, for its strip. */
     peers: (col: string) => number[] | null;
+    /** The peers themselves, for a scatter. */
+    peerRows: ListRow[];
     peersSay: string;
   } = $props();
 
@@ -52,10 +56,11 @@
     return () => window.removeEventListener('dd:reveal', reveal);
   });
 
-  // a monster's own parts come in the first time one is shown
+  // the parts only some records need come in the first time one is shown
   let parts = $state<typeof import('./parts') | null>(null);
+  const scatter = $derived(open && section.scatter && peerRows.length ? section.scatter : null);
   $effect(() => {
-    if (section.custom && !parts) void import('./parts').then((m) => (parts = m));
+    if ((section.custom || scatter) && !parts) void import('./parts').then((m) => (parts = m));
   });
 
   const fields = $derived((section.fields ?? []).filter((f) => draft.has(f.col)));
@@ -122,6 +127,9 @@
           </div>
         {/each}
       </div>
+    {/if}
+    {#if scatter && parts}
+      <parts.Scatter {draft} {table} rows={peerRows} x={scatter.x} y={scatter.y} xLabel={scatter.xLabel} yLabel={scatter.yLabel} note={scatter.note} says={peersSay} />
     {/if}
     {#if section.matrix}
       <table class="matrix-t">

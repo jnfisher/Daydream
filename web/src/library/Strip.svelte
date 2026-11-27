@@ -27,6 +27,6 @@
 <style>
   .strip { display: block; flex: none; overflow: visible; }
   .base { stroke: var(--line-2); stroke-width: 1; }
-  .tick { stroke: var(--ink-3); stroke-width: 1.5; opacity: .55; }
-  .me { fill: var(--pink); stroke: var(--surface); stroke-width: 2; }
+  .tick { stroke: var(--dot); stroke-width: 1.5; opacity: .6; }
+  .me { fill: var(--dot-me); stroke: var(--surface); stroke-width: 2; }
 </style>

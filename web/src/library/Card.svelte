@@ -293,13 +293,13 @@
   <div class="cols" class:single={!side.length}>
     <div class="col">
       {#each main as s (s.id)}
-        <CardSection {draft} section={s} table={table.name} rowKey={key} {version} {peers} {peersSay} />
+        <CardSection {draft} section={s} table={table.name} rowKey={key} {version} {peers} {peerRows} {peersSay} />
       {/each}
     </div>
     {#if side.length}
       <div class="col">
         {#each side as s (s.id)}
-          <CardSection {draft} section={s} table={table.name} rowKey={key} {version} {peers} {peersSay} />
+          <CardSection {draft} section={s} table={table.name} rowKey={key} {version} {peers} {peerRows} {peersSay} />
         {/each}
       </div>
     {/if}

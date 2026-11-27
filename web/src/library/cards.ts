@@ -141,6 +141,7 @@ const ITEMS: CardDef = {
         F('Req Str', 'Strength needed', { strip: true }),
         F('Weight', { strip: true }),
       ],
+      scatter: { x: 'Speed', y: 'Max Hit', note: 'Lower speed is faster.' },
     },
     {
       id: 'wear',

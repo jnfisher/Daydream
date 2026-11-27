@@ -188,7 +188,8 @@ NMR's labels: an item's fight, what players see (its text as the game shows it),
 abilities by name, who may use it, and where it is in the world (the shops that sell it, the
 monsters that drop or wield it, the rooms it lies in). A number that names a record shows it
 as a chip, which opens it beside the page, with a search to pick another by name. A number is
-drawn among its peers' (every 1H Sharp weapon) to read in context. A field changed since
+drawn among its peers' (every 1H Sharp weapon) to read in context, and a weapon's Max Hit
+against its Speed among theirs, its own dot moving as you type and each of theirs opening it. A field changed since
 publishing shows what it was, struck through, and the header counts those changes and takes
 them back. **All fields** lays out every column as NMR's forms do, and **Copy** makes a new
 record from the open one, as NMR's Insert does. A monster's card plays its attacks as a fight
