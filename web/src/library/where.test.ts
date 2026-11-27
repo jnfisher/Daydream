@@ -64,3 +64,19 @@ test('rooms that spawn a monster, and columns no phrase covers', () => {
     ['Spawns in 1 room', '1 gang, by Leader'],
   );
 });
+
+test('scripts that name the record, each block once with every line', () => {
+  const groups = groupReferences(
+    [
+      ref('Textblocks', [5, 0], 'Data', 'quest', 'line 1: message 9'),
+      ref('Textblocks', [5, 0], 'Data', 'quest', 'line 4: message 9'),
+      ref('Textblocks', [7, 0], 'Link To', 'start'),
+    ],
+    counted,
+  );
+  assert.deepEqual(
+    groups.map((g) => g.says),
+    ['Linked to from 1 textblock', 'Named in the scripts of 1 textblock'],
+  );
+  assert.deepEqual(groups[1]!.rows[0]!.by, ['line 1: message 9', 'line 4: message 9']);
+});

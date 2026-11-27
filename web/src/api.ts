@@ -252,7 +252,7 @@ const t = (table: string) => `/api/tables/${encodeURIComponent(table)}`;
 const k = (key: Cell[]) => `?key=${encodeURIComponent(JSON.stringify(key))}`;
 
 /** One of the checks that read the wiring across the world (`/api/checks`). */
-export type CheckId = 'prices' | 'spelling' | 'placeholders' | 'spawns';
+export type CheckId = 'prices' | 'spelling' | 'placeholders' | 'messages' | 'spawns';
 
 /** A check, and how many of its findings are at each level. */
 export interface CheckInfo {

@@ -1,8 +1,9 @@
 <!--
   Home's checks that read the wiring, across the whole world (the server's /api/checks):
-  prices against what is said, spelling, placeholders, and spawns nobody reaches. Each check
-  is a tab with its counts. Its findings name their records as chips, warnings first, and what
-  was checked and holds stays folded away. Read again after each save, while Home is open.
+  prices against what is said, spelling, placeholders, messages that read wrong, and spawns
+  nobody reaches. Each check is a tab with its counts. Its findings name their records as
+  chips, warnings first, and what was checked and holds stays folded away. Read again after
+  each save, while Home is open.
 -->
 <svelte:options css="injected" />
 
@@ -12,6 +13,7 @@
   import Coins from '@lucide/svelte/icons/coins';
   import Ghost from '@lucide/svelte/icons/ghost';
   import Info from '@lucide/svelte/icons/info';
+  import MessageSquareText from '@lucide/svelte/icons/message-square-text';
   import SpellCheck from '@lucide/svelte/icons/spell-check';
   import StickyNote from '@lucide/svelte/icons/sticky-note';
   import TriangleAlert from '@lucide/svelte/icons/triangle-exclamation-point';
@@ -22,13 +24,13 @@
   import { app } from './state.svelte';
   import { messageOf, toast } from './toasts.svelte';
 
-  const ICON = { prices: Coins, spelling: SpellCheck, placeholders: StickyNote, spawns: Ghost };
+  const ICON = { prices: Coins, spelling: SpellCheck, placeholders: StickyNote, messages: MessageSquareText, spawns: Ghost };
   const LEVEL = { warn: TriangleAlert, note: Info, ok: CircleCheck };
   const FIRST = 12;
   const MORE = 30;
 
   let info: CheckInfo[] = $state([]);
-  let pick = $state<CheckId>((['prices', 'spelling', 'placeholders', 'spawns'] as const).find((c) => c === read('dd-home-check', '')) ?? 'prices');
+  let pick = $state<CheckId>((['prices', 'spelling', 'placeholders', 'messages', 'spawns'] as const).find((c) => c === read('dd-home-check', '')) ?? 'prices');
   let found: Finding[] = $state([]);
   let total = $state(0);
   let wanted = $state(FIRST);

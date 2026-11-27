@@ -1,10 +1,13 @@
 //! Getting an agent's edits in and showing what they do, at a cost in proportion to the change:
-//! edits read from a file instead of retyped as tool arguments, `clone` edits that copy a row,
-//! and previews that leave out what an insert leaves blank.
+//! edits read from a file instead of retyped as tool arguments, `clone` edits that copy a row
+//! (and, with `messages`, the messages it uses, its name swapped for the new one), and
+//! previews that leave out what an insert leaves blank.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use daydream_nmr::rows::{self, Edit, Preview};
+use daydream_nmr::{fields, messages};
 use daydream_store::Realm;
 use serde_json::{Map, Value, json};
 
@@ -104,16 +107,21 @@ pub fn file_edits(v: Value) -> Result<(Value, Option<Value>), ToolError> {
 }
 
 /// Turns the agent's edits into the library's, writing out each `clone` as the insert it
-/// stands for: the `from` row's values with `values` over them.
+/// stands for: the `from` row's values with `values` over them, after the inserts of the
+/// messages it copies.
 pub fn expand(realm: &Realm, edits: &Value) -> Result<Vec<Edit>, ToolError> {
     let list = edits
         .as_array()
         .ok_or_else(|| bad("edits must be a list"))?;
+    let mut copies = Copies::new(list);
     let mut out = Vec::with_capacity(list.len());
     for (i, e) in list.iter().enumerate() {
         let at = |msg: String| bad(format!("edit {i}: {msg}"));
         if e.get("op").and_then(Value::as_str) == Some("clone") {
-            out.push(clone_edit(realm, e).map_err(|err| at(err.to_string()))?);
+            let insert = clone_edit(realm, e).map_err(|err| at(err.to_string()))?;
+            let made =
+                copy_messages(realm, e, insert, &mut copies).map_err(|err| at(err.to_string()))?;
+            out.extend(made);
         } else {
             out.push(serde_json::from_value(e.clone()).map_err(|err| at(err.to_string()))?);
         }
@@ -161,6 +169,169 @@ fn clone_edit(realm: &Realm, e: &Value) -> Result<Edit, ToolError> {
         table: t.name.to_string(),
         values,
     })
+}
+
+/// The message numbers a batch's clones copy into: above the realm's highest and any the
+/// batch's own inserts take.
+struct Copies {
+    /// Numbers the batch's inserts take.
+    taken: HashSet<i64>,
+    /// The realm's messages, by number (read when a clone first copies one).
+    lines: Option<HashMap<i64, [String; 3]>>,
+    /// The next number to give.
+    next: i64,
+}
+
+impl Copies {
+    fn new(list: &[Value]) -> Copies {
+        let taken = list
+            .iter()
+            .filter(|e| {
+                e.get("op").and_then(Value::as_str) == Some("insert")
+                    && e.get("table")
+                        .and_then(Value::as_str)
+                        .is_some_and(|t| t.eq_ignore_ascii_case("Messages"))
+            })
+            .filter_map(|e| {
+                e.get("values")?
+                    .as_object()?
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("Number"))?
+                    .1
+                    .as_i64()
+            })
+            .collect();
+        Copies {
+            taken,
+            lines: None,
+            next: 0,
+        }
+    }
+
+    /// The realm's messages, read once.
+    fn lines(&mut self, realm: &Realm) -> Result<&HashMap<i64, [String; 3]>, ToolError> {
+        if self.lines.is_none() {
+            let t = rows::record_table("Messages")?;
+            let (_, all) = rows::load(realm, t)?;
+            let at = |c: &str| all.position(c);
+            let (n, l1, l2, l3) = (at("Number"), at("Line 1"), at("Line 2"), at("Line 3"));
+            let text = |row: &[daydream_nmr::Value], i: Option<usize>| match i.map(|i| &row[i]) {
+                Some(daydream_nmr::Value::Text(s)) => {
+                    s.split('\0').next().unwrap_or("").to_string()
+                }
+                _ => String::new(),
+            };
+            let mut map = HashMap::new();
+            for row in &all.rows {
+                if let Some(num) = n.and_then(|i| daydream_nmr::refs::num(&row[i])) {
+                    map.insert(num, [text(row, l1), text(row, l2), text(row, l3)]);
+                }
+            }
+            let top = map.keys().chain(&self.taken).copied().max().unwrap_or(0);
+            self.next = top + 1;
+            self.lines = Some(map);
+        }
+        Ok(self.lines.as_ref().expect("read above"))
+    }
+
+    /// A number no message has and no insert of the batch takes.
+    fn take(&mut self) -> i64 {
+        while self.taken.contains(&self.next) {
+            self.next += 1;
+        }
+        self.taken.insert(self.next);
+        self.next += 1;
+        self.next - 1
+    }
+}
+
+/// A clone with `messages`: copies of the messages it uses as inserts, each line with the
+/// copied row's name swapped for the clone's, then the clone pointing at them. `named` copies
+/// the messages whose lines name the row, `all` every one; a message several columns use is
+/// copied once.
+fn copy_messages(
+    realm: &Realm,
+    e: &Value,
+    insert: Edit,
+    copies: &mut Copies,
+) -> Result<Vec<Edit>, ToolError> {
+    let all = match e.get("messages") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => return Ok(vec![insert]),
+        Some(Value::Bool(true)) => false,
+        Some(v) if v.as_str() == Some("named") => false,
+        Some(v) if v.as_str() == Some("all") => true,
+        Some(_) => return Err(bad("messages is named or all")),
+    };
+    let Edit::Insert { table, mut values } = insert else {
+        return Ok(vec![insert]);
+    };
+    let t = rows::record_table(&table)?;
+    // the copied row's name, and the clone's
+    let from = rows::parse_key(t, e.get("from").unwrap_or(&Value::Null))?;
+    let (_, rows_of) = rows::load(realm, t)?;
+    let old_name = rows::find_row(&rows_of, &rows::index_columns(t), &from)
+        .and_then(|row| rows_of.position("Name").map(|i| &row[i]))
+        .and_then(|v| match v {
+            daydream_nmr::Value::Text(s) => {
+                Some(s.split('\0').next().unwrap_or("").trim().to_string())
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    let new_name = values
+        .get("Name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // the columns the agent set itself keep what it set
+    let given: HashSet<String> = e
+        .get("values")
+        .and_then(Value::as_object)
+        .map(|o| o.keys().map(|k| k.to_ascii_lowercase()).collect())
+        .unwrap_or_default();
+    let cols: Vec<&str> = t
+        .columns
+        .iter()
+        .map(|c| c.name)
+        .filter(|c| {
+            fields::column(t.name, c).and_then(|i| i.target()) == Some("Messages")
+                && !given.contains(&c.to_ascii_lowercase())
+        })
+        .collect();
+    let mut copied: HashMap<i64, i64> = HashMap::new();
+    let mut out = Vec::new();
+    for c in cols {
+        let Some(m) = values.get(c).and_then(Value::as_i64).filter(|m| *m > 0) else {
+            continue;
+        };
+        if let Some(&n) = copied.get(&m) {
+            values.insert(c.to_string(), json!(n));
+            continue;
+        }
+        let Some(lines) = copies.lines(realm)?.get(&m).cloned() else {
+            continue;
+        };
+        let swapped = lines.map(|l| messages::swap_name(&l, &old_name, &new_name));
+        if !all && swapped.iter().all(|(_, n)| *n == 0) {
+            continue;
+        }
+        let n = copies.take();
+        copied.insert(m, n);
+        values.insert(c.to_string(), json!(n));
+        let [l1, l2, l3] = swapped.map(|(l, _)| l);
+        out.push(Edit::Insert {
+            table: "Messages".into(),
+            values: Map::from_iter([
+                ("Number".to_string(), json!(n)),
+                ("Line 1".to_string(), json!(l1)),
+                ("Line 2".to_string(), json!(l2)),
+                ("Line 3".to_string(), json!(l3)),
+            ]),
+        });
+    }
+    out.push(Edit::Insert { table, values });
+    Ok(out)
 }
 
 /// Whether a value is what a new row starts with in that column.

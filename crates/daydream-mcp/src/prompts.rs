@@ -10,18 +10,20 @@ use serde_json::{Value, json};
 pub const INSTRUCTIONS: &str = "\
 Daydream edits a MajorMUD realm in Nightmare Redux's terms (tables, columns and keys as NMR names them).
 
-Reading: list_tables, describe_table, list_rows, get_row, get_map, free_numbers and find_references. describe_table \
-gives each column's choice list, what it refers to, and notes on what the game does with it: read them before \
-writing a table. game_status says what is open, \
-whether edits go to the game's own files or a working copy, and whether the game is running.
+Reading: list_tables, describe_table, list_rows, get_row, get_message, get_map, free_numbers and find_references. \
+describe_table gives each column's choice list, what it refers to, and notes on what the game does with it: read \
+them before writing a table. get_message gives a message's lines as the game reads them, with every record that uses \
+it. game_status says what is open, whether edits go to the game's own files or a working copy, and whether the game \
+is running.
 
 Changing: preview_edits, show the user what will change, then apply_edits with its token. Give every batch of one \
 piece of work the same changeset label, so undo with that changeset takes the whole piece back. Each applied batch \
 keeps its edits in the realm's undo journal.
 
 Checking: check_world reads the wiring across the world, as the editors' Home does: prices that are not what the \
-words say, likely typos, placeholders left in, rooms that spawn nothing and monsters nothing brings. After a batch, \
-run it on what you made (table and key) and tell the user what it finds.
+words say, likely typos, placeholders left in, messages that read wrong (a line naming another creature, an arrival \
+line the wrong way round), rooms that spawn nothing and monsters nothing brings. After a batch, run it on what you \
+made (table and key) and tell the user what it finds.
 
 How to work well:
 - Before copying an existing row as a template, get_row it in full: stock rows hold junk in unused columns and \
@@ -30,16 +32,18 @@ placeholder numbers (a monster with messages 1, 1, 1).
 against one known example before building on it, and tell the user what is checked and what is a guess.
 - Build one of each kind first (one room, one monster, one item), apply it, and ask the user to try it in the game \
 before making many.
-- Message rows are three-line bundles shared between monsters; a line may name the original creature. Read a \
-bundle, and find_references to see who else uses it, before reusing it.
+- Message rows are three-line bundles shared between monsters, items and spells; a line may name the original \
+creature. get_message shows what each line reads as and every record that uses it: read it before reusing or \
+changing a message, since a change reaches every user. To copy a monster with messages of its own, clone it with \
+\"messages\": \"named\".
 - Report progress to the user in milestones they can see, not tool by tool.";
 
 /// The steps every prompt ends with.
 const STEPS: &str = "\
 Work in this order:
 1. Call game_status, then read the tables involved (describe_table, with its notes) and the existing rows most like \
-what is wanted (list_rows, get_row in full). Note junk values and placeholder numbers in them, and use \
-find_references on anything you mean to share, such as a message.
+what is wanted (list_rows, get_row in full). Note junk values and placeholder numbers in them, and read \
+who else uses anything you mean to share (get_message for a message, find_references for the rest).
 2. Write a short plan for the user: the numbers to use (free_numbers), the rows to add or change, and anything \
 inferred rather than checked. Wait for the user's go ahead.
 3. Make one of each kind first under a changeset label, preview it, show the user, apply it, and ask the user to \
@@ -91,7 +95,8 @@ const PROMPTS: &[Prompt] = &[
         ],
         ask: "Add a monster to this realm: {idea}\nStart from: {like}\n\
               Give it its own hit, move and death message rows that name it, rather than borrowing \
-              another monster's.",
+              another monster's (a clone with \"messages\": \"named\" copies the ones that name its \
+              template, with the name swapped).",
     },
     Prompt {
         name: "new_item",

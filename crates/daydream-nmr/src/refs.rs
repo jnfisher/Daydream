@@ -1,6 +1,6 @@
 //! What points at what: the columns that hold another record's number (`fields.json`'s `ref`
-//! and `links`), an exit's parameters by the exit's type, and the rooms that spawn a monster
-//! by its group and index. [`pointing_at`] lists the rows that name a record (the MCP
+//! and `links`), an exit's parameters by the exit's type, what text blocks' scripts name
+//! ([`script_names`]), and the rooms that spawn a monster by its group and index. [`pointing_at`] lists the rows that name a record (the MCP
 //! server's `find_references`, and where a record card says a record is used); [`missing`]
 //! what a row names that the realm does not have (the MCP server's preview warnings);
 //! [`spawn_ladder`] a monster group's monsters by Index and the rooms that spawn from it.
@@ -16,6 +16,7 @@ use crate::NmrRows;
 use crate::fields::{self, ColumnInfo};
 use crate::rows::{self, RowError};
 use crate::schema::{NmrTable, Value};
+use crate::script;
 
 /// The most rows [`pointing_at`] lists.
 pub const MAX: usize = 500;
@@ -245,6 +246,7 @@ pub fn scan(
             })
             .collect();
         let row_map = at("Map Number");
+        let data_col = (t.name == "Textblocks").then(|| at("Data")).flatten();
         for row in &all.rows {
             for &(i, c, target, set) in &cols {
                 let Some(v) = num(&row[i]).filter(|v| *v > 0) else {
@@ -275,6 +277,22 @@ pub fn scan(
                         named,
                         reference(t, all, row, Some(c.to_string()), c.to_string()),
                     );
+                }
+            }
+            // what a text block's scripts name
+            if let Some(d) = data_col
+                && let Value::Text(data) = &row[d]
+            {
+                for (target, named, by) in script_names(data.split('\0').next().unwrap_or("")) {
+                    if let Some((&target, set)) = targets.get_key_value(target)
+                        && set.contains(&named)
+                    {
+                        found(
+                            target,
+                            named,
+                            reference(t, all, row, Some("Data".to_string()), by),
+                        );
+                    }
                 }
             }
             // exit parameters, by each exit's type
@@ -310,6 +328,52 @@ pub fn scan(
         }
     }
     Ok(())
+}
+
+/// What a text block's scripts name, as the game reads them ([`script`]): each clause's
+/// records (a message, an item, a monster, a spell, a text block, a class, a race, the room a
+/// teleport lands in) and each topic's text block, with how (`line 2: message 1711`). A part
+/// read as text names nothing.
+pub fn script_names(data: &str) -> Vec<(&'static str, Named, String)> {
+    let mut out = Vec::new();
+    for line in script::lines_of(data, script::reading_of(data)) {
+        if let Some(b) = line.block.filter(|b| *b > 0) {
+            let asked = line.pattern.as_deref().unwrap_or("").trim();
+            out.push((
+                "Textblocks",
+                Named::Number(i64::from(b)),
+                format!("line {}: asked “{asked}”", line.no),
+            ));
+        }
+        for c in &line.clauses {
+            let Some(kw) = c.kw else {
+                continue;
+            };
+            let by = || format!("line {}: {}", line.no, c.text.trim());
+            for &(name, v) in &c.n {
+                let table = match name {
+                    "msg" => "Messages",
+                    "item" => "Items",
+                    "monster" => "Monsters",
+                    "spell" => "Spells",
+                    "block" => "Textblocks",
+                    "class" => "Classes",
+                    "race" => "Races",
+                    _ => continue,
+                };
+                if v > 0 {
+                    out.push((table, Named::Number(i64::from(v)), by()));
+                }
+            }
+            if kw == "teleport" {
+                let (room, map) = (c.get("room"), c.get("map"));
+                if room > 0 && map > 0 {
+                    out.push(("Rooms", Named::Room(i64::from(map), i64::from(room)), by()));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A room's spawn fields, as silvermere's spawn passes read them (silvermere-engine

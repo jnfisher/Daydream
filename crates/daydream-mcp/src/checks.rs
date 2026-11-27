@@ -119,10 +119,20 @@ pub fn warnings(
                     let value = match named {
                         Named::Number(n) | Named::Room(_, n) => n,
                     };
-                    rows::record_table(r.table)
+                    let cell = rows::record_table(r.table)
                         .ok()
                         .and_then(|rt| rt.columns.iter().position(|c| c.name == column.as_str()))
-                        .is_some_and(|i| refs::num(&row[i]) == Some(value))
+                        .map(|i| &row[i]);
+                    match cell {
+                        // a script: what its new text names
+                        Some(daydream_nmr::Value::Text(data)) if r.table == "Textblocks" => {
+                            refs::script_names(data.split('\0').next().unwrap_or(""))
+                                .iter()
+                                .any(|(t, n, _)| *t == table && *n == named)
+                        }
+                        Some(v) => refs::num(v) == Some(value),
+                        None => false,
+                    }
                 }
             };
             if names_it && let Some(what) = deleted_by.get(&(table, named)) {

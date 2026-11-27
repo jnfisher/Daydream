@@ -1,6 +1,7 @@
 //! The checks that read the wiring, on the stock 1.11p world: what they find there is known,
 //! so each check is held to it (a price the smith's words contradict, a casino line that
-//! charges ten times its twins, rooms that spawn nothing, a blank blow, a typo).
+//! charges ten times its twins, rooms that spawn nothing, a blank blow, a typo, a troll that
+//! arrives backwards).
 
 use daydream_nmr::wiring::{self, Check, Level, Rec, Report};
 
@@ -77,4 +78,31 @@ fn the_stock_world_s_spelling() {
         .filter(|f| f.check == Check::Spelling)
         .count();
     assert!((400..800).contains(&n), "{n} spelling findings");
+}
+
+#[test]
+fn the_stock_world_s_messages() {
+    let r = stock();
+    // arrival lines the game fills where-from first, on monsters without a name list
+    let backwards = said(&r, Check::Messages, Level::Warn);
+    assert!(
+        backwards.contains(&"monster 82: When it appears, the room reads “A the north lumbers in from troll.” (line 1 of message 8574 (A %s lumbers in from %s.)): without a name list (Desc Txt) the game gives where it came from first, then its name. Write the line that way round, or give it a message that is.".to_string()),
+        "{backwards:#?}"
+    );
+    assert!((10..25).contains(&backwards.len()), "{backwards:#?}");
+    // a death line written for another monster that reads it too
+    let notes = said(&r, Check::Messages, Level::Note);
+    assert!(
+        notes.iter().any(|n| n.starts_with(
+            "monster 247: When it dies, the room reads “Aiken utters a sharp cry, and dies.” (line 3 of message 8465"
+        )),
+        "{notes:#?}"
+    );
+    // the gnomes' “from the the north”, on the message they share
+    let gnomes = r
+        .findings
+        .iter()
+        .find(|f| f.check == Check::Messages && f.about == Rec::of("Messages", 1506))
+        .unwrap();
+    assert_eq!(gnomes.refs.len(), 5, "{}", r.text(gnomes));
 }
