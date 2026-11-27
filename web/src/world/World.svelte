@@ -706,6 +706,7 @@
     savePins,
     quiet: () => dismiss(buildToast),
     colour: (by) => setColour(by, true),
+    stamp: (id) => void holdSaved(id),
   };
 
   /** The drawer of stamps open (Build mode with it) or put away. */
@@ -725,6 +726,12 @@
     if (on && !building) setBuilding(true);
     stamper?.opened(on);
     sfx('toggle');
+  }
+
+  /** The stamps opened holding one saved from the map. */
+  async function holdSaved(id: string) {
+    await setStamping(true);
+    if (stamping) stamper?.pickSaved(id);
   }
 
   /** The Select tool taken up (its panel with it) or put away; the rooms picked wait for it. */

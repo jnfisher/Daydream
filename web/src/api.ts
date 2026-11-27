@@ -2,7 +2,7 @@
 
 import type { Ref } from './library/script';
 import type { References } from './library/where';
-import type { Dig, MapAnswer, MapFile } from './world/model';
+import type { Dig, MapAnswer, MapFile, SavedStamp, StampsFile } from './world/model';
 import type { StampRequest } from './world/stamps';
 
 export type Cell = number | string | null;
@@ -386,6 +386,11 @@ export const api = {
   mapFile: () => call<MapFile>('GET', '/api/map/pins'),
   /** An exported file: each map it has takes its places. */
   importMapFile: (file: MapFile) => call<{ maps: number; pins: number; step: number }>('POST', '/api/map/pins/import', file, true),
+  /** The stamps saved from the map, kept beside the working copy as its places are. */
+  savedStamps: () => call<StampsFile>('GET', '/api/map/stamps'),
+  /** Saves a stamp: a new one (no id) takes the next id, and one with an id replaces it or comes back. Answers the realm history's newest step. */
+  saveStamp: (s: Omit<SavedStamp, 'id'> & { id?: string }) => call<{ stamp: SavedStamp; stamps: number; step: number }>('POST', '/api/map/stamps', s, true),
+  dropStamp: (id: string) => call<{ stamps: number; step: number }>('DELETE', `/api/map/stamps/${encodeURIComponent(id)}`, undefined, true),
   publishPlan: () => call<PublishPlan>('GET', '/api/publish'),
   publish: (way: PublishWayId, warn?: PublishWarn) => call<PublishJob>('POST', '/api/publish', { way, warn }),
   publishJob: () => call<PublishJob | null>('GET', '/api/publish/job'),

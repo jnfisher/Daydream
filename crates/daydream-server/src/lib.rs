@@ -35,7 +35,7 @@ use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use daydream_store::{Realm, RealmFile, StoreError, WbtrvDb};
 use daydream_types::records::LayoutSet;
@@ -57,6 +57,7 @@ pub mod pins;
 pub mod publish;
 pub mod reports;
 pub mod silvermere;
+pub mod stamps;
 pub mod tables;
 pub mod tools;
 
@@ -70,7 +71,7 @@ pub struct AppState {
     current: RwLock<Arc<Current>>,
     /// Held by every write, so two saves never interleave (and no game is opened mid-save).
     write: Mutex<()>,
-    /// Held while the map's side file is written ([`pins`]).
+    /// Held while the map's side files are written ([`pins`], [`stamps`]).
     side: Mutex<()>,
     /// The access token, when the server takes requests from other machines ([`auth`]).
     token: Option<String>,
@@ -366,6 +367,8 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/map/set", post(tools::bulk))
         .route("/api/map/pins", get(pins::get).post(pins::set))
         .route("/api/map/pins/import", post(pins::import))
+        .route("/api/map/stamps", get(stamps::get).post(stamps::save))
+        .route("/api/map/stamps/{id}", delete(stamps::delete))
         .route("/api/quests", get(reports::quests))
         .route("/api/mme", get(mme::info))
         .route("/api/mme/export", post(mme::export))

@@ -9,6 +9,7 @@ import { localStep, realmChanged } from '../shell/state.svelte';
 import type { Host } from './host';
 import { cellsOf, STEP, type Spot } from './layout';
 import { KEY_DIR } from './model';
+import { kindOf, saved } from './saved.svelte';
 import type { MapTool, Pen } from './scene';
 import { brushOf, named, placed, request, stamped, STAMPS, summary, turned, UPRIGHT, type LinkSort, type Placed, type StampKind, type StampOptions, type Turn } from './stamps';
 
@@ -50,9 +51,10 @@ export class Stamper implements MapTool {
     return `Here: ${summary(this.host.map, g)}.`;
   });
 
-  /** The drawer opened or put away (and the stamp held with it). */
+  /** The drawer opened (the stamps saved from the map read afresh) or put away (and the stamp held with it). */
   opened(on: boolean): void {
-    if (!on) {
+    if (on) void saved.load();
+    else {
       this.pick(null);
       this.keep = this.overwrite = false;
     }
@@ -84,6 +86,18 @@ export class Stamper implements MapTool {
     }
     sc.setTool(k ? this : null);
     this.reghost();
+  }
+
+  /** Picks up a stamp saved from the map, by its id. */
+  pickSaved(id: string): void {
+    const s = saved.list.find((o) => o.id === id);
+    if (s) this.pick(kindOf(s));
+  }
+
+  /** Deletes the saved stamp held (Ctrl+Z brings it back). */
+  async drop(): Promise<void> {
+    const s = saved.list.find((o) => o.id === this.kind?.saved);
+    if (s && (await saved.remove(s))) this.pick(null);
   }
 
   size(i: number, by: number): void {
@@ -215,12 +229,20 @@ export class Stamper implements MapTool {
     return sc.layout && k ? placed(sc.by, sc.layout, turned(k.make(this.sizes, this.seed), this.way), x, y, o) : null;
   }
 
+  /** The room new rooms copy when the stamp lands on none: a saved stamp's own (on its map, while it is there), else the room picked, else the start room. (Build mode picks the start room when it opens, so the room picked is often no choice at all.) */
+  private fallback(): number {
+    const h = this.host;
+    const own = this.kind?.brush;
+    if (own && own.map === h.map && h.scene.by.has(own.room)) return own.room;
+    return h.selected?.room ?? h.scene.start;
+  }
+
   /** The held stamp, drawn where it would go down. */
   private reghost() {
     const sc = this.host.scene;
     const p = this.aim ? this.placeAt(this.aim[0], this.aim[1], this.options()) : null;
     this.ghost = p;
-    this.brush = p ? brushOf(p, this.host.selected?.room ?? sc.start) : null;
+    this.brush = p ? brushOf(p, this.fallback()) : null;
     sc.draw();
   }
 
@@ -239,7 +261,7 @@ export class Stamper implements MapTool {
       this.reghost();
       return;
     }
-    const brushNo = brushOf(p, h.selected?.room ?? sc.start);
+    const brushNo = brushOf(p, this.fallback());
     const brush = brushNo === null ? undefined : sc.by.get(brushNo);
     if (!brush) {
       sfx('nope');
@@ -247,7 +269,7 @@ export class Stamper implements MapTool {
       return;
     }
     const m0 = h.map;
-    const what = named(k);
+    const what = k.saved ? `“${k.name}”` : named(k);
     // where its new rooms are drawn: the first stamp on a map keeps every room where it is drawn
     const before = h.pins;
     const first = before.size === 0;

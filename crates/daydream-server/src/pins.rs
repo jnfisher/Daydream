@@ -144,7 +144,12 @@ pub fn of_map(realm_dir: &Path, map: i64) -> BTreeMap<i64, [i32; 2]> {
 
 /// Writes the file whole, through a file beside it, so a crash leaves the old one or the new.
 fn store(realm_dir: &Path, file: &MapFile) -> Result<(), ApiError> {
-    let p = path(realm_dir);
+    write_whole(&path(realm_dir), file)
+}
+
+/// Writes a side file whole as JSON, through a file beside it, so a crash leaves the old one or
+/// the new.
+pub(crate) fn write_whole(p: &Path, value: &impl Serialize) -> Result<(), ApiError> {
     let io = |e: std::io::Error| {
         ApiError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -155,13 +160,13 @@ fn store(realm_dir: &Path, file: &MapFile) -> Result<(), ApiError> {
         std::fs::create_dir_all(dir).map_err(io)?;
     }
     let tmp = p.with_extension("json.tmp");
-    let text = serde_json::to_string(file).map_err(|e| io(std::io::Error::other(e)))?;
+    let text = serde_json::to_string(value).map_err(|e| io(std::io::Error::other(e)))?;
     std::fs::write(&tmp, text).map_err(io)?;
-    std::fs::rename(&tmp, &p).map_err(io)
+    std::fs::rename(&tmp, p).map_err(io)
 }
 
 /// The newest step of the realm's history (0 when it has none).
-fn newest_step(realm_dir: &Path) -> Result<i64, ApiError> {
+pub(crate) fn newest_step(realm_dir: &Path) -> Result<i64, ApiError> {
     Ok(daydream_store::history::list(realm_dir, 1)?
         .first()
         .map_or(0, |s| s.step))

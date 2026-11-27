@@ -1,14 +1,16 @@
 // Picking rooms on the World map with the Select tool: the rooms a box or a lasso holds, the
 // region the wand takes (the rooms joined to one by exits, through rooms of its colour), how
 // a pick changes the rooms picked, and what those rooms share, for the bar that sets their
-// fields together (`POST /api/map/set`); and Paint, which puts a field straight onto the
-// rooms a stroke goes over.
+// fields together (`POST /api/map/set`); Paint, which puts a field straight onto the rooms a
+// stroke goes over; and the shape of the rooms picked, saved as a stamp of one's own.
 //
 // Pure: no DOM, so `node --test` runs its tests (picks.test.ts); its imports name their
 // files whole, as node needs.
 
+import { OPPOSITE } from './layout.ts';
 import type { ColourBy } from './look.ts';
 import type { MapRoom } from './model.ts';
+import type { Shape, ShapeLink } from './stamps.ts';
 
 /** The ways the Select tool works: four that pick rooms, and Paint, which sets a field on them. */
 export type PickTool = 'box' | 'lasso' | 'brush' | 'wand' | 'paint';
@@ -188,3 +190,187 @@ export const PAINT_COLOUR: Record<PaintField, ColourBy> = { light: 'light', mons
 
 /** A room's values in a field's columns, as numbers (for the fields Paint puts on rooms). */
 export const valuesOf = (r: MapRoom, f: PickField): number[] => f.columns.map((c) => Number(mapValue(r, c) ?? 0));
+
+// ---- the rooms picked as a stamp ------------------------------------------------------------
+
+/** The most rooms a stamp makes (the server's `MAX_STAMP_ROOMS`), and the longest name a saved one has. */
+export const STAMP_ROOMS_MAX = 2000;
+export const STAMP_NAME_MAX = 40;
+
+/** Whether the map walks an exit of this type, as its layout does: not a map change, nor a remote action. */
+const walked = (kind: number) => kind !== 8 && kind !== 12;
+
+/** The rooms picked that the map has and draws, in room order. */
+const drawn = (by: ReadonlyMap<number, MapRoom>, at: ReadonlyMap<number, unknown>, rooms: Iterable<number>) =>
+  [...new Set(rooms)].filter((n) => by.has(n) && at.has(n)).sort((a, b) => a - b);
+
+/** The way in of a stamp of the rooms picked: the first with an exit out of them, else the first. */
+export function wayIn(by: ReadonlyMap<number, MapRoom>, at: ReadonlyMap<number, unknown>, rooms: Iterable<number>): number | undefined {
+  const mine = drawn(by, at, rooms);
+  const picked = new Set(mine);
+  return mine.find((n) => by.get(n)!.exits.some((e) => walked(e.kind) && !picked.has(e.to))) ?? mine[0];
+}
+
+/** How far apart two cells of a stamp may be drawn and stay where they are to each other. */
+const NEAR = 8;
+
+/**
+ * A stamp's cells with its far parts brought in: cells within `NEAR` of each other stay as they
+ * are drawn, and each part drawn further from the first cell's (a floor up or down, which the map
+ * draws apart) is put beside the parts before it, two cells clear, level with the first's top.
+ */
+export function drawnNear(cells: readonly (readonly [number, number])[]): [number, number][] {
+  const out = cells.map(([x, y]): [number, number] => [x, y]);
+  // the parts: cells within NEAR of one another, through buckets of NEAR + 1 cells
+  const part = cells.map((_, i) => i);
+  const root = (i: number): number => (part[i] === i ? i : (part[i] = root(part[i]!)));
+  const size = NEAR + 1;
+  const buckets = new Map<string, number[]>();
+  cells.forEach(([x, y], i) => {
+    const [bx, by] = [Math.floor(x / size), Math.floor(y / size)];
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const j of buckets.get(`${bx + dx},${by + dy}`) ?? []) {
+          if (Math.max(Math.abs(cells[j]![0] - x), Math.abs(cells[j]![1] - y)) <= NEAR) part[root(i)] = root(j);
+        }
+      }
+    }
+    const k = `${bx},${by}`;
+    const list = buckets.get(k);
+    if (list) list.push(i);
+    else buckets.set(k, [i]);
+  });
+  // each part's cells, in the order of its first
+  const parts = new Map<number, number[]>();
+  cells.forEach((_, i) => {
+    const r = root(i);
+    const list = parts.get(r);
+    if (list) list.push(i);
+    else parts.set(r, [i]);
+  });
+  const [main, ...rest] = [...parts.values()];
+  if (!main || !rest.length) return out;
+  const box = (ids: number[]) => {
+    const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    for (const i of ids) {
+      const [x, y] = out[i]!;
+      b.x0 = Math.min(b.x0, x);
+      b.y0 = Math.min(b.y0, y);
+      b.x1 = Math.max(b.x1, x);
+      b.y1 = Math.max(b.y1, y);
+    }
+    return b;
+  };
+  const home = box(main);
+  let right = home.x1;
+  for (const ids of rest) {
+    const b = box(ids);
+    const [dx, dy] = [right + 3 - b.x0, home.y0 - b.y0];
+    for (const i of ids) out[i] = [out[i]![0] + dx, out[i]![1] + dy];
+    right += 3 + b.x1 - b.x0;
+  }
+  return out;
+}
+
+/**
+ * The rooms picked as a stamp's shape: each room's cell as the map draws it (`at`), counted from
+ * its way in, and the exits between them, one link for both ways where the way back is there too.
+ * Its way in is the first room with an exit out of the rooms picked, else the first room; the
+ * others follow it in walking order. Parts drawn far apart are brought in (`drawnNear`). Exits out
+ * of them, map changes and remote actions are left out, and a stamp makes every exit plain.
+ */
+export function shapeOf(by: ReadonlyMap<number, MapRoom>, at: ReadonlyMap<number, { x: number; y: number }>, rooms: Iterable<number>): Shape {
+  const mine = drawn(by, at, rooms);
+  const picked = new Set(mine);
+  const inside = (n: number) => by.get(n)!.exits.filter((e) => walked(e.kind) && e.to !== n && picked.has(e.to));
+  const first = wayIn(by, at, mine);
+  if (first === undefined) return { cells: [], links: [] };
+  // walking order from the way in, over exits either way; rooms it does not reach follow in turn
+  const next = new Map<number, number[]>();
+  const join = (p: number, q: number) => {
+    const list = next.get(p);
+    if (list) list.push(q);
+    else next.set(p, [q]);
+  };
+  for (const n of mine) {
+    for (const e of inside(n)) {
+      join(n, e.to);
+      join(e.to, n);
+    }
+  }
+  const order: number[] = [];
+  const seen = new Set<number>();
+  for (const start of [first, ...mine]) {
+    if (seen.has(start)) continue;
+    seen.add(start);
+    const queue = [start];
+    for (let i = 0; i < queue.length; i++) {
+      const n = queue[i]!;
+      order.push(n);
+      for (const m of next.get(n) ?? []) {
+        if (!seen.has(m)) {
+          seen.add(m);
+          queue.push(m);
+        }
+      }
+    }
+  }
+  const index = new Map(order.map((n, i) => [n, i]));
+  const o = at.get(first)!;
+  const cells = drawnNear(order.map((n): [number, number] => [at.get(n)!.x - o.x, at.get(n)!.y - o.y]));
+  const links: ShapeLink[] = [];
+  for (const n of order) {
+    const a = index.get(n)!;
+    for (const e of inside(n)) {
+      const b = index.get(e.to)!;
+      const back = by.get(e.to)!.exits.some((x) => x.dir === OPPOSITE[e.dir] && x.to === n && walked(x.kind));
+      // both ways: one link, from the room that comes first
+      if (!back) links.push({ a, dir: e.dir, b, oneWay: true });
+      else if (a < b) links.push({ a, dir: e.dir, b });
+    }
+  }
+  return { cells, links };
+}
+
+/** The name most of the rooms have (trimmed; on a tie, the first to get there), or '' when none has one. */
+function commonName(rooms: Iterable<MapRoom>): string {
+  const counts = new Map<string, number>();
+  let best = '';
+  for (const r of rooms) {
+    const name = r.name.trim();
+    if (!name) continue;
+    const c = (counts.get(name) ?? 0) + 1;
+    counts.set(name, c);
+    if (c > (counts.get(best) ?? 0)) best = name;
+  }
+  return best;
+}
+
+/** A name for the rooms picked as a stamp: the one most of them have, else the map's. */
+export function stampName(rooms: readonly MapRoom[], map: number): string {
+  return [...(commonName(rooms) || `Rooms of map ${map}`)].slice(0, STAMP_NAME_MAX).join('').trim();
+}
+
+/**
+ * The room a stamp of the rooms picked has its new rooms copy: its way in when its name is as
+ * common among them as any, else the first whose name is, so a block of fields comes out as
+ * fields and not as the gate at its edge.
+ */
+export function lookOf(by: ReadonlyMap<number, MapRoom>, at: ReadonlyMap<number, unknown>, rooms: Iterable<number>): number | undefined {
+  const mine = drawn(by, at, rooms);
+  const way = wayIn(by, at, mine);
+  if (way === undefined) return undefined;
+  const counts = new Map<string, number>();
+  let most = 0;
+  for (const n of mine) {
+    const name = by.get(n)!.name.trim();
+    const c = (counts.get(name) ?? 0) + 1;
+    counts.set(name, c);
+    if (name && c > most) most = c;
+  }
+  const common = (n: number) => {
+    const name = by.get(n)!.name.trim();
+    return !!name && counts.get(name) === most;
+  };
+  return most === 0 || common(way) ? way : (mine.find(common) ?? way);
+}

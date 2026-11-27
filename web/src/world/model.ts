@@ -53,6 +53,27 @@ export interface MapFile {
   maps: Record<string, { pins: PinCells }>;
 }
 
+/** A stamp saved from the map (`.daydream/stamps.json`, crates/daydream-server/src/stamps.rs): a shape, as the drawer's own. */
+export interface SavedStamp {
+  /** `s` and a number, given when it is first saved. */
+  id: string;
+  name: string;
+  /** The map it was saved from, and the room there its new rooms copy (one with the name most of its rooms had): put down on that map, they copy it unless it lands on a room. */
+  map?: number;
+  room?: number;
+  /** Each cell as [column, row] from the first, its way in. */
+  cells: [number, number][];
+  links: { a: number; dir: number; b: number; one_way?: boolean }[];
+}
+
+/** The stamps saved, in the order they were first saved. */
+export interface StampsFile {
+  daydream: 'stamps';
+  version: 1;
+  next: number;
+  stamps: SavedStamp[];
+}
+
 /** A dig (`POST /api/map/dig`, crates/daydream-nmr/src/map.rs's `Dig`). */
 export interface Dig {
   map: number;
