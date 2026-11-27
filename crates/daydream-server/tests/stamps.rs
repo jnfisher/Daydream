@@ -188,3 +188,179 @@ async fn a_set_on_picked_rooms_reaches_those_alone() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {out}");
     }
 }
+
+#[tokio::test]
+async fn stamps_saved_from_the_map_are_kept_beside_the_working_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    empty_realm(dir);
+    let body = get(dir, "/api/map/stamps").await;
+    assert_eq!(
+        body,
+        json!({"daydream": "stamps", "version": 1, "next": 1, "stamps": []})
+    );
+
+    // a new stamp takes the next id, its name trimmed
+    let hall = json!({
+        "name": "  Great hall ",
+        "map": 1,
+        "room": 40,
+        "cells": [[0, 0], [1, 0], [1, -1]],
+        "links": [{"a": 0, "dir": 2, "b": 1}, {"a": 1, "dir": 0, "b": 2, "one_way": true}],
+    });
+    let (status, out) = send(dir, "POST", "/api/map/stamps", Some(hall.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["stamp"]["id"], "s1");
+    assert_eq!(out["stamp"]["name"], "Great hall");
+    assert_eq!(
+        (out["stamps"].clone(), out["step"].clone()),
+        (json!(1), json!(0))
+    );
+    let yard = json!({"name": "Yard", "cells": [[0, 0]]});
+    let (_, out) = send(dir, "POST", "/api/map/stamps", Some(yard)).await;
+    assert_eq!(out["stamp"]["id"], "s2", "{out}");
+
+    // kept as given: a two-way link has no one_way, and a stamp from no map no map
+    let body = get(dir, "/api/map/stamps").await;
+    assert_eq!(
+        body["stamps"],
+        json!([
+            {"id": "s1", "name": "Great hall", "map": 1, "room": 40, "cells": [[0, 0], [1, 0], [1, -1]],
+             "links": [{"a": 0, "dir": 2, "b": 1}, {"a": 1, "dir": 0, "b": 2, "one_way": true}]},
+            {"id": "s2", "name": "Yard", "cells": [[0, 0]], "links": []},
+        ])
+    );
+
+    // one with an id replaces that one, where it is
+    let mut renamed = body["stamps"][0].clone();
+    renamed["name"] = json!("Hall");
+    let (status, out) = send(dir, "POST", "/api/map/stamps", Some(renamed.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["stamps"], 2);
+    let body = get(dir, "/api/map/stamps").await;
+    assert_eq!(body["stamps"][0]["name"], "Hall");
+    assert_eq!(body["stamps"][1]["id"], "s2");
+
+    // deleted, and brought back (an undo) where it was; a new one never takes its id
+    let (status, out) = send(dir, "DELETE", "/api/map/stamps/s1", None).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out, json!({"stamps": 1, "step": 0}));
+    let (status, _) = send(dir, "DELETE", "/api/map/stamps/s1", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, out) = send(dir, "POST", "/api/map/stamps", Some(renamed)).await;
+    assert_eq!(out["stamp"]["id"], "s1", "{out}");
+    let (_, out) = send(dir, "POST", "/api/map/stamps", Some(hall)).await;
+    assert_eq!(out["stamp"]["id"], "s3", "{out}");
+    let body = get(dir, "/api/map/stamps").await;
+    let ids: Vec<_> = body["stamps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, ["s1", "s2", "s3"]);
+    assert_eq!(body["next"], 4);
+
+    // beside the realm, and no save to it: no step of the history, no change to publish
+    assert!(dir.join(".daydream").join("stamps.json").is_file());
+    let history = get(dir, "/api/history").await;
+    assert_eq!(history["steps"], json!([]), "{history}");
+    let changes = get(dir, "/api/changes").await;
+    assert_eq!(changes["changes"], json!([]), "{changes}");
+    // and the realm's newest step comes back, so the page knows whether this came last
+    add(
+        dir,
+        "Rooms",
+        json!({"Map Number": 1, "Room Number": 1, "Name": "Hall"}),
+    )
+    .await;
+    let (_, out) = send(dir, "DELETE", "/api/map/stamps/s3", None).await;
+    assert_eq!(out["step"], 1, "{out}");
+
+    let shape = |cells: serde_json::Value, links: serde_json::Value| json!({"name": "Bad", "cells": cells, "links": links});
+    let too_many: Vec<[i32; 2]> = (0..2001).map(|x| [x, 0]).collect();
+    for (bad, why) in [
+        (json!({"name": " ", "cells": [[0, 0]]}), "needs a name"),
+        (
+            json!({"name": "x".repeat(41), "cells": [[0, 0]]}),
+            "at most 40",
+        ),
+        (json!({"name": "a\nb", "cells": [[0, 0]]}), "one line"),
+        (
+            json!({"name": "A", "id": "x1", "cells": [[0, 0]]}),
+            "gives a stamp its id",
+        ),
+        (
+            json!({"name": "A", "map": 0, "cells": [[0, 0]]}),
+            "no map 0",
+        ),
+        (
+            json!({"name": "A", "map": 1, "room": -2, "cells": [[0, 0]]}),
+            "no room -2",
+        ),
+        (shape(json!([]), json!([])), "at least one room"),
+        (shape(json!([[1, 0]]), json!([])), "first cell"),
+        (shape(json!(too_many), json!([])), "at most 2000 rooms"),
+        (shape(json!([[0, 0], [300000, 0]]), json!([])), "too far"),
+        (
+            shape(json!([[0, 0], [0, 0]]), json!([])),
+            "two rooms in one cell",
+        ),
+        (
+            shape(json!([[0, 0]]), json!([{"a": 0, "dir": 2, "b": 1}])),
+            "leads to no cell",
+        ),
+        (
+            shape(json!([[0, 0], [1, 0]]), json!([{"a": 1, "dir": 2, "b": 1}])),
+            "its own cell",
+        ),
+        (
+            shape(
+                json!([[0, 0], [1, 0]]),
+                json!([{"a": 0, "dir": 10, "b": 1}]),
+            ),
+            "0 to 9",
+        ),
+        (
+            // the way back of the first is the way there of the second
+            shape(
+                json!([[0, 0], [1, 0], [2, 0]]),
+                json!([{"a": 0, "dir": 2, "b": 1}, {"a": 1, "dir": 3, "b": 2, "one_way": true}]),
+            ),
+            "two exits the same way",
+        ),
+    ] {
+        let (status, out) = send(dir, "POST", "/api/map/stamps", Some(bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {out}");
+        assert!(out["error"].as_str().unwrap().contains(why), "{bad}: {out}");
+    }
+
+    // so many saved, no more: one has to go first
+    let mut file = get(dir, "/api/map/stamps").await;
+    let one = file["stamps"][0].clone();
+    file["stamps"] = json!(
+        (1..=200)
+            .map(|n| {
+                let mut s = one.clone();
+                s["id"] = json!(format!("s{n}"));
+                s
+            })
+            .collect::<Vec<_>>()
+    );
+    std::fs::write(dir.join(".daydream").join("stamps.json"), file.to_string()).unwrap();
+    let (status, out) = send(
+        dir,
+        "POST",
+        "/api/map/stamps",
+        Some(json!({"name": "One more", "cells": [[0, 0]]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+    assert!(
+        out["error"].as_str().unwrap().contains("delete one"),
+        "{out}"
+    );
+    // the file's next is past every id in it, even one written by hand
+    let body = get(dir, "/api/map/stamps").await;
+    assert_eq!(body["next"], 201);
+}

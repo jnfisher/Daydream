@@ -1,9 +1,10 @@
 <!--
   The stamp drawer, beside the map in Build mode (a sheet along the bottom of a small screen): the
-  shapes to put down (keys 1 to 9 pick the first nine), and for the one held, its size, turn and
-  mirror, a fresh roll of a random one, whether it joins the rooms it touches, leaves the rooms
-  already there alone (Shift) or replaces the exits in its way (Alt), the room its new rooms copy,
-  and what putting it down where it is would do.
+  shapes to put down (keys 1 to 9 pick the first nine), then the stamps saved from the map with
+  Select, and for the one held, its size, turn and mirror, a fresh roll of a random one, whether
+  it joins the rooms it touches, leaves the rooms already there alone (Shift) or replaces the
+  exits in its way (Alt), the room its new rooms copy, and what putting it down where it is would
+  do. A saved one held can be deleted (Ctrl+Z brings it back).
 -->
 <svelte:options css="injected" />
 
@@ -14,9 +15,11 @@
   import Minus from '@lucide/svelte/icons/minus';
   import Plus from '@lucide/svelte/icons/plus';
   import RotateCw from '@lucide/svelte/icons/rotate-cw';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import X from '@lucide/svelte/icons/x';
+  import { kindOf, saved } from './saved.svelte';
   import type { Stamper } from './stamper.svelte';
-  import { STAMPS, type Shape } from './stamps';
+  import { STAMPS, type Shape, type ShapeLink, type StampKind } from './stamps';
 
   let {
     stamper: st,
@@ -40,7 +43,10 @@
   /** The room new rooms copy, for a person. */
   const brush = $derived(st.brush === null ? 'the room picked' : st.host.called(st.brush));
 
-  /** A shape as a little drawing: its cells, and lines for its links (dashed up and down). */
+  /**
+   * A shape as a little drawing, 40 by 28: its cells, its first (its way in) filled, and lines for
+   * its links (dashed up and down). A big one (a stamp saved from a map) is drawn as its outline.
+   */
   function preview(s: Shape) {
     const xs = s.cells.map(([x]) => x);
     const ys = s.cells.map(([, y]) => y);
@@ -48,15 +54,66 @@
     const w = Math.max(...xs) - x0 + 1;
     const h = Math.max(...ys) - y0 + 1;
     const at = (i: number) => [(s.cells[i]![0] - x0) * 10 + 5, (s.cells[i]![1] - y0) * 10 + 5] as const;
+    const path = (links: ShapeLink[]) =>
+      links
+        .map((l) => {
+          const [[x1, y1], [x2, y2]] = [at(l.a), at(l.b)];
+          return `M${x1} ${y1}L${x2} ${y2}`;
+        })
+        .join('');
+    // a pixel, in the drawing's units, once it is fitted in
+    const px = Math.max((w * 10) / 40, (h * 10) / 28);
+    const big = px > 2.2;
+    const box = ([x, y]: readonly [number, number]) => (big ? `M${x - 3} ${y - 3}h6v6h-6z` : `M${x - 1.4} ${y - 3}h2.8a1.6 1.6 0 0 1 1.6 1.6v2.8a1.6 1.6 0 0 1-1.6 1.6h-2.8a1.6 1.6 0 0 1-1.6-1.6v-2.8a1.6 1.6 0 0 1 1.6-1.6z`);
+    const [fx, fy] = at(0);
+    const r = 2.6 * px;
     return {
       box: `0 0 ${w * 10} ${h * 10}`,
-      lines: s.links.filter((l) => l.dir < 8).map((l) => [...at(l.a), ...at(l.b)] as const),
-      stairs: s.links.filter((l) => l.dir > 7).map((l) => [...at(l.a), ...at(l.b)] as const),
-      cells: s.cells.map((_, i) => at(i)),
+      big,
+      lines: path(s.links.filter((l) => l.dir < 8)),
+      stairs: path(s.links.filter((l) => l.dir > 7)),
+      cells: s.cells.slice(1).map((_, i) => box(at(i + 1))).join(''),
+      first: big ? `M${fx - r} ${fy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0z` : box([fx, fy]),
     };
   }
-  const PREVIEWS = STAMPS.map((k) => preview(k.make(k.sizes.map((z) => z.start), 1)));
+  const PREVIEWS = new Map(STAMPS.map((k) => [k, preview(k.make(k.sizes.map((z) => z.start), 1))]));
+  const drawn = new WeakMap<StampKind, ReturnType<typeof preview>>();
+  /** A shape's drawing, drawn once. */
+  function previewOf(k: StampKind) {
+    let p = PREVIEWS.get(k) ?? drawn.get(k);
+    if (!p) drawn.set(k, (p = preview(k.make([], 1))));
+    return p;
+  }
+
+  /** The stamps saved from the map, after the drawer's own. */
+  const mine = $derived(saved.list.map(kindOf));
+
+  // a saved stamp held, deleted (or its save undone): put away
+  $effect(() => {
+    const id = kind?.saved;
+    if (id && saved.loaded && !saved.list.some((s) => s.id === id)) st.pick(null);
+  });
+
+  // the shape held, in view (Put it down, in Select, picks a saved one, at the end of the row on a phone)
+  let shapes = $state<HTMLElement | null>(null);
+  $effect(() => {
+    if (kind) shapes?.querySelector('.shape.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
 </script>
+
+{#snippet tile(k: StampKind, i: number)}
+  {@const p = previewOf(k)}
+  <button type="button" role="option" aria-selected={kind?.id === k.id} class="shape" class:on={kind?.id === k.id} title="{k.name}: {k.about}" onclick={() => st.pick(kind?.id === k.id ? null : k)}>
+    {#if i < 9 && !touch}<span class="key">{i + 1}</span>{/if}
+    <svg viewBox={p.box} class:big={p.big} aria-hidden="true">
+      {#if p.lines}<path class="ln" d={p.lines} />{/if}
+      {#if p.stairs}<path class="ln ud" d={p.stairs} />{/if}
+      {#if p.cells}<path class="cl" d={p.cells} />{/if}
+      <path class="cl first" d={p.first} />
+    </svg>
+    <span class="name">{k.name}</span>
+  </button>
+{/snippet}
 
 <section class="drawer" aria-label="Stamps" style:--fresh={colours.fresh} style:--join={colours.join} style:--clash={colours.clash} style:--replace={colours.replace} style:--kept={colours.kept}>
   <header>
@@ -64,20 +121,16 @@
     <span class="faint">{kind ? (touch ? 'Tap to aim, tap again to put it down' : 'Click the map to put it down') : touch ? 'Pick a shape' : 'Pick a shape (1 to 9)'}</span>
     <button type="button" class="btn icon sm ghost" onclick={onclose} title="Put the stamps away (S)" aria-label="Put the stamps away"><X size={15} /></button>
   </header>
-  <div class="shapes" role="listbox" aria-label="Shapes">
-    {#each STAMPS as k, i (k.id)}
-      {@const p = PREVIEWS[i]!}
-      <button type="button" role="option" aria-selected={kind?.id === k.id} class="shape" class:on={kind?.id === k.id} title="{k.name}: {k.about}" onclick={() => st.pick(kind?.id === k.id ? null : k)}>
-        {#if i < 9 && !touch}<span class="key">{i + 1}</span>{/if}
-        <svg viewBox={p.box} aria-hidden="true">
-          {#each p.lines as [x1, y1, x2, y2], j (j)}<line {x1} {y1} {x2} {y2} />{/each}
-          {#each p.stairs as [x1, y1, x2, y2], j (j)}<line class="ud" {x1} {y1} {x2} {y2} />{/each}
-          {#each p.cells as [x, y], j (j)}<rect x={x - 3} y={y - 3} width="6" height="6" rx="1.6" class:first={j === 0} />{/each}
-        </svg>
-        <span class="name">{k.name}</span>
-      </button>
-    {/each}
+  <div class="shapes" role="listbox" aria-label="Shapes" bind:this={shapes}>
+    {#each STAMPS as k, i (k.id)}{@render tile(k, i)}{/each}
+    {#if mine.length}
+      <span class="group" role="presentation">Saved</span>
+      {#each mine as k (k.id)}{@render tile(k, Infinity)}{/each}
+    {/if}
   </div>
+  {#if saved.loaded && !mine.length}
+    <p class="faint hint">Your own: pick rooms with Select{touch ? '' : ' (V)'}, then save their shape as a stamp.</p>
+  {/if}
   {#if kind}
     <div class="held">
       <p class="about"><b>{kind.name}</b> {kind.about.toLowerCase()}.</p>
@@ -96,6 +149,7 @@
         <button type="button" class="btn sm" onclick={() => st.flip('x')} title="Mirror it left to right (X)"><ArrowLeftRight size={14} />X</button>
         <button type="button" class="btn sm" onclick={() => st.flip('y')} title="Mirror it top to bottom (Y)"><ArrowUpDown size={14} />Y</button>
         {#if kind.random}<button type="button" class="btn sm" onclick={() => st.roll()} title="Another one (Space)"><Dices size={14} />Roll</button>{/if}
+        {#if kind.saved}<button type="button" class="btn sm ghost" onclick={() => void st.drop()} title="Delete this stamp{touch ? '' : ' (Ctrl+Z brings it back)'}"><Trash2 size={14} />Delete</button>{/if}
       </div>
       <div class="switches">
         <label>
@@ -139,7 +193,7 @@
   header b { font-size: 14px; }
   header .faint { flex: 1; font-size: 11.5px; font-weight: 700; }
   /* the drawer scrolls as a whole: its parts keep their height */
-  header, .shapes, .held { flex: none; }
+  header, .shapes, .hint, .held { flex: none; }
   .shapes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
   .shape {
     position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px;
@@ -149,10 +203,17 @@
   .shape:hover { background: var(--surface-3); }
   .shape.on { background: var(--mint-2); border-color: var(--outline); color: var(--ink); }
   .shape svg { width: 40px; height: 28px; overflow: visible; }
-  .shape line { stroke: var(--ink-3); stroke-width: 1.6; stroke-linecap: round; }
-  .shape line.ud { stroke-dasharray: 2 2; }
-  .shape rect { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.1; }
-  .shape rect.first { fill: var(--mint-ink); stroke: var(--mint-ink); }
+  .shape .ln { fill: none; stroke: var(--ink-3); stroke-width: 1.6; stroke-linecap: round; }
+  .shape .ln.ud { stroke-dasharray: 2 2; }
+  .shape .cl { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.1; }
+  .shape .cl.first { fill: var(--mint-ink); stroke: var(--mint-ink); }
+  /* a big one, fitted in: lines a pixel wide, and its cells a shadow under them */
+  .shape svg.big path { vector-effect: non-scaling-stroke; }
+  .shape svg.big .ln { stroke-width: 1; }
+  .shape svg.big .cl { fill: var(--ink-3); stroke: none; opacity: 0.45; }
+  .shape svg.big .cl.first { fill: var(--mint-ink); opacity: 1; }
+  .group { grid-column: 1 / -1; padding: 6px 6px 0; font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  .hint { margin: 0 6px; font-size: 11.5px; font-weight: 700; line-height: 1.35; }
   .shape .name { font-size: 10.5px; font-weight: 800; line-height: 1.1; text-align: center; text-wrap: balance; overflow-wrap: anywhere; }
   .shape .key {
     position: absolute; top: 2px; left: 3px; font: 700 9.5px var(--font-mono); color: var(--ink-3);
@@ -184,7 +245,10 @@
   @media (max-width: 700px) {
     .drawer { top: auto; bottom: calc(var(--edge) + 56px); left: var(--edge); right: var(--edge); width: auto; max-height: 46%; }
     /* one row of shapes to swipe along, so the one held has room below */
-    .shapes { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 66px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+    .shapes { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+    .shape { width: 66px; }
+    /* in the one row, a narrow mark before the saved ones */
+    .group { grid-column: auto; padding: 0 2px; align-self: center; writing-mode: vertical-rl; transform: rotate(180deg); }
     .about { display: none; }
   }
 </style>

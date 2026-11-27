@@ -11,7 +11,7 @@ import { app } from '../shell/state.svelte';
 import type { Host } from './host';
 import { cellKey } from './layout';
 import { lightWord } from './light';
-import type { MapRoom } from './model';
+import type { MapRoom, SavedStamp } from './model';
 import {
   after,
   BRUSH_SIZES,
@@ -20,12 +20,15 @@ import {
   holds,
   howOf,
   inside,
+  lookOf,
   onRooms,
   PAINT_COLOUR,
   PAINT_FIELDS,
   PICK_FIELDS,
   PICK_TOOLS,
   regionOf,
+  shapeOf,
+  STAMP_ROOMS_MAX,
   valuesOf,
   withValues,
   type PaintField,
@@ -34,7 +37,9 @@ import {
   type PickMode,
   type PickTool,
 } from './picks';
+import { saved } from './saved.svelte';
 import type { MapTool, MiniPen, Pen, Scene } from './scene';
+import type { Shape } from './stamps';
 
 const TAU = Math.PI * 2;
 
@@ -254,6 +259,26 @@ export class Selector implements MapTool {
           : `Set ${what} on ${out.changed.toLocaleString()} of the ${rooms.length.toLocaleString()} rooms (the others had it already)`,
     );
     sfx('pop');
+  }
+
+  /** The rooms picked as a stamp: their shape as the map draws them now, and the room its new rooms copy. */
+  stampOf(): { shape: Shape; room: number } | null {
+    const sc = this.scene;
+    const l = sc.layout;
+    const room = l ? lookOf(sc.by, l.at, this.picked) : undefined;
+    return l && room !== undefined ? { shape: shapeOf(sc.by, l.at, this.picked), room } : null;
+  }
+
+  /** Saves the rooms picked as a stamp of one's own: their shape, and the room its new rooms copy here. Answers it, or null when it was not saved. */
+  async saveStamp(name: string): Promise<SavedStamp | null> {
+    const s = this.stampOf();
+    if (!s) return null;
+    if (s.shape.cells.length > STAMP_ROOMS_MAX) {
+      sfx('nope');
+      this.host.say(`A stamp makes at most ${STAMP_ROOMS_MAX.toLocaleString()} rooms: pick fewer.`);
+      return null;
+    }
+    return saved.add(name, s.shape, this.host.map, s.room);
   }
 
   /** A room of this map for a person ("Town square 1/245"), or null when the map has no such room. */

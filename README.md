@@ -208,6 +208,17 @@ is let go. `[` and `]` size it, Alt and a click (or **Take from a room**, for a 
 room's value, and while rooms are picked, only they take paint, so a wand's area or a box
 keeps the paint inside it. Rooms that hold the value already are left as they are.
 
+**Save as a stamp** (in the Select panel, under **Their shape**) turns the rooms picked into a
+stamp of one's own: their cells as the map draws them and the exits between them, named after
+most of them. Saved stamps follow the drawer's own shapes under **Saved** (**Put it down**
+opens them holding the new one), and the one held can be deleted. They are kept beside the
+working copy in `.daydream/stamps.json`, as the map's places are, never in the game's data, so
+saving or deleting one is taken back with Ctrl+Z like a room moved by hand. Its way in (the
+cell under the pointer) is the first room with an exit out of the rooms picked. Put down on the
+map it came from, its new rooms copy one of the rooms picked with the name most of them have
+(the way in, when it has it) unless it lands on a room, and its exits are plain (the server
+answers the same at `/api/map/stamps`).
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |

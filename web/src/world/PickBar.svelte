@@ -3,8 +3,9 @@
   are picked (a box, a lasso, the brush or the wand: keys 1 to 4), whether a pick starts afresh,
   adds to the rooms picked or takes from them (Shift and Alt for a moment), how many are picked,
   and the fields to set on them all at once (name, light, monsters, control room and room type),
-  each showing what the rooms share or that they differ. Paint (key 5) puts light, monsters or a
-  control room onto the rooms a stroke goes over instead: the panel holds what it puts on them.
+  each showing what the rooms share or that they differ, and their shape, to save as a stamp of
+  one's own. Paint (key 5) puts light, monsters or a control room onto the rooms a stroke goes
+  over instead: the panel holds what it puts on them.
 -->
 <svelte:options css="injected" />
 
@@ -22,6 +23,7 @@
   import Plus from '@lucide/svelte/icons/plus';
   import Skull from '@lucide/svelte/icons/skull';
   import SquareDashed from '@lucide/svelte/icons/square-dashed';
+  import StampIcon from '@lucide/svelte/icons/stamp';
   import SunDim from '@lucide/svelte/icons/sun-dim';
   import Type from '@lucide/svelte/icons/type';
   import WandSparkles from '@lucide/svelte/icons/wand-sparkles';
@@ -29,7 +31,8 @@
   import type { Component } from 'svelte';
   import { MONSTER_GROUP, ROOM_TYPE } from '../layouts';
   import { LIGHT_PICKS, lightWord } from './light';
-  import { BRUSH_SIZES, mapValue, PAINT_FIELDS, PICK_FIELDS, PICK_MODES, PICK_TOOLS, sharedOf, type PaintField, type PickField, type PickTool } from './picks';
+  import { BRUSH_SIZES, mapValue, PAINT_FIELDS, PICK_FIELDS, PICK_MODES, PICK_TOOLS, sharedOf, STAMP_NAME_MAX, STAMP_ROOMS_MAX, stampName, type PaintField, type PickField, type PickTool } from './picks';
+  import { saved, sizeOf, wire } from './saved.svelte';
   import type { Selector } from './selector.svelte';
 
   let { selector: sel, onclose }: { selector: Selector; onclose: () => void } = $props();
@@ -81,8 +84,8 @@
     return { text: sel.words(f.id, s.one), mixed: false };
   }
 
-  /** The field being set, and what it is set to. */
-  let open = $state<PickField['id'] | null>(null);
+  /** The field being set (or the rooms' shape being saved as a stamp), and what it is set to. */
+  let open = $state<PickField['id'] | 'stamp' | null>(null);
   let text = $state('');
   let nums = $state<(number | null)[]>([]);
   const editing = $derived(PICK_FIELDS.find((f) => f.id === open) ?? null);
@@ -109,6 +112,43 @@
     if (!f || problem) return;
     sel.set(f, f.id === 'name' ? [['Name', text.trim()]] : f.columns.map((c, i) => [c, nums[i] as number]));
     open = null;
+  }
+
+  /** Save as a stamp: its name, the rooms' shape while the form is open, and what is wrong, if anything. */
+  let name = $state('');
+  let saving = $state(false);
+  const stamp = $derived.by(() => {
+    void rooms;
+    return open === 'stamp' ? sel.stampOf() : null;
+  });
+  const tooMany = $derived(stamp && stamp.shape.cells.length > STAMP_ROOMS_MAX ? `A stamp makes at most ${STAMP_ROOMS_MAX.toLocaleString()} rooms: ${stamp.shape.cells.length.toLocaleString()} are picked.` : '');
+  const stampProblem = $derived(tooMany || (name.trim() ? '' : 'Give it a name.'));
+  /** The stamp these rooms were saved as, while they are the rooms picked and it is kept. */
+  let savedAs = $state.raw<{ id: string; name: string; picked: ReadonlySet<number> } | null>(null);
+  const savedNow = $derived(savedAs && savedAs.picked === sel.picked && saved.list.some((s) => s.id === savedAs!.id) ? savedAs : null);
+
+  function openStamp() {
+    if (open === 'stamp') {
+      open = null;
+      return;
+    }
+    name = stampName(rooms, map);
+    open = 'stamp';
+  }
+
+  async function saveStamp(e: SubmitEvent) {
+    e.preventDefault();
+    if (stampProblem || saving) return;
+    saving = true;
+    const picked = sel.picked;
+    try {
+      const s = await sel.saveStamp(name.trim());
+      if (!s) return;
+      savedAs = { id: s.id, name: s.name, picked };
+      open = null;
+    } finally {
+      saving = false;
+    }
   }
 
   const many = $derived(rooms.length === 1 ? 'the room' : `${rooms.length.toLocaleString()} rooms`);
@@ -269,6 +309,33 @@
           </div>
         {/each}
       </div>
+      <div class="sets">
+        <div class="eyebrow">Their shape</div>
+        <div class="setter" class:open={open === 'stamp'}>
+          <button type="button" class="row" aria-expanded={open === 'stamp'} onclick={openStamp}>
+            <span class="ic"><StampIcon size={14} /></span>
+            <span class="what">Stamp</span>
+            <span class="value">{savedNow ? `Saved as “${savedNow.name}”` : 'Save as a stamp'}</span>
+            <Plus size={13} />
+          </button>
+          {#if open === 'stamp'}
+            <form class="edit" onsubmit={saveStamp}>
+              <!-- svelte-ignore a11y_autofocus -->
+              <input type="text" bind:value={name} maxlength={STAMP_NAME_MAX} spellcheck="false" autocomplete="off" aria-label="The stamp's name" placeholder="A name for the stamp" autofocus />
+              {#if stamp}<p class="note">Keeps their shape ({sizeOf(wire(stamp.shape))}) with the stamps. Put down on this map, its new rooms copy {sel.host.called(stamp.room)} unless it lands on a room; its exits are plain.</p>{/if}
+              {#if tooMany}<p class="problem" role="alert">{tooMany}</p>{/if}
+              <div class="acts">
+                <button type="submit" class="btn sm primary" disabled={!!stampProblem || saving}>Save stamp</button>
+                <button type="button" class="btn sm ghost" onclick={() => (open = null)}>Cancel</button>
+              </div>
+            </form>
+          {:else if savedNow}
+            <div class="acts then">
+              <button type="button" class="btn sm" onclick={() => sel.host.stamp(savedNow.id)} title="Open the stamps, holding it"><StampIcon size={14} />Put it down</button>
+            </div>
+          {/if}
+        </div>
+      </div>
     {/if}
   {/if}
 </section>
@@ -339,6 +406,8 @@
   .note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); font-weight: 700; }
   .problem { margin: 0; font-size: 12px; font-weight: 800; color: var(--bad); }
   .acts { display: flex; gap: 6px; }
+  .acts.then { padding: 0 8px 6px 40px; }
+  .acts .btn { gap: 4px; }
   @media (max-width: 700px) {
     .drawer { top: auto; bottom: calc(var(--edge) + 56px); left: var(--edge); right: var(--edge); width: auto; max-height: 46%; }
     .how { display: none; }

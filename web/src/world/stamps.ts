@@ -48,6 +48,10 @@ export interface StampKind {
   sizes: Size[];
   /** Drawn afresh by each roll. */
   random?: boolean;
+  /** A stamp saved from a map: its id (`.daydream/stamps.json`). */
+  saved?: string;
+  /** The room its new rooms copy on that map when it lands on none and no room is picked (a saved stamp's own way in). */
+  brush?: { map: number; room: number };
   make(sizes: readonly number[], seed: number): Shape;
 }
 

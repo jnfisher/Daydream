@@ -45,4 +45,6 @@ export interface Host {
   quiet(): void;
   /** Colours the map's rooms by this (Paint shows what it puts on rooms this way). */
   colour(by: ColourBy): void;
+  /** Opens the stamps holding a stamp saved from the map (by its id), to put down. */
+  stamp(saved: string): void;
 }
