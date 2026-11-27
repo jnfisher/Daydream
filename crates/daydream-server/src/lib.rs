@@ -367,6 +367,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/api/map/set", post(tools::bulk))
         .route("/api/map/pins", get(pins::get).post(pins::set))
         .route("/api/map/pins/import", post(pins::import))
+        .route("/api/map/notes", post(pins::notes))
         .route("/api/map/stamps", get(stamps::get).post(stamps::save))
         .route("/api/map/stamps/{id}", delete(stamps::delete))
         .route("/api/quests", get(reports::quests))

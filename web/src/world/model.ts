@@ -51,6 +51,8 @@ export interface MapAnswer {
   levels?: boolean;
   /** Where its rooms moved by hand are drawn in levels, with their levels: `[x, y, level]`. */
   level_pins?: PinCells;
+  /** The builder's notes on it. */
+  notes?: MapNote[];
 }
 
 /** How a room sets a source off: a line of its commands typed, its spell on whoever is in it, a
@@ -129,11 +131,32 @@ export type PinCell = [number, number] | [number, number, number];
 /** Places by room number, as the map's side file keeps them. */
 export type PinCells = Record<string, PinCell>;
 
-/** One map's part of the side file: its rooms moved by hand, flat and in levels, and whether it is drawn in levels. */
+/** One map's part of the side file: its rooms moved by hand, flat and in levels, whether it is drawn in levels, and its notes. */
 export interface MapPart {
   pins: PinCells;
   levels?: boolean;
   level_pins?: PinCells;
+  notes?: MapNote[];
+}
+
+/** What a note on the map is: a few words on a room (perhaps a thing to do), a label drawn by a room, or a name drawn around rooms. */
+export type NoteKind = 'note' | 'label' | 'region';
+
+/** The colours a note takes: the app's pastels. */
+export const NOTE_COLOURS = ['butter', 'pink', 'peach', 'mint', 'sky', 'lilac'] as const;
+export type NoteColour = (typeof NOTE_COLOURS)[number];
+
+/** A note on a map: the builder's own, kept in the map's side file and never published (pins.rs). */
+export interface MapNote {
+  id: string;
+  kind: NoteKind;
+  text: string;
+  /** The room it is on (a note's or a label's), or those it goes around (a region's). */
+  rooms: number[];
+  colour?: NoteColour;
+  /** A note that is a thing to do, and whether it is done. */
+  todo?: boolean;
+  done?: boolean;
 }
 
 /** The map's side file (`.daydream/map.json`, crates/daydream-server/src/pins.rs), as exported. */

@@ -267,15 +267,15 @@ export const ROOM_LEGEND: { label: string; icon: IconName }[] = [
 
 export type IconName = keyof typeof ICONS;
 
-const paths = new Map<IconName, Path2D[]>();
+const paths = new Map<IconName | IconNode, Path2D[]>();
 
-/** A Lucide icon's strokes, on a 24 by 24 box. */
-export function iconPaths(name: IconName): Path2D[] {
-  let out = paths.get(name);
+/** A Lucide icon's strokes, on a 24 by 24 box: one of ICONS, or another's data. */
+export function iconPaths(icon: IconName | IconNode): Path2D[] {
+  let out = paths.get(icon);
   if (out) return out;
   out = [];
   const num = (v: string | undefined) => Number(v ?? 0);
-  for (const [tag, a] of ICONS[name] as IconNode) {
+  for (const [tag, a] of (typeof icon === 'string' ? ICONS[icon] : icon) as IconNode) {
     const p = new Path2D();
     switch (tag) {
       case 'path':
@@ -309,6 +309,6 @@ export function iconPaths(name: IconName): Path2D[] {
     }
     out.push(p);
   }
-  paths.set(name, out);
+  paths.set(icon, out);
   return out;
 }

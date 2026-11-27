@@ -48,6 +48,7 @@
     ['labels', 'Place names', 'One name for each run of rooms that share it'],
     ['symbols', 'Exit symbols and room marks', 'Doors, keys, traps, shops, NPCs and where far exits lead'],
     ['grid', 'Grid dots', 'The cells rooms sit on'],
+    ['notes', 'Your notes', 'Notes, labels and regions, never published'],
   ];
 
   const WIRES_FOR: { id: WiresFor; label: string }[] = [
@@ -74,8 +75,9 @@
     try {
       const f = await api.mapFile();
       const rooms = Object.values(f.maps).reduce((a, p) => a + Object.keys(p.pins).length + Object.keys(p.level_pins ?? {}).length, 0);
-      if (!rooms) {
-        toast('No map has been laid out by hand yet, so there is nothing to export.');
+      const notes = Object.values(f.maps).reduce((a, p) => a + (p.notes?.length ?? 0), 0);
+      if (!rooms && !notes) {
+        toast('No map has been laid out by hand or has notes yet, so there is nothing to export.');
         return;
       }
       const a = document.createElement('a');
@@ -84,7 +86,7 @@
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       const maps = Object.keys(f.maps).length;
-      toast(`Exported the layouts of ${maps === 1 ? 'one map' : `${maps} maps`} (${rooms.toLocaleString()} rooms).`);
+      toast(`Exported the layouts and notes of ${maps === 1 ? 'one map' : `${maps} maps`} (${rooms.toLocaleString()} rooms${notes ? `, ${notes.toLocaleString()} notes` : ''}).`);
     } catch (e) {
       sfx('nope');
       toast(messageOf(e), { kind: 'error' });
@@ -148,8 +150,8 @@
   {#if pinCount}
     <button type="button" class="btn sm" onclick={onlayout}><RotateCcw size={13} />Lay out by exits</button>
   {/if}
-  <button type="button" class="btn sm" onclick={exportLayouts} title="Every map's layout, as a file another builder can import"><Download size={13} />Export</button>
-  <button type="button" class="btn sm" onclick={() => importer?.click()} title="Layouts exported from Daydream: each map in the file takes its layout"><Upload size={13} />Import</button>
+  <button type="button" class="btn sm" onclick={exportLayouts} title="Every map's layout and notes, as a file another builder can import"><Download size={13} />Export</button>
+  <button type="button" class="btn sm" onclick={() => importer?.click()} title="Layouts exported from Daydream: each map in the file takes its layout and notes"><Upload size={13} />Import</button>
   <input
     bind:this={importer}
     type="file"
