@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { clauses, coinsOf, keywordOf, leadingInt, leadingInt32, linesOf, parseClause, readingFor, readingOf, stepsOf, words, type Bit } from './script.ts';
+import { clauses, coinsOf, keywordOf, leadingInt, leadingInt32, linesOf, parseClause, readingFor, readingOf, stepsOf, wildcardMatch, words, type Bit } from './script.ts';
 
 /** A clause's words as one text: a record as `{Items 868}`. */
 const said = (bits: Bit[]) =>
@@ -114,4 +114,21 @@ test("a block's lines, as the game reads them", () => {
   assert.deepEqual(linesOf('wares:909\naxes:910\n', 'topics').map((l) => [l.pattern, l.block]), [['wares', 909], ['axes', 910]]);
   const cmd = linesOf('go hole|enter hole:nomonsters 266:teleport 2126 1', 'commands');
   assert.deepEqual(cmd.map((l) => [l.pattern, l.steps.map((s) => s.kind)]), [['go hole|enter hole', ['test', 'move']]]);
+});
+
+test("typed words against a room's command, as the game matches them", () => {
+  assert.ok(wildcardMatch('pull lever', 'PULL LEVER'));
+  assert.ok(!wildcardMatch('pull lever', 'pull'));
+  assert.ok(!wildcardMatch('pull lever', 'pull lever now'));
+  assert.ok(wildcardMatch('go hole|enter hole', 'enter hole'));
+  // a star lets the words stop short from there
+  assert.ok(wildcardMatch('cl*imb rope', 'cl'));
+  assert.ok(wildcardMatch('cl*imb rope', 'clim r'));
+  assert.ok(wildcardMatch('cl*imb rope', 'climb rope'));
+  assert.ok(!wildcardMatch('cl*imb rope', 'c'));
+  assert.ok(wildcardMatch('look*', 'look'));
+  // only the first 20 alternatives are tried
+  const many = Array.from({ length: 21 }, (_, i) => `w${i}`).join('|');
+  assert.ok(wildcardMatch(many, 'w19'));
+  assert.ok(!wildcardMatch(many, 'w20'));
 });

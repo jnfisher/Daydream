@@ -20,6 +20,7 @@
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import Minimize2 from '@lucide/svelte/icons/minimize-2';
   import PackageMinus from '@lucide/svelte/icons/package-minus';
+  import PlayIcon from '@lucide/svelte/icons/play';
   import Zap from '@lucide/svelte/icons/zap';
   import type { Component } from 'svelte';
   import { ABILITIES } from '../abilities';
@@ -267,16 +268,59 @@
 
   let canvas = $state<HTMLElement>();
 
-  /** Scrolls a node out from under the open record, or into view. */
+  // ---- playing it ----------------------------------------------------------------------------
+
+  /** Whether a pretend player can try the story: a monster with a talk block, a room with
+   * commands, or a text block the game runs or shows. */
+  const playable = $derived.by(() => {
+    if (!lookFirst) return false;
+    if (start.table === 'Monsters') return num(lookFirst['Greet Txt']) > 0;
+    if (start.table === 'Rooms') return num(lookFirst['Command Text']) > 0;
+    return root.table === 'Textblocks' && 'reading' in root && root.reading !== undefined && root.reading !== 'talk' && root.reading !== 'names';
+  });
+  let playing = $state(false);
+  /** The panel's code, read the first time it is opened. */
+  let panel: Promise<typeof import('./PlayPanel.svelte')> | undefined;
+  const panelCode = () => (panel ??= import('./PlayPanel.svelte'));
+  /** What the last turn lit. */
+  let played = $state<{ nodes: Set<string>; went: Set<string> } | null>(null);
+  /** How much of the bottom of the page the panel covers. */
+  let panelHigh = $state(0);
+  const under = $derived(playing ? panelHigh + 70 : 0);
+
+  /** After a turn, the furthest record it reached comes into view. */
+  function shown(nodes: Set<string>) {
+    let far: string | null = null;
+    for (const id of nodes) {
+      const b = placed.at.get(id);
+      if (b && (!far || b.x > placed.at.get(far)!.x || (b.x === placed.at.get(far)!.x && b.y > placed.at.get(far)!.y))) far = id;
+    }
+    if (far) reveal(far);
+  }
+
+  $effect(() => {
+    if (!playing) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) playing = false;
+    };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  });
+
+  /** Scrolls a node out from under the open record and the play panel, or into view. */
   function reveal(id: string) {
     requestAnimationFrame(() => {
       const b = placed.at.get(id);
       if (!b || !canvas) return;
-      const [left, right] = [b.x * zoom, (b.x + b.w) * zoom];
+      const [left, right, top, bottom] = [b.x * zoom, (b.x + b.w) * zoom, b.y * zoom, (b.y + b.h) * zoom];
       const seen = canvas.clientWidth - cover;
-      const behavior = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
-      if (right > canvas.scrollLeft + seen) canvas.scrollTo({ left: right - seen + 24, behavior });
-      else if (left < canvas.scrollLeft) canvas.scrollTo({ left: left - 24, behavior });
+      const high = canvas.clientHeight - under;
+      const to: ScrollToOptions = { behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' };
+      if (right > canvas.scrollLeft + seen) to.left = right - seen + 24;
+      else if (left < canvas.scrollLeft) to.left = left - 24;
+      if (bottom > canvas.scrollTop + high) to.top = Math.min(top - 24, bottom - high + 24);
+      else if (top < canvas.scrollTop) to.top = top - 24;
+      if (to.left !== undefined || to.top !== undefined) canvas.scrollTo(to);
     });
   }
 
@@ -400,7 +444,7 @@
 
 <div class="sg">
   <div class="bar" style:padding-right="{16 + cover}px">
-    <a class="btn sm ghost" href="#/story"><ArrowLeft size={15} /> Story</a>
+    <a class="btn sm ghost back" href="#/story" aria-label="Story"><ArrowLeft size={15} /><span class="wide">Story</span></a>
     <span class="who {k.cls}">
       <span class="tile"><k.icon size={15} /></span>
       <h1>{name || `${k.one} ${keyLabel(start.key)}`}</h1>
@@ -411,6 +455,9 @@
       {#if story.more}<span class="tag warn" title="A story shows at most {story.nodes.length} records">and {story.more} more not shown</span>{/if}
     </span>
     <span class="end">
+      {#if playable}
+        <button type="button" class="btn sm sticker" class:primary={!playing} aria-pressed={playing} onclick={() => (playing = !playing)}><PlayIcon size={14} />Play it</button>
+      {/if}
       <button type="button" class="btn sm icon" title={fit ? 'Show it at its own size' : 'Fit it to the page'} aria-label={fit ? 'Show it at its own size' : 'Fit it to the page'} aria-pressed={fit} onclick={() => (fit = !fit)}>
         {#if fit}<Maximize2 size={15} />{:else}<Minimize2 size={15} />{/if}
       </button>
@@ -426,7 +473,7 @@
   {:else}
     <div class="canvas" bind:clientWidth={wide} bind:this={canvas}>
       <!-- room to scroll the map's right out from under the open record -->
-      <div class="sizer" style:width="{(placed.width + 40) * zoom + cover}px" style:height="{placed.height * zoom}px">
+      <div class="sizer" style:width="{(placed.width + 40) * zoom + cover}px" style:height="{placed.height * zoom + under}px">
         <div class="graph" style:width="{placed.width + 40}px" style:height="{placed.height}px" style:transform="scale({zoom})">
           <svg class="edges" width={placed.width + 40} height={placed.height} aria-hidden="true">
             <defs>
@@ -438,9 +485,11 @@
               {@const a = placed.at.get(e.from)}
               {@const b = placed.at.get(e.to)}
               {#if a && b}
+                {@const went = !near && !!played?.went.has(`${e.from}>${e.to}@${e.port}`)}
                 <path
                   class="edge f-{FAMILY[e.kind]}"
-                  class:dim={near && !(near.has(e.from) && near.has(e.to) && (e.from === lit || e.to === lit))}
+                  class:dim={near ? !(near.has(e.from) && near.has(e.to) && (e.from === lit || e.to === lit)) : !!played && !went}
+                  class:went
                   d={edgePath(a, downOf(e), b)}
                   marker-end="url(#sg-{FAMILY[e.kind]})"
                 />
@@ -454,7 +503,8 @@
               class="node {nk.cls}"
               class:missing={n.state === 'missing'}
               class:run={n.table === 'Textblocks' && (n.reading === 'script' || n.reading === 'commands' || n.reading === 'chances')}
-              class:dim={near && !near.has(n.id)}
+              class:dim={near ? !near.has(n.id) : !!played && !played.nodes.has(n.id)}
+              class:trail={!near && !!played?.nodes.has(n.id)}
               class:lit={lit === n.id}
               class:open={isOpen(n)}
               class:calm={!settled}
@@ -488,6 +538,11 @@
         </div>
       </div>
     </div>
+    {#if playing}
+      {#await panelCode() then { default: PlayPanel }}
+        <PlayPanel start={root} bind:played bind:high={panelHigh} onclose={() => (playing = false)} onturn={shown} />
+      {/await}
+    {/if}
     {#if families.size}
       <div class="legend" aria-label="What the arrows mean">
         {#each LEGEND.filter(([f]) => families.has(f)) as [f, label] (f)}
@@ -529,6 +584,7 @@
   .edge.f-else { stroke-dasharray: 6 4; }
   marker path { stroke: none; }
   .edge.dim { opacity: .12; }
+  .edge.went { stroke-width: 3.5; }
 
   .node {
     position: absolute; left: 0; top: 0; box-sizing: border-box;
@@ -539,6 +595,7 @@
   .node:focus-visible { outline: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--focus) 40%, transparent), 0 3px 0 var(--shadow); }
   .node.open { border-color: var(--outline); box-shadow: 0 0 0 4px color-mix(in srgb, var(--t-bg) 90%, transparent), 0 3px 0 var(--shadow); }
   .node.dim { opacity: .35; }
+  .node.trail { border-color: var(--outline); box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 55%, transparent), 0 3px 0 var(--shadow); }
   .node.run { border-style: dashed; }
   .node.missing { border-color: var(--bad); background: var(--bad-bg); }
   .node.calm { transition: none; }
@@ -591,5 +648,10 @@
   @media (max-width: 760px) {
     .stats { display: none; }
     .legend { display: none; }
+    /* one line: the name gives way first */
+    .bar { flex-wrap: nowrap; padding-left: 8px; }
+    .who { flex: 1 1 auto; }
+    .who .num, .wide { display: none; }
+    .back { padding: 0 8px; }
   }
 </style>

@@ -15,7 +15,7 @@
 //! |---|---|
 //! | `GET /api/tables` | every table: name, index columns, columns with type and size |
 //! | `GET /api/tables/{table}/rows?columns=&nonzero=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked; with `nonzero`, only the rows where one of those columns holds something |
-//! | `GET /api/tables/{table}/row?key=[...]` | one row: `{key, values: {column: value}, published}` |
+//! | `GET /api/tables/{table}/row?key=[...]&missing=null` | one row: `{key, values: {column: value}, published}`; with `missing=null`, a row the realm lacks is `values: null` rather than a 404 |
 //! | `GET /api/references?table=&key=[...]` | the rows that name a record: `{references: [{table, key, title, column, by}], more}` |
 //! | `GET /api/spawns?group=` | where a monster group spawns: `{group, monsters: [[number, name, index]], ranges: [{min, max, rooms, maps: [[map, rooms]], names: [[name, rooms]]}], idle}` |
 //! | `PUT /api/tables/{table}/row?key=[...]` | `{values}` over the row; the import's report |
@@ -167,10 +167,12 @@ pub(crate) async fn rows(
     .await
 }
 
-/// `?key=`.
+/// `?key=`, and for a read `?missing=null`: a row the realm lacks answers `values: null`
+/// (for a reader that asks after rows that may not be there, a text block's next part).
 #[derive(Debug, Deserialize)]
 pub struct KeyQuery {
     key: String,
+    missing: Option<String>,
 }
 
 pub(crate) async fn row(
@@ -183,8 +185,17 @@ pub(crate) async fn row(
         let key = parse_key(t, &q.key)?;
         let realm = Realm::open(&s.realm_dir()?)?;
         let (_, rows) = rows::load(&realm, t)?;
-        let row = find_row(&rows, &index_columns(t), &key)
-            .ok_or_else(|| not_found(format!("{} {}", t.name, q.key)))?;
+        let Some(row) = find_row(&rows, &index_columns(t), &key) else {
+            if q.missing.as_deref() == Some("null") {
+                return Ok(Json(json!({
+                    "table": t.name,
+                    "key": key.iter().map(cell_json).collect::<Vec<_>>(),
+                    "values": Value::Null,
+                    "published": Value::Null,
+                })));
+            }
+            return Err(not_found(format!("{} {}", t.name, q.key)));
+        };
         let published = match rows::published(&realm, t, &key)? {
             Published::Same => Value::Null,
             Published::Added => json!({ "added": true }),

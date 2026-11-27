@@ -24,25 +24,25 @@ export function plainOf(text: string): string {
     .replace(/\x1b\[[0-9;]*[A-Za-z]?/g, '');
 }
 
-interface Pen {
+/** How a terminal draws text: its colour, its background, and whether it is bright. */
+export interface Pen {
   fg: number;
   bg: number;
   bold: boolean;
 }
 
-/** Text with ANSI escapes (ESC or ␛) as spans in a terminal's colours. */
-export function renderAnsi(text: string): DocumentFragment {
-  const out = document.createDocumentFragment();
-  const pen: Pen = { fg: 7, bg: 0, bold: false };
+/** A terminal's pen when nothing has set it. */
+export const PEN: Pen = { fg: 7, bg: 0, bold: false };
+
+/** Text with ANSI escapes (ESC or ␛) as runs of text, each with the pen it is drawn with,
+ * from the pen `from` on; and the pen it leaves the terminal with. */
+export function runsOf(text: string, from: Pen = PEN): { runs: [string, Pen][]; pen: Pen } {
+  const runs: [string, Pen][] = [];
+  const pen: Pen = { ...from };
   const s = toWire(text);
   let run = '';
   const flush = () => {
-    if (!run) return;
-    const span = document.createElement('span');
-    span.textContent = run;
-    span.style.color = COLOURS[pen.fg + (pen.bold ? 8 : 0)] ?? COLOURS[7]!;
-    if (pen.bg) span.style.backgroundColor = COLOURS[pen.bg] ?? '';
-    out.append(span);
+    if (run) runs.push([run, { ...pen }]);
     run = '';
   };
   for (let i = 0; i < s.length; i++) {
@@ -63,7 +63,7 @@ export function renderAnsi(text: string): DocumentFragment {
     flush();
     const codes = (m[1] || '0').split(';').map((x) => Number(x || 0));
     for (const code of codes) {
-      if (code === 0) Object.assign(pen, { fg: 7, bg: 0, bold: false });
+      if (code === 0) Object.assign(pen, PEN);
       else if (code === 1) pen.bold = true;
       else if (code === 22) pen.bold = false;
       else if (code >= 30 && code <= 37) pen.fg = code - 30;
@@ -71,6 +71,20 @@ export function renderAnsi(text: string): DocumentFragment {
     }
   }
   flush();
+  return { runs, pen };
+}
+
+/** Text with ANSI escapes (ESC or ␛) as spans in a terminal's colours, from the pen `from`
+ * on (a terminal's colours carry on from what it showed before). */
+export function renderAnsi(text: string, from: Pen = PEN): DocumentFragment {
+  const out = document.createDocumentFragment();
+  for (const [run, pen] of runsOf(text, from).runs) {
+    const span = document.createElement('span');
+    span.textContent = run;
+    span.style.color = COLOURS[pen.fg + (pen.bold ? 8 : 0)] ?? COLOURS[7]!;
+    if (pen.bg) span.style.backgroundColor = COLOURS[pen.bg] ?? '';
+    out.append(span);
+  }
   return out;
 }
 

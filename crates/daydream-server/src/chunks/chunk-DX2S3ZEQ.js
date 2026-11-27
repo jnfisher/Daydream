@@ -1,2 +1,0 @@
-// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
-import{Aa as e,Ba as o,Ga as t}from"./chunk-ZI5IBFR4.js";var s={name:"check",size:24,node:[["path",{d:"M20 6 9 17l-5-5"}]]},f=s.node,d=new Set(["$$slots","$$events","$$legacy"]);function c(r,n){let p=e(n,d);t(r,o(()=>p,{get icon(){return s}}))}var a={name:"minus",size:24,node:[["path",{d:"M5 12h14"}]]},M=a.node,m=new Set(["$$slots","$$events","$$legacy"]);function i(r,n){let p=e(n,m);t(r,o(()=>p,{get icon(){return a}}))}export{c as a,i as b};

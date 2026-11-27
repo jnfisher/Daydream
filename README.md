@@ -229,6 +229,14 @@ takes, needs or moves. Hovering a node lights up what it connects to, and a clic
 beside the map. **In Story** on a text block's card, or on the card of a monster that talks or
 a room with commands, opens its story. NMR's Quest Organizer is below the lists, as it was.
 
+**Play it** tries a story as a pretend player: greet the monster and ask it about its topics,
+or type the room's commands, and read what the game would send back, in its colours, run as
+silvermere runs it (the same topic matching, the same rolls, the same order of steps). Notes
+say what the game does not: the coins paid, the items given, the roll and what it picked, and
+why a test failed, with a button that changes the player so it passes and tries again. The
+player's level, class, race, alignment, stats, purse and what they carry can be set; the map
+lights up the way each turn went.
+
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
 sounds, which are off until you do. Licenses: `/notices.txt`.
