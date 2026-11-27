@@ -2,11 +2,16 @@
   The Library: the world's records, a table at a time. The list on the left (found by name
   or number, narrowed by chips, what changed since publishing dotted), the open record's card
   on the right (Card.svelte), or the whole table as a spreadsheet grid (Grid.svelte). The frame routes here with `show`, and `[` and `]` step through
-  the list as NMR's arrows do. Users, gangs and bank books are the Players place's.
+  the list as NMR's arrows do. On a phone the card is the page and the list a sheet at its
+  foot, which steps through the records and rises to find one. Users, gangs and bank books
+  are the Players place's.
 -->
 <svelte:options css="injected" />
 
 <script lang="ts">
+  import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import LayoutList from '@lucide/svelte/icons/layout-list';
   import Plus from '@lucide/svelte/icons/plus';
   import SearchIcon from '@lucide/svelte/icons/search';
@@ -49,10 +54,20 @@
   let saving = $state(false);
   /** Bumped by every write, so the card reads again where the record is used. */
   let version = $state(0);
-  /** On a phone: the list shown over the card. */
+  /** On a phone: the list's sheet risen over the card. */
   let browsing = $state(false);
+  /** A phone's width: the list is a sheet under the card. */
+  const narrow = matchMedia('(max-width: 760px)');
+  let phone = $state(narrow.matches);
+  $effect(() => {
+    const change = () => (phone = narrow.matches);
+    narrow.addEventListener('change', change);
+    return () => narrow.removeEventListener('change', change);
+  });
   /** The table as a spreadsheet grid, in place of the list and card. */
   let grid = $state(false);
+  /** The sheet sits shut at the card's foot: what it holds is out of reach until it rises. */
+  const shut = $derived(phone && !!key && !grid && !browsing);
   // the grid's code loads the first time it is shown
   let Grid = $state<typeof import('./Grid.svelte').default | null>(null);
   $effect(() => {
@@ -84,6 +99,32 @@
     shown.length === rows.length ? `${rows.length.toLocaleString()} ${rows.length === 1 ? one : many}` : `${shown.length.toLocaleString()} of ${rows.length.toLocaleString()}`,
   );
   const article = $derived(/^[aeiou]/i.test(one) ? 'an' : 'a');
+  /** Where the open record is in the list. */
+  const at = $derived(shown.findIndex((r) => r.label === open));
+
+  // the sheet's handle: a tap opens or shuts it, a drag up or down does too (followed on the
+  // window, so a drag that leaves the handle still counts, and a tap's buttons keep their clicks)
+  let dragged = false;
+  function grab(e: PointerEvent) {
+    const from = e.clientY;
+    dragged = false;
+    const move = (m: PointerEvent) => {
+      if (Math.abs(m.clientY - from) >= 12) dragged = true;
+    };
+    const done = (u: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', done);
+      window.removeEventListener('pointercancel', done);
+      if (dragged && u.type === 'pointerup') browsing = u.clientY < from;
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', done);
+    window.addEventListener('pointercancel', done);
+  }
+  function tapSheet() {
+    if (dragged) dragged = false;
+    else browsing = !browsing;
+  }
 
   // ---- the list: only the rows in sight are drawn ------------------------------------------
 
@@ -326,6 +367,10 @@
   onMount(() => {
     addGuard(() => !draft?.dirty || confirm('Discard the changes to this record?'));
     const keys = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && browsing && phone) {
+        browsing = false;
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's' && app.route.place === 'library' && draft) {
         e.preventDefault();
         void save();
@@ -362,7 +407,25 @@
 </script>
 
 <div class="lib" class:has-card={!!key} class:browsing class:grid>
+  {#if phone && key && browsing}
+    <button type="button" class="lib-scrim" tabindex="-1" aria-label="Shut the list" onclick={() => (browsing = false)}></button>
+  {/if}
   <aside class="lib-side" aria-label={k.many}>
+    {#if table && key && !grid}
+      <!-- svelte-ignore a11y_no_static_element_interactions (a drag is a shortcut: its buttons do the same for the keyboard) -->
+      <div class="peek" onpointerdown={grab}>
+        <span class="handle" aria-hidden="true"></span>
+        <div class="peek-row">
+          <button type="button" class="btn icon sm ghost" aria-label="The {one} before" disabled={at <= 0} onclick={() => step(-1)}><ChevronLeft size={18} /></button>
+          <button type="button" class="peek-says" aria-expanded={browsing} onclick={tapSheet}>
+            <span>{at >= 0 ? `${(at + 1).toLocaleString()} of ${shown.length.toLocaleString()} ${shown.length === 1 ? one : many}` : counted}</span>
+            <span class="turn" class:down={browsing}><ChevronUp size={16} /></span>
+          </button>
+          <button type="button" class="btn icon sm ghost" aria-label="The {one} after" disabled={at < 0 || at >= shown.length - 1} onclick={() => step(1)}><ChevronRight size={18} /></button>
+        </div>
+      </div>
+    {/if}
+    <div class="side-body" inert={shut}>
     <nav class="tables" aria-label="Tables">
       {#each tables as t (t.name)}
         {@const tk = kindOf(t.name)}
@@ -444,6 +507,7 @@
         {/if}
       </div>
     {/if}
+    </div>
   </aside>
 
   <main class="lib-main">
@@ -463,7 +527,6 @@
         onsave={() => void save()}
         oncopy={(nk) => void create(nk, true)}
         ondelete={() => void remove()}
-        onbrowse={() => (browsing = true)}
       />
     {:else if table && key && missing}
       <div class="empty">
@@ -487,6 +550,8 @@
 <style>
   .lib { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100%; overflow: hidden; position: relative; }
   .lib-side { border-right: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+  .side-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .peek, .lib-scrim { display: none; }
   .tables { display: flex; gap: 4px; flex-wrap: wrap; padding: 12px 12px 8px; }
   .tabchip {
     display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px 0 4px; border-radius: 999px;
@@ -538,11 +603,36 @@
   .lib.grid .search { width: 20rem; max-width: 100%; }
   .lib.grid .count { padding: 0 8px 0 4px; margin-left: auto; }
   .lib.grid .list { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .lib-side, .turn { transition: none !important; }
+  }
   @media (max-width: 760px) {
     .lib { grid-template-columns: minmax(0, 1fr); }
-    .lib.has-card .lib-side { display: none; }
-    .lib.has-card.browsing .lib-side { display: flex; position: absolute; inset: 0; z-index: 5; }
+    /* the card is the page; the list is a sheet at its foot, risen to find a record */
+    .lib.has-card:not(.grid) { --peek: 60px; }
+    .lib.has-card:not(.grid) .lib-main { padding-bottom: var(--peek); }
+    .lib.has-card:not(.grid) .lib-side {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; height: min(86%, calc(100% - 36px));
+      border: var(--stroke) solid var(--outline); border-bottom: 0; border-radius: 22px 22px 0 0;
+      box-shadow: 0 -10px 30px rgba(20, 16, 48, .2); transform: translateY(calc(100% - var(--peek)));
+      transition: transform .28s var(--ease);
+    }
+    .lib.has-card.browsing:not(.grid) .lib-side { transform: none; }
+    .lib.has-card .peek { display: block; touch-action: none; padding: 6px 8px 4px; flex: none; }
+    .handle { display: block; width: 40px; height: 5px; border-radius: 99px; background: var(--line-2); margin: 0 auto 4px; }
+    .peek-row { display: flex; align-items: center; gap: 4px; }
+    .peek-says {
+      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; border: 0; background: transparent;
+      box-shadow: none; font: 800 13px var(--font-ui); color: var(--ink-2); font-variant-numeric: tabular-nums;
+    }
+    .turn { display: inline-flex; transition: transform .2s var(--ease); }
+    .turn.down { transform: rotate(180deg); }
+    .lib.has-card.browsing .lib-scrim { display: block; position: absolute; inset: 0; z-index: 4; border: 0; border-radius: 0; padding: 0; background: rgba(20, 16, 48, .32); box-shadow: none; }
     .lib:not(.has-card) .lib-main { display: none; }
+    /* the tables and chips scroll sideways in one row each, leaving the height to the list */
+    .tables, .types { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .tables::-webkit-scrollbar, .types::-webkit-scrollbar { display: none; }
+    .tabchip, .types button { flex: none; }
     /* the grid is the page: its tables, search and chips above it */
     .lib.grid .lib-main { display: block; }
     .lib.grid .find { padding: 0 12px; }

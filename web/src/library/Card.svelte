@@ -10,7 +10,6 @@
   import Copy from '@lucide/svelte/icons/copy';
   import GitCompare from '@lucide/svelte/icons/git-compare';
   import History from '@lucide/svelte/icons/history';
-  import List from '@lucide/svelte/icons/list';
   import MapIcon from '@lucide/svelte/icons/map';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
@@ -43,7 +42,6 @@
     onsave,
     oncopy,
     ondelete,
-    onbrowse,
   }: {
     draft: Draft;
     table: TableInfo;
@@ -55,8 +53,6 @@
     onsave: () => void;
     oncopy: (key: Cell[]) => void;
     ondelete: () => void;
-    /** On a phone: back to the list. */
-    onbrowse: () => void;
   } = $props();
 
   const def = $derived(CARDS[table.name]);
@@ -185,7 +181,6 @@
 
 <article class="rcard" aria-label="{k.one} {label}">
   <header class="hero sky">
-    <button type="button" class="btn sm browse" onclick={onbrowse}><List size={14} /> All {k.many.toLowerCase()}</button>
     <div class="hero-in">
       <span class="big {k.cls}"><k.icon size={34} /></span>
       <div class="who">
@@ -329,7 +324,6 @@
   :global(.pill.as-btn) { border: 0; cursor: pointer; min-height: 0; box-shadow: none; }
   h1 { margin: 0; font-size: clamp(22px, 3vw, 30px); line-height: 1.1; overflow-wrap: anywhere; }
   .actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .browse { display: none; }
   .views {
     display: flex; gap: 3px; padding: 3px; margin: 12px auto 0; width: fit-content; border-radius: 12px;
     background: var(--surface-2); border: 1px solid var(--line);
@@ -348,7 +342,6 @@
   :global(.was-pop) .go { display: flex; justify-content: flex-end; gap: 6px; }
   :global(.was-pop > .btn) { justify-self: start; }
   @media (max-width: 760px) {
-    .browse { display: inline-flex; margin-bottom: 12px; }
     .hero-in { gap: 12px; }
     .big { width: 48px; height: 48px; border-radius: 15px; }
     .big :global(svg) { width: 26px; height: 26px; }
