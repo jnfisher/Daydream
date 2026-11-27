@@ -186,6 +186,8 @@ function keys(e: KeyboardEvent) {
   }
   if (mod) return;
   if (e.key === 'Escape' && app.inspecting.length) {
+    // the page's own Escape waits for the next press
+    e.preventDefault();
     closeInspector();
     return;
   }

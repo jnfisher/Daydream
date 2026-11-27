@@ -153,6 +153,15 @@ key, a toll, a trap) carries its symbol, a one-way exit an arrow, and an exit to
 elsewhere, to another map (a click goes there) or to a room the map does not have ends in a
 chip. **Show** turns names, symbols and grid dots on and off and says what the marks mean.
 
+**Build** (or `B`) digs with the same keys, as NMR's map editor does. From the selected room,
+a way with an exit is walked, a way into a room drawn next door joins the two (an exit each
+way), and a way into a free cell digs a new room there: a copy of the room it is dug from,
+without its exits, items, coins and permanent NPC, numbered after the map's highest room.
+Digits first dig a line (`5` then an arrow: five rooms, as far as the cells stay free), `.`
+does the last move again, and Enter names the room in place. Free cells and joins are marked
+around the room for the mouse too. Each edit shows at once and is written in turn, and its
+toast (or Ctrl+Z) undoes it.
+
 | Keys on the map | Do |
 |---|---|
 | Arrows, or the number pad | Walk the room's exits; Home, PgUp, End and PgDn walk NW, NE, SW and SE |
@@ -161,6 +170,7 @@ chip. **Show** turns names, symbols and grid dots on and off and says what the m
 | `+` `-` | Zoom in or out |
 | Shift+1, Shift+2 | Every room in view; close up on the room |
 | `F` | Full screen (Esc comes back) |
+| `B` | Build mode: the arrows and `U` `D` dig, join or walk; digits first for a line, `.` again, Enter to name the room, Esc when done |
 
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little

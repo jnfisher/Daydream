@@ -738,7 +738,7 @@ async fn the_record_number_changer_previews_and_refuses() {
 }
 
 #[tokio::test]
-async fn a_dig_from_a_missing_room_is_refused() {
+async fn a_dig_from_a_missing_room_or_of_too_long_a_line_is_refused() {
     let dir = realm();
     let (status, body) = send(
         dir.path(),
@@ -748,6 +748,21 @@ async fn a_dig_from_a_missing_room_is_refused() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = send(
+        dir.path(),
+        "POST",
+        "/api/map/dig",
+        serde_json::json!({"map": 1, "room": 1, "dir": 0, "to_map": 1, "to_room": 2, "count": 500, "dry_run": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("a line is 1 to 100 rooms"),
+        "{body}"
+    );
 }
 
 #[tokio::test]
