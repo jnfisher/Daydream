@@ -255,11 +255,14 @@ export const api = {
   tables: () => call<{ tables: TableInfo[] }>('GET', '/api/tables').then((r) => r.tables),
   rows: (table: string) => call<RowList>('GET', `${t(table)}/rows`),
   /** Each row's key, title and the values of `columns`; with `nonzero`, only the rows where
-   * one of those columns holds a number other than 0 or some text. */
-  rowsWith: (table: string, columns: string[], nonzero: string[] = []) =>
+   * one of those columns holds a number other than 0 or some text, and with `match`, the rows
+   * where one of its columns holds one of its numbers (with both, the rows either picks). */
+  rowsWith: (table: string, columns: string[], nonzero: string[] = [], match?: { columns: string[]; values: number[] }) =>
     call<{ rows: [Cell[], Cell, Cell[]][] }>(
       'GET',
-      `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}${nonzero.length ? `&nonzero=${encodeURIComponent(nonzero.join(','))}` : ''}`,
+      `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}${nonzero.length ? `&nonzero=${encodeURIComponent(nonzero.join(','))}` : ''}${
+        match ? `&match=${encodeURIComponent(match.columns.join(','))}&values=${match.values.join(',')}` : ''
+      }`,
     ),
   row: (table: string, key: Cell[]) => call<Row>('GET', `${t(table)}/row${k(key)}`),
   /** A row, or no values when the world lacks it (rather than a 404). */

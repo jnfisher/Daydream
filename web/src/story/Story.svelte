@@ -1,7 +1,8 @@
 <!--
   Story: the conversations and commands quests are made of. Pick a monster that talks or a
-  room with commands, and its story opens as a map (StoryGraph); a text block's opens from its
-  card. The tables of text, and NMR's Quest Organizer as it was, are below.
+  room players type in (its exits' words, its commands), and its story opens as a map
+  (StoryGraph); a text block's opens from its card. The tables of text, and NMR's Quest
+  Organizer as it was, are below.
 -->
 <svelte:options css="injected" />
 
@@ -9,6 +10,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import Search from '@lucide/svelte/icons/search';
   import { api, type Cell } from '../api';
+  import { REMOTE, TEXT } from '../library/exits';
   import { questOrganizer } from '../quests';
   import { kindOf } from '../shell/kinds';
   import Mascot from '../shell/Mascot.svelte';
@@ -31,7 +33,7 @@
     table: string;
     key: Cell[];
     name: string;
-    /** What it starts with: its talk block, its commands. */
+    /** What it starts with: its talk block, its exits' words, its commands. */
     sub: string;
   }
 
@@ -50,6 +52,7 @@
 
   const has = (t: string) => app.tables.some((x) => x.name === t);
   const num = (v: Cell | undefined) => Number(v) || 0;
+  const DIRS10 = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
   // read when the list is shown, and again when the world has changed since
   $effect(() => {
@@ -67,13 +70,22 @@
           }));
         })
         .catch(() => (talkers = []));
-    if (has('Rooms'))
+    if (has('Rooms')) {
+      // the rooms with commands, or with an exit whose words take players through it or work
+      // another (one that leads nowhere answers none)
+      const types = DIRS10.map((d) => `Type ${d}`);
+      const exits = DIRS10.map((d) => `Exit ${d}`);
       api
-        .rowsWith('Rooms', ['Command Text'], ['Command Text'])
+        .rowsWith('Rooms', ['Command Text', ...types, ...exits], ['Command Text'], { columns: types, values: [TEXT, REMOTE] })
         .then((r) => {
-          rooms = r.rows.map(([key, name, [cmd]]) => ({ table: 'Rooms', key, name: String(name ?? ''), sub: `commands ${cmd}` }));
+          rooms = r.rows.flatMap(([key, name, [cmd, ...more]]) => {
+            const words = DIRS10.filter((d) => (num(more[d]) === TEXT || num(more[d]) === REMOTE) && num(more[10 + d])).length;
+            const sub = [words && (words === 1 ? 'words of an exit' : `words of ${words} exits`), num(cmd) && `commands ${cmd}`].filter(Boolean).join(', ');
+            return sub ? [{ table: 'Rooms', key, name: String(name ?? ''), sub }] : [];
+          });
         })
         .catch(() => (rooms = []));
+    }
   });
 
   let query = $state('');
@@ -92,7 +104,7 @@
 
   const LISTS = $derived([
     { title: 'Monsters that talk', table: 'Monsters', hint: 'What they say when greeted, the topics players can ask about, and what the answers run.', all: talkers, found: matching(talkers) },
-    { title: 'Rooms with commands', table: 'Rooms', hint: 'What players can type there, and what it runs.', all: rooms, found: matching(rooms) },
+    { title: 'Rooms players type in', table: 'Rooms', hint: 'What players can type there, the words of its exits and its commands, and what each does.', all: rooms, found: matching(rooms) },
   ]);
 
   const TABLES = [

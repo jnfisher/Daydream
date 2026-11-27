@@ -14,7 +14,7 @@
 //! | Route | Answer |
 //! |---|---|
 //! | `GET /api/tables` | every table: name, index columns, columns with type and size |
-//! | `GET /api/tables/{table}/rows?columns=&nonzero=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked; with `nonzero`, only the rows where one of those columns holds something |
+//! | `GET /api/tables/{table}/rows?columns=&nonzero=&match=&values=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked; with `nonzero`, only the rows where one of those columns holds something, and with `match`, the rows where one of those columns holds one of the numbers `values` (with both, the rows either picks) |
 //! | `GET /api/tables/{table}/row?key=[...]&missing=null` | one row: `{key, values: {column: value}, published}`; with `missing=null`, a row the realm lacks is `values: null` rather than a 404 |
 //! | `GET /api/references?table=&key=[...]` | the rows that name a record: `{references: [{table, key, title, column, by}], more}` |
 //! | `GET /api/spawns?group=` | where a monster group spawns: `{group, monsters: [[number, name, index]], ranges: [{min, max, rooms, maps: [[map, rooms]], names: [[name, rooms]]}], idle}` |
@@ -103,11 +103,16 @@ pub(crate) async fn tables() -> Json<Value> {
 
 /// `?columns=`: more columns for each row of a row list, comma separated. `?nonzero=`: only
 /// the rows where one of these columns (comma separated) holds a number other than 0 or some
-/// text, such as the rooms that have commands.
+/// text, such as the rooms that have commands. `?match=` with `?values=`: only the rows where
+/// one of these columns holds one of these numbers, such as the rooms with an exit of a type.
+/// Given both, a row either picks is listed: the rooms with commands or with such an exit.
 #[derive(Debug, Default, Deserialize)]
 pub struct RowsQuery {
     columns: Option<String>,
     nonzero: Option<String>,
+    #[serde(rename = "match")]
+    matching: Option<String>,
+    values: Option<String>,
 }
 
 /// Whether a value holds something: a number other than 0, or text before its NUL.
@@ -144,10 +149,31 @@ pub(crate) async fn rows(
         };
         let more = positions(q.columns.as_deref())?;
         let some = positions(q.nonzero.as_deref())?;
+        let matching = positions(q.matching.as_deref())?;
+        let values = q
+            .values
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                v.trim()
+                    .parse::<i32>()
+                    .map_err(|_| bad(format!("{v} is not a whole number")))
+            })
+            .collect::<Result<Vec<i32>, _>>()?;
+        if matching.is_empty() != values.is_empty() {
+            return Err(bad("match and values go together"));
+        }
+        let is = |v: &daydream_nmr::Value| matches!(v, daydream_nmr::Value::Long(n) if values.contains(n));
         let list: Vec<Value> = rows
             .rows
             .iter()
-            .filter(|r| some.is_empty() || some.iter().any(|&i| holds(&r[i])))
+            .filter(|r| {
+                (some.is_empty() && matching.is_empty())
+                    || some.iter().any(|&i| holds(&r[i]))
+                    || matching.iter().any(|&i| is(&r[i]))
+            })
             .map(|r| {
                 let key: Vec<Value> = key_of_row(&rows, r, &index).iter().map(cell_json).collect();
                 let title = title.map(|i| title_json(&r[i]));

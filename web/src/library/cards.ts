@@ -340,6 +340,7 @@ const ROOMS: CardDef = {
   sections: [
     // a room is what it looks like and where it leads: those first, the rest beside them
     { id: 'see', title: 'What players see', text: { cols: range(0, 6).map((n) => `Desc ${n}`), label: 'look' } },
+    { id: 'typed', title: 'What players can type here', hint: 'as the game reads it', custom: 'typed' },
     {
       id: 'room',
       title: 'The room',

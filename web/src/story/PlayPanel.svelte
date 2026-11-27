@@ -1,8 +1,9 @@
 <!--
   Play it: a pretend player in a story (play.ts). The player greets the monster and asks it
-  about its topics, or types the room's commands, and reads what the game would send back, in
-  its colours; notes say what the game does not (coins paid, an item given, a test failed and
-  why, with what would have passed it). The map lights up the way each turn went.
+  about its topics, or types in the room (its exits' words, its commands), and reads what the
+  game would send back, in its colours; notes say what the game does not (coins paid, an item
+  given, a door unlocked, a test failed and why, with what would have passed it). The map
+  lights up the way each turn went.
 -->
 <svelte:options css="injected" />
 
@@ -11,6 +12,7 @@
   import Coins from '@lucide/svelte/icons/coins';
   import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
   import Info from '@lucide/svelte/icons/info';
+  import MapPin from '@lucide/svelte/icons/map-pin';
   import PlayIcon from '@lucide/svelte/icons/play';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import UserRound from '@lucide/svelte/icons/user-round';
@@ -20,6 +22,7 @@
   import { ABILITIES } from '../abilities';
   import { PEN, renderAnsi, runsOf, type Pen } from '../ansi';
   import { api, type Cell } from '../api';
+  import { exitsOf, REMOTE, TEXT } from '../library/exits';
   import { readRecord, recordOf } from '../library/records.svelte';
   import { alternatives, coinsOf, patternLines, type Reading } from '../library/script';
   import { Play, PLAYER, type Fix, type Pretend, type Shown } from './play';
@@ -63,19 +66,36 @@
   const who = $derived(start.table === 'Monsters' ? text(values?.['Name']) || `monster ${n0}` : 'someone');
   const blockValues = $derived(block ? recordOf('Textblocks', [block, 0]) : null);
 
-  /** The words a player can ask about, or type: each topic, each command's first way. */
-  const ways = $derived.by(() => {
-    const data = text(blockValues?.['Data']);
-    if (!data || mode === 'run') return [];
+  /** The words of the room's exits, which the game tries before its commands: each one's
+   * first words. */
+  const exitWays = $derived.by(() => {
+    const v = values;
+    if (start.table !== 'Rooms' || !v) return [];
     const out: string[] = [];
-    for (const pl of patternLines(data)) {
+    for (const kind of [TEXT, REMOTE])
+      for (const e of exitsOf((c) => v[c])) {
+        if (e.type !== kind || !e.to || !e.p1) continue;
+        const m = recordOf('Messages', [e.p1]);
+        const w = m ? ['Line 1', 'Line 2', 'Line 3'].map((c) => text(m[c]).trim()).find(Boolean) : undefined;
+        if (w && !out.includes(w)) out.push(w);
+      }
+    return out;
+  });
+
+  /** The words a player can ask about, or type: each topic; each exit's words, then each
+   * command's first way. */
+  const ways = $derived.by(() => {
+    if (mode !== 'talk' && mode !== 'room') return [];
+    const out: string[] = mode === 'room' ? [...exitWays] : [];
+    const data = text(blockValues?.['Data']);
+    for (const pl of data ? patternLines(data) : []) {
       const w = (mode === 'talk' ? pl.pattern : (alternatives(pl.pattern)[0] ?? '').replaceAll('*', '')).trim();
       if (w && !out.includes(w)) out.push(w);
     }
     return out.slice(0, 12);
   });
 
-  const TITLE: Record<Mode, string> = { talk: 'Try the conversation', room: 'Try the commands', run: 'Try it' };
+  const TITLE: Record<Mode, string> = { talk: 'Try the conversation', room: 'Try typing here', run: 'Try it' };
   const runLabel = $derived(start.reading === 'chances' ? 'Roll it' : start.reading === 'text' ? 'Show it' : `Run block ${n0}`);
 
   // ---- the pretend player -------------------------------------------------------------------
@@ -278,7 +298,7 @@
   <div class="term" role="log" aria-label="What the player reads" bind:this={term}>
     {#if !turns.length}
       <p class="hint">
-        {#if mode === 'talk'}Greet {who} or ask about something, and read what the game would send back.{:else if mode === 'room'}Type a command as a player would, and read what the game would send back.{:else}Run it as the game would, and read what it sends back.{/if}
+        {#if mode === 'talk'}Greet {who} or ask about something, and read what the game would send back.{:else if mode === 'room'}Type what a player would here, an exit's words or a command, and read what the game would send back.{:else}Run it as the game would, and read what it sends back.{/if}
         The map lights up the way it goes.
       </p>
     {/if}
@@ -294,6 +314,8 @@
           </div>
         {:else if s.to === 'room'}
           <div class="room"><span class="who"><Users size={12} />Others here read</span><span class="line" use:ansi={[s.text, PEN]}></span></div>
+        {:else if s.to === 'there'}
+          <div class="room"><span class="who there" title="Those in {s.where} read it"><MapPin size={12} /><span class="cut">In {s.where}</span></span><span class="line" use:ansi={[s.text, PEN]}></span></div>
         {:else}
           <div class="line" use:ansi={[s.text, t.pens[si] ?? PEN]}></div>
           {#if s.to === 'all'}<div class="room"><span class="who"><Users size={12} />Everyone here reads it</span></div>{/if}
@@ -317,7 +339,7 @@
         <input
           bind:value={typed}
           placeholder={mode === 'talk' ? `Ask ${who} about anything` : 'Type what a player would'}
-          aria-label={mode === 'talk' ? `Ask ${who} about` : 'Type a command'}
+          aria-label={mode === 'talk' ? `Ask ${who} about` : 'Type as a player'}
           autocomplete="off"
           spellcheck="false"
         />
@@ -367,6 +389,9 @@
   .line { min-height: 1.35em; }
   .room { display: flex; gap: 8px; align-items: baseline; }
   .room .who { display: inline-flex; align-items: center; gap: 4px; flex: none; font: 800 11px var(--font-ui); color: #8a84b0; white-space: nowrap; }
+  /* another room's name gives way to its line */
+  .room .who.there { flex: 0 1 auto; max-width: 40%; min-width: 0; }
+  .who .cut { overflow: hidden; text-overflow: ellipsis; }
   .note {
     display: flex; align-items: flex-start; gap: 6px; margin: 3px 0; padding: 4px 8px; border-radius: 8px; width: fit-content; max-width: 100%; box-sizing: border-box;
     background: #1b1834; color: #cdc7f1; font: 700 12px/1.45 var(--font-ui); white-space: normal;

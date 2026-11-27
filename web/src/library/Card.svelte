@@ -64,11 +64,13 @@
   const label = $derived(keyLabel(key));
   const name = $derived(table.title ? titleOf(shown(draft.get(table.title))) : '');
   const tags = $derived(def?.tags?.(draft.get).filter(Boolean) ?? []);
-  /** Whether a story starts here: a monster that talks, a room with commands, a text block. */
+  /** Whether a story starts here: a monster that talks, a room players type in, a text block. */
   const tells = $derived.by(() => {
     const has = (col: string) => (Number(draft.get(col)) || 0) > 0;
     if (table.name === 'Monsters') return has('Greet Txt') || has('Talk Txt');
-    if (table.name === 'Rooms') return has('Command Text');
+    // a room's commands, or an exit leading somewhere whose words take players through it
+    // (a Text exit, type 10) or work another (a Remote Action, 12)
+    if (table.name === 'Rooms') return has('Command Text') || Array.from({ length: 10 }, (_, d) => d).some((d) => [10, 12].includes(Number(draft.get(`Type ${d}`))) && has(`Exit ${d}`));
     return table.name === 'Textblocks';
   });
 

@@ -207,7 +207,13 @@ card says what it does as the game reads it, following the text as it is typed: 
 lines as steps in plain words ("Take 20 platinum, or say message 1458 and stop"), each record
 it names a chip; a room's commands by the words that run them; a random block's lines by
 their chances; a talk block's topics with the text each shows and the script that follows; and
-a clause the game skips or a line it never reaches, with why. A card also
+a clause the game skips or a line it never reaches, with why. A room's card says what players
+can type there, in the order the game tries it: the words of an exit that take them through it
+or work a door, a hidden way or a trap (here or in another room), then the room's commands,
+with a warning where an exit's words keep a command or another exit from ever answering; and
+every way out, its "Obvious exits:" line as the game prints it and what each exit asks of a
+player who walks it (a key or a pick of the lock, a toll, a level, a search), in plain words
+from the game's own rules. A card also
 says what is wrong with its record, each with a one-click fix that fills in the fields (so
 Save keeps it and Undo takes it back): a value its field can't hold, checked as you type
 (Save waits until it is fixed), a number that names a record the world does not have, an
@@ -218,22 +224,25 @@ numbers; a room beside the rooms next to it), field by field under the card's he
 values that differ in yellow; a click copies one across, and any record of the table can be
 added. Players keep today's editor for now.
 
-**Story** lists the monsters that talk and the rooms with commands, found by name or number.
-One opens as a map of its story, with a link of its own (`#/story/monsters/381`,
-`#/story/rooms/6/1664`): the monster or room on the left, then a column for each step on, as
-the game runs it: the talk block and the topics players can ask about, the text each answer
-shows and the script it then runs, and the messages, items and rooms the script's steps name.
+**Story** lists the monsters that talk and the rooms players type in (an exit's words, the
+room's commands), found by name or number. One opens as a map of its story, with a link of its
+own (`#/story/monsters/381`, `#/story/rooms/6/1664`): the monster or room on the left, then a
+column for each step on, as the game runs it: the talk block and the topics players can ask
+about, a room's exits' words with where they take players and what they work, the text each
+answer shows and the script it then runs, and the messages, items and rooms the steps name.
 Each arrow leaves by the row that takes it (a topic, a step) and comes in at what it reaches,
 its colour saying what it does: leads on, says, the way out when a test fails, or gives,
 takes, needs or moves. Hovering a node lights up what it connects to, and a click opens it
 beside the map. **In Story** on a text block's card, or on the card of a monster that talks or
-a room with commands, opens its story. NMR's Quest Organizer is below the lists, as it was.
+a room players type in, opens its story. NMR's Quest Organizer is below the lists, as it was.
 
 **Play it** tries a story as a pretend player: greet the monster and ask it about its topics,
-or type the room's commands, and read what the game would send back, in its colours, run as
-silvermere runs it (the same topic matching, the same rolls, the same order of steps). Notes
-say what the game does not: the coins paid, the items given, the roll and what it picked, and
-why a test failed, with a button that changes the player so it passes and tries again. The
+or type in the room (its exits' words, its commands), and read what the game would send back,
+in its colours, run as silvermere runs it (the same topic matching, the same rolls, the same
+order of steps; an exit's words before the room's commands). Notes say what the game does not:
+the coins paid, the items given, a door unlocked or a hidden way opened (as it stays for the
+turns after), the roll and what it picked, and why a test failed, with a button that changes
+the player so it passes and tries again. The
 player's level, class, race, alignment, stats, purse and what they carry can be set; the map
 lights up the way each turn went.
 

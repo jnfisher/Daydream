@@ -1,6 +1,7 @@
-// A story as a graph: from a monster that talks, a room with commands or a text block, every
+// A story as a graph: from a monster that talks, a room players type in or a text block, every
 // text block, message and record the game reaches through them, and how: greeted, asked about
-// a topic, the script an answer runs, what a step says, gives, takes, needs, runs or moves to.
+// a topic, the words of a room's exits, the script an answer runs, what a step says, gives,
+// takes, needs, runs or moves to.
 // Each text block is read as the game reads it where this story reaches it (script.ts), and
 // each way on leaves from the row of its node that takes it: a topic, a step.
 //
@@ -9,6 +10,7 @@
 //
 // Pure: no DOM, so `node --test` runs its tests (story.test.ts).
 
+import { exitsOf, REMOTE, TEXT } from '../library/exits.ts';
 import { linesOf, type Reading, type Role } from '../library/script.ts';
 
 export type Cell = number | string | null;
@@ -39,7 +41,8 @@ export interface StoryEdge {
   to: string;
   kind: EdgeKind;
   /** The row of `from` it leaves by: a topic `t2`, a step `1.0` (its line's place, then the
-   * step's), or `talks`, `chatter`, `types`, `greet`, `then`. */
+   * step's), a room's exit whose words take players through it `x9` or work an exit `r3`, or
+   * `talks`, `chatter`, `types`, `greet`, `then`. */
   port: string;
 }
 
@@ -63,8 +66,8 @@ function keyFor(table: string, n: number, map?: number): Cell[] {
 
 /**
  * The story that starts at a monster (its greeting and topics, and what it says now and then),
- * a room (its commands) or a text block (read as `reading`, and as an answer when `answer`),
- * at most `max` records.
+ * a room (the words of its exits, and its commands) or a text block (read as `reading`, and as
+ * an answer when `answer`), at most `max` records.
  */
 export function storyOf(root: { table: string; key: Cell[]; reading?: Reading; answer?: boolean }, look: Look, max = 60): Story {
   const nodes = new Map<string, StoryNode>();
@@ -129,6 +132,18 @@ export function storyOf(root: { table: string; key: Cell[]; reading?: Reading; a
       if (greet > 0) link(node, add('Textblocks', [greet, 0], at, { reading: 'topics' }), 'talks', 'talks');
       if (talk > 0) link(node, add('Textblocks', [talk, 0], at, { reading: 'talk' }), 'chatter', 'chatter');
     } else if (node.table === 'Rooms' && node === start) {
+      // the words of its exits first, as the game tries them: a Text exit's take players
+      // through it, saying its message; a Remote Action's work an exit of the room it leads
+      // to, saying its message, for those carrying its item
+      const [map, room] = [num(node.key[0]), num(node.key[1])];
+      for (const kind of [TEXT, REMOTE])
+        for (const e of exitsOf((c) => v[c])) {
+          if (e.type !== kind || !e.to) continue;
+          const port = `${kind === TEXT ? 'x' : 'r'}${e.dir}`;
+          if (kind === REMOTE && e.p4 > 0) link(node, add('Items', [e.p4], at), 'needs', port);
+          if (kind === TEXT || e.to !== room) link(node, add('Rooms', [map, e.to], at), kind === TEXT ? 'moves' : 'works', port);
+          if (e.p3 > 0) link(node, add('Messages', [e.p3], at), 'says', port);
+        }
       const cmd = num(v['Command Text']);
       if (cmd > 0) link(node, add('Textblocks', [cmd, 0], at, { reading: 'commands' }), 'types', 'types');
     } else if (node.table === 'Textblocks') {
