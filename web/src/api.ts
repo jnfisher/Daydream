@@ -2,7 +2,7 @@
 
 import type { Ref } from './library/script';
 import type { References } from './library/where';
-import type { Dig, MapAnswer, MapFile, PinCell, SavedStamp, StampsFile } from './world/model';
+import type { Dig, MapAnswer, MapFile, MapNote, PinCell, SavedStamp, StampsFile } from './world/model';
 import type { StampRequest } from './world/stamps';
 
 export type Cell = number | string | null;
@@ -386,7 +386,9 @@ export const api = {
   /** Every map's rooms moved by hand: the file to export. */
   mapFile: () => call<MapFile>('GET', '/api/map/pins'),
   /** An exported file: each map it has takes its places. */
-  importMapFile: (file: MapFile) => call<{ maps: number; pins: number; step: number }>('POST', '/api/map/pins/import', file, true),
+  importMapFile: (file: MapFile) => call<{ maps: number; pins: number; notes: number; step: number }>('POST', '/api/map/pins/import', file, true),
+  /** Notes on one map written (or put in place of those with their ids), and some taken away: answers how many it has now. */
+  notes: (map: number, set: MapNote[], drop: string[] = []) => call<{ notes: number; step: number }>('POST', '/api/map/notes', { map, set, drop }, true),
   /** The stamps saved from the map, kept beside the working copy as its places are. */
   savedStamps: () => call<StampsFile>('GET', '/api/map/stamps'),
   /** Saves a stamp: a new one (no id) takes the next id, and one with an id replaces it or comes back. Answers the realm history's newest step. */

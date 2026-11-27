@@ -979,6 +979,109 @@ async fn rooms_moved_by_hand_are_kept_beside_the_working_copy() {
     assert_eq!(body["level_pins"], json!({"7": [2, 2, 1]}));
 }
 
+/// The builder's notes on a map are kept beside the working copy too, with the places.
+#[tokio::test]
+async fn notes_on_the_map_are_kept_beside_the_working_copy() {
+    use serde_json::json;
+    let dir = realm();
+    let d = dir.path();
+    let todo = json!({"id": "a1", "kind": "note", "text": "  Give the guard a line ", "rooms": [12], "todo": true});
+    let label = json!({"id": "a2", "kind": "label", "text": "North gate", "rooms": [13], "colour": "mint", "done": true});
+    let region = json!({"id": "a3", "kind": "region", "text": "Thieves' quarter", "rooms": [12, 13, 14], "colour": "sky"});
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/notes",
+        json!({"map": 1, "set": [todo, label, region]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"notes": 3, "step": 0}));
+    // the words are trimmed, and only a note is a thing to do
+    let kept = json!([
+        {"id": "a1", "kind": "note", "text": "Give the guard a line", "rooms": [12], "todo": true},
+        {"id": "a2", "kind": "label", "text": "North gate", "rooms": [13], "colour": "mint"},
+        {"id": "a3", "kind": "region", "text": "Thieves' quarter", "rooms": [12, 13, 14], "colour": "sky"},
+    ]);
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(body["maps"], json!({"1": {"pins": {}, "notes": kept}}));
+    let (_, body) = get(d, "/api/map?map=1").await;
+    assert_eq!(body["notes"], kept);
+    let (_, history) = get(d, "/api/history").await;
+    assert_eq!(history["steps"], json!([]), "{history}");
+
+    // one ticked off in its place, one taken away
+    let done = json!({"id": "a1", "kind": "note", "text": "Give the guard a line", "rooms": [12], "todo": true, "done": true});
+    let (_, body) = send(
+        d,
+        "POST",
+        "/api/map/notes",
+        json!({"map": 1, "set": [done.clone()], "drop": ["a2", "zz"]}),
+    )
+    .await;
+    assert_eq!(body["notes"], 2, "{body}");
+    let (_, body) = get(d, "/api/map?map=1").await;
+    assert_eq!(body["notes"], json!([done, kept[2]]));
+
+    for bad in [
+        json!({"map": 1, "set": [{"id": "", "kind": "note", "text": "x", "rooms": [1]}]}),
+        json!({"map": 1, "set": [{"id": "a b", "kind": "note", "text": "x", "rooms": [1]}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "note", "text": "   ", "rooms": [1]}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "note", "text": "x", "rooms": [1, 2]}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "label", "text": "x", "rooms": []}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "region", "text": "x", "rooms": [0]}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "label", "text": "x".repeat(81), "rooms": [1]}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "note", "text": "x", "rooms": [1], "colour": "black"}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "sticker", "text": "x", "rooms": [1]}]}),
+        json!({"map": 1, "set": [{"id": "b1", "kind": "note", "text": "x", "rooms": [1]}, {"id": "b1", "kind": "note", "text": "y", "rooms": [2]}]}),
+        json!({"map": 0, "set": []}),
+    ] {
+        let (status, body) = send(d, "POST", "/api/map/notes", bad.clone()).await;
+        assert!(status.is_client_error(), "{bad}: {status} {body}");
+    }
+
+    // an import brings a map's notes with its places, checked like the rest
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/pins/import",
+        json!({"daydream": "map", "version": 1, "maps": {"2": {"pins": {"7": [2, 2]}, "notes": [{"id": "c1", "kind": "label", "text": " Docks ", "rooms": [7]}]}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["notes"], 1, "{body}");
+    let (_, body) = get(d, "/api/map?map=2").await;
+    assert_eq!(
+        body["notes"],
+        json!([{"id": "c1", "kind": "label", "text": "Docks", "rooms": [7]}])
+    );
+    let (status, body) = send(
+        d,
+        "POST",
+        "/api/map/pins/import",
+        json!({"daydream": "map", "version": 1, "maps": {"2": {"notes": [{"id": "c1", "kind": "label", "text": "", "rooms": [7]}]}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    // a map whose last note goes leaves the file
+    let (_, body) = send(
+        d,
+        "POST",
+        "/api/map/notes",
+        json!({"map": 1, "drop": ["a1", "a3"]}),
+    )
+    .await;
+    assert_eq!(body["notes"], 0, "{body}");
+    let (_, body) = get(d, "/api/map/pins").await;
+    assert_eq!(
+        body["maps"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>()),
+        Some(vec!["2".to_string()])
+    );
+}
+
 #[tokio::test]
 async fn users_are_edited_and_revived() {
     let dir = realm();

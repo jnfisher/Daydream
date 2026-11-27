@@ -335,6 +335,15 @@
             </div>
           {/if}
         </div>
+        <div class="eyebrow">Your notes</div>
+        <div class="setter">
+          <button type="button" class="row" onclick={() => sel.host.region([...sel.picked])} title="A region of your notes: a name drawn around them on the map, never published">
+            <span class="ic"><SquareDashed size={14} /></span>
+            <span class="what">Region</span>
+            <span class="value">A name drawn around them</span>
+            <Plus size={13} />
+          </button>
+        </div>
       </div>
     {/if}
   {/if}

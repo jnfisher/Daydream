@@ -197,6 +197,16 @@ and `>` do the same. An exit or a link to a room on another level ends in a chip
 arrow. Each way of drawing a map keeps its own layout, so rooms moved by hand in levels stay
 on their level, and drawing the map flat again brings back its flat layout.
 
+**Notes** are the builder's own, kept beside the working copy with the layout and never
+published. `N` writes a note on the room selected: words to remember, or a thing to do that is
+ticked off when done. Shift+`N` writes a label, drawn over the room on the map, and a region (a
+name drawn around rooms) goes around the rooms picked with Select. Each is written beside its
+room, in one of six colours, and a note's mark sits on its room's corner: pointing at it reads
+it, and a click opens it to change. The **Notes** menu lists the map's notes, the things still
+to do first, ticks them off, and goes to a note's room. Ctrl+Z takes a change back like a move,
+and Show's export and import carry the notes with the layouts (the server answers the same at
+`POST /api/map/notes`).
+
 **Stamps** (or `S`) put a shape of rooms down at once: a corridor, an L-bend, a T, a
 crossroads, an open hall, a ring, a plaza, a spiral, a maze, a stairwell, a gatehouse, a lair
 spur, a shop row, a forest patch, a cave or a one-way drop. `1` to `9` pick the first nine,
@@ -287,6 +297,8 @@ and finds one by its number or its name.
 | `S` | Stamps: `1` to `9` pick one; `R` turn, `X` `Y` mirror, `[` `]` `{` `}` size, Space roll, `J` join what it touches, arrows and Enter aim and put it down, Shift and Alt held leave rooms alone or replace exits, Esc puts it away |
 | `V` | Select: `1` to `4` box, lasso, brush, wand; Shift adds, Alt takes away, `[` `]` size the brush, Space and a drag moves the map, Ctrl+A picks every room, Esc lets go of them, then puts it away |
 | `5` | In Select, Paint: a drag paints the field onto rooms, `[` `]` size it, Alt and a click takes a room's value, Esc puts the pipette back, then lets go of the rooms picked |
+| `N` | A note on the room (perhaps a thing to do): Ctrl+Enter keeps it, Esc puts it away unchanged |
+| Shift+N | A label on the room, drawn on the map: Enter keeps it |
 
 **The Library** has the world's records a table at a time: the list (found by name or
 number, narrowed by chips such as Weapons or Map 3, or **Changed** for what changed since

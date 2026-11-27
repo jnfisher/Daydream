@@ -52,6 +52,7 @@
   import Scan from '@lucide/svelte/icons/scan';
   import SquareDashedMousePointer from '@lucide/svelte/icons/square-dashed-mouse-pointer';
   import StampIcon from '@lucide/svelte/icons/stamp';
+  import StickyNote from '@lucide/svelte/icons/sticky-note';
   import Waypoints from '@lucide/svelte/icons/waypoints';
   import X from '@lucide/svelte/icons/x';
   import { api, type Cell } from '../api';
@@ -64,7 +65,8 @@
   import { SPRAY, wiresOf, type End, type Wire, type WireKind, type WiresFor } from './wires';
   import type { Host } from './host';
   import { cellKey, cellsOf, OPPOSITE, spotsOf, STEP, type Spot } from './layout';
-  import { DIR_WORDS, KEY_DIR, kindName, mapName, type MapFile, type MapLink, type MapName, type MapRoom, type PinCell, type Scripts, type When } from './model';
+  import { DIR_WORDS, KEY_DIR, kindName, mapName, type MapFile, type MapLink, type MapName, type MapNote, type MapRoom, type PinCell, type Scripts, type When } from './model';
+  import type { Noter } from './noter.svelte';
   import { Scene, type Camera, type Ghost, type Hit, type Layers, type LegendEntry, type Stub } from './scene';
   import type { Selector } from './selector.svelte';
   import type { Stamper } from './stamper.svelte';
@@ -157,6 +159,12 @@
   let selector = $state.raw<Selector | null>(null);
   /** The Select tool is on. */
   let picking = $state(false);
+  /** The builder's notes: their code and the map's notes, once a map with notes is drawn or one is written. */
+  let noteKit = $state<typeof import('./noting') | null>(null);
+  let noter = $state.raw<Noter | null>(null);
+  /** The map's notes as last read, for the notes' code once it has loaded. */
+  let notesRead: MapNote[] = [];
+  let notesOpen = $state(false);
   /** Walk mode: a playtest from a room, in a panel whose code loads the first time. */
   let walking = $state(false);
   let WalkPanel = $state.raw<typeof PlayPanel | null>(null);
@@ -185,7 +193,7 @@
   }
 
   function layersFrom(v: string): Layers {
-    const l: Layers = { labels: true, grid: true, symbols: true };
+    const l: Layers = { labels: true, grid: true, symbols: true, notes: true };
     try {
       const o: unknown = JSON.parse(v || '{}');
       if (o && typeof o === 'object') for (const k of Object.keys(l) as (keyof Layers)[]) if (typeof (o as Record<string, unknown>)[k] === 'boolean') l[k] = (o as Record<string, boolean>)[k]!;
@@ -254,6 +262,9 @@
         pinCount = pins.size;
       }
       scene.setRooms(a.rooms, pins, levels, moved);
+      notesRead = a.notes ?? [];
+      if (noter) noter.load(map, notesRead);
+      else if (notesRead.length) void loadNotes();
       roomsAt++;
       startRoom = scene.start;
       stale = false;
@@ -303,7 +314,7 @@
     if (how === 'centre') scene.centreOn(r.room);
     else if (how === 'close') scene.centreOn(r.room, { zoom: Math.max(scene.cam.z, 1.1), animate: false });
     else if (how === 'keep') scene.keepInView(r.room);
-    live = `${r.name || 'Room'}, room ${map}/${r.room}. ${exitsSaid(r)}`;
+    live = `${r.name || 'Room'}, room ${map}/${r.room}. ${exitsSaid(r)} ${noter?.said(r.room) ?? ''}`.trim();
   }
 
   /** The selected room went (an undo took it away): its card closes, and Build mode goes back to the last room it was in that is still here. */
@@ -458,6 +469,7 @@
   }
 
   function tipFor(h: Hit): { title: string; sub: string } {
+    if (h.note !== undefined) return noter?.tip(h.note) ?? { title: 'A note', sub: '' };
     if (h.wire) return wireTip(h.wire, h.wires);
     if (h.ghost) {
       const from = named(selected?.room ?? 0);
@@ -990,7 +1002,42 @@
     quiet: () => dismiss(buildToast),
     colour: (by) => setColour(by, true),
     stamp: (id) => void holdSaved(id),
+    go: (n) => choose(n, 'close'),
+    region: (rooms) => void loadNotes().then((nt) => nt?.region(rooms)),
   };
+
+  // ---- the builder's notes ---------------------------------------------------------------
+
+  /** The notes' code, loaded once: the map's notes are drawn from then on (unless Show hides them). */
+  async function loadNotes(): Promise<Noter | null> {
+    if (noter) return noter;
+    try {
+      const kit = await import('./noting');
+      if (!noter) {
+        noter = new kit.Noter(host);
+        noteKit = kit;
+        noter.load(map, notesRead);
+        scene?.setLayer(layers.notes ? noter.layer : null);
+      }
+      return noter;
+    } catch (e) {
+      toast(messageOf(e), { kind: 'error' });
+      return null;
+    }
+  }
+
+  /** N (Shift+N): the selected room's note (label) to write. */
+  async function writeNote(kind: 'note' | 'label') {
+    const n = selected?.room;
+    if (n === undefined) {
+      say(`Select a room first, then press ${kind === 'note' ? 'N' : 'Shift+N'} to ${kind === 'note' ? 'write a note on it' : 'label it'}.`);
+      return;
+    }
+    const nt = await loadNotes();
+    if (!nt) return;
+    if (!layers.notes) setLayer('notes', true);
+    nt.write(n, kind);
+  }
 
   /** The drawer of stamps open (Build mode with it) or put away. */
   async function setStamping(on: boolean) {
@@ -1176,7 +1223,7 @@
       await reread();
       sfx('pop');
       dismiss(buildToast);
-      buildToast = toast(`Imported the layouts of ${r.maps === 1 ? 'one map' : `${r.maps} maps`} (${r.pins.toLocaleString()} rooms).`, { action: 'Undo', onAction: () => void undo() });
+      buildToast = toast(`Imported the layouts${r.notes ? ' and notes' : ''} of ${r.maps === 1 ? 'one map' : `${r.maps} maps`} (${r.pins.toLocaleString()} rooms${r.notes ? `, ${r.notes.toLocaleString()} notes` : ''}).`, { action: 'Undo', onAction: () => void undo() });
     } catch (e) {
       sfx('nope');
       toast(messageOf(e), { kind: 'error' });
@@ -1200,6 +1247,7 @@
     layers = { ...layers, [k]: on };
     write('dd-map-layers', JSON.stringify(layers));
     scene?.setLayers(layers);
+    if (k === 'notes') scene?.setLayer(on && noter ? noter.layer : null);
     sfx('toggle');
   }
 
@@ -1357,6 +1405,7 @@
     let done = true;
     // in levels, the next level up or down
     if ((k === '<' || k === '>') && levels) stepLevel(k === '<' ? 1 : -1);
+    else if (k === 'n' && !walking) void writeNote(e.shiftKey ? 'label' : 'note');
     else if (e.shiftKey && e.code === 'Digit1') scene?.fit();
     else if (e.shiftKey && e.code === 'Digit2') {
       if (selected) scene?.frameRoom(selected.room);
@@ -1399,6 +1448,8 @@
   onMount(() => {
     scene = new Scene(canvas, mini, {
       pick: (r) => {
+        // a click on the map puts the note being written away, keeping its words
+        noter?.finish(true);
         // walking: a room clicked puts the player there
         if (walking) {
           if (r) walker?.put(map, r.room);
@@ -1417,10 +1468,17 @@
       follow,
       wire: followWire,
       out: () => void openWorld(),
-      hover: (h, x, y) => (tip = h ? { x, y, ...tipFor(h) } : null),
+      hover: (h, x, y) => {
+        if (noter) noter.layer.hot = h?.note ?? null;
+        tip = h ? { x, y, ...tipFor(h) } : null;
+      },
       moved: (c) => {
         zoom = c.z;
         if (naming) placeNaming();
+        if (noter?.draft) noter.moved++;
+      },
+      note: (id) => {
+        if (!walking) noter?.edit(id);
       },
       build: (g: Ghost) => build(g.dir),
       move: (n, x, y) => moveRoom(n, x, y),
@@ -1488,6 +1546,8 @@
   });
 
   const pct = $derived(`${Math.round(zoom * 100)}%`);
+  /** The rooms picked with Select, while it is on: a region can go around them. */
+  const pickedRooms = $derived(picking && selector ? [...selector.picked] : []);
 </script>
 
 <div class="world" class:focus class:walking class:narrow={!wideTop} style:--card="{card}px" style:--view="{viewWidth}px" bind:clientWidth={width}>
@@ -1608,6 +1668,20 @@
         <button type="button" role="radio" aria-checked={colourBy === c.id} class:on={colourBy === c.id} onclick={() => setColour(c.id)}>{c.label}</button>
       {/each}
     </div>
+    <Popover.Root bind:open={notesOpen} onOpenChange={(open) => open && void loadNotes()}>
+      <Popover.Trigger class="btn glass" aria-label="Notes on the map{noter?.todos ? `: ${noter.todos} to do` : ''}" title="Your notes on the map (N)">
+        <StickyNote size={15} /><span class="wide-only">Notes</span>{#if noter?.todos}<b class="count tnum">{noter.todos}</b>{/if}
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content class="pop notes-pop" sideOffset={8} align="end" collisionPadding={8}>
+          {#if noteKit && noter}
+            <noteKit.NotesPanel {noter} selected={selected?.room ?? null} picked={pickedRooms} onclose={() => (notesOpen = false)} />
+          {:else}
+            <p class="lay">Reading the notes…</p>
+          {/if}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
     <Popover.Root onOpenChange={(open) => open && loadShow()}>
       <Popover.Trigger class="btn glass" aria-label="What the map shows"><LayersIcon size={15} /><span class="wide-only">Show</span></Popover.Trigger>
       <Popover.Portal>
@@ -1737,7 +1811,7 @@
       {:else if building}
         <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">Shift</span> click a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
-        <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down {#if levelList.length > 1}<span class="kbd">&lt;</span><span class="kbd">&gt;</span> levels {/if}<span class="kbd">P</span> playtest <span class="kbd">Shift 2</span> close up
+        <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down {#if levelList.length > 1}<span class="kbd">&lt;</span><span class="kbd">&gt;</span> levels {/if}<span class="kbd">P</span> playtest <span class="kbd">N</span> note <span class="kbd">Shift 2</span> close up
       {:else}
         Click a room for its card <span class="kbd">H</span> start room <span class="kbd">P</span> playtest <span class="kbd">W</span> all maps <span class="kbd">F</span> full screen
       {/if}
@@ -1767,6 +1841,12 @@
       }}
       onblur={() => finishNaming(true)}
     />
+  {/if}
+
+  {#if noteKit && noter?.draft}
+    {#key noter.draft.id}
+      <noteKit.NoteEditor {noter} picked={pickedRooms.length} onpicked={() => noter?.draft && noter.reshape(noter.draft.id, pickedRooms)} />
+    {/key}
   {/if}
 
   {#if failed}
@@ -1838,6 +1918,8 @@
   :global(.maps-pop) .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   :global(.maps-pop) .all .num { background: var(--lilac-2); color: var(--lilac-ink); }
   :global(.layers-pop) { width: min(360px, calc(100vw - 16px)); max-height: min(78vh, 640px); overflow: auto; }
+  :global(.notes-pop) { width: min(340px, calc(100vw - 16px)); max-height: min(78vh, 640px); overflow: auto; }
+  .tr :global(.count) { font-size: 12px; padding: 0 6px; border-radius: 6px; background: var(--butter); color: #241d45; }
 
   /* the legend sits under the colours it explains */
   .legend {

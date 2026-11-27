@@ -53,6 +53,8 @@ export interface Layers {
   grid: boolean;
   /** Exit symbols and room marks. */
   symbols: boolean;
+  /** The builder's notes (drawn by the World's layer). */
+  notes: boolean;
 }
 
 export interface Camera {
@@ -89,6 +91,8 @@ export interface Hit {
   wires?: number;
   /** Build mode: a way from the selected room to dig (`to` null), or to join to the room drawn there. */
   ghost?: Ghost;
+  /** Something of the layer drawn with the map (a note): its id. */
+  note?: string;
 }
 
 /** Build mode: a way from the selected room with no exit, into a free cell or a room drawn there. */
@@ -129,6 +133,8 @@ export interface SceneEvents {
   reaching(r: Reach | null): void;
   /** In levels, the level shown changed, or the levels the map has. */
   levelled?(): void;
+  /** Something of the layer drawn with the map (a note) clicked: its id. */
+  note?(id: string): void;
 }
 
 /** How a tool draws on the map: the canvas, its colours, and how big things are at this zoom. */
@@ -146,7 +152,17 @@ export interface Pen {
   lw: number;
   /** Whether a room is in view (or nearly). */
   inView(n: number): boolean;
+  /** What is drawn (in levels, the level shown's): a new one when rooms move. */
+  layout: Layout;
+  /** A room's cell, if it is drawn (in levels, on the level shown). */
+  at(n: number): Spot | undefined;
+  /** A cell's middle on the canvas. */
+  sx(gx: number): number;
+  sy(gy: number): number;
 }
+
+/** A box on the canvas: x, y, width and height. */
+export type Box = [number, number, number, number];
 
 /** How a tool draws on the overview: a cell's size `s`, in pixels, and where cell (0, 0) is. */
 export interface MiniPen {
@@ -156,6 +172,24 @@ export interface MiniPen {
   ox: number;
   oy: number;
   dpr: number;
+  /** A room's cell, if it is drawn (in levels, on the level shown). */
+  at(n: number): Spot | undefined;
+}
+
+/**
+ * Drawn with the map whatever tool is on (the builder's notes): under the exits and the rooms,
+ * over them, and on the overview. Unlike a tool's marks, what it draws over the rooms can be
+ * pointed at and clicked, with no tool on.
+ */
+export interface MapLayer {
+  /** Draws under the exits and the rooms. */
+  back?(p: Pen): void;
+  /** Draws over the rooms, keeping clear of the boxes `taken` (the selected room's name) and
+   * adding its own, which the place names then keep clear of. */
+  front?(p: Pen, taken: Box[]): void;
+  mini?(p: MiniPen): void;
+  /** What of it is at (x, y) on the canvas, as it was last drawn: an id (null: nothing). */
+  hit?(x: number, y: number): string | null;
 }
 
 /**
@@ -271,7 +305,7 @@ export class Scene {
   private edited = new Set<number>();
   /** Legend keys picked out: the other rooms fade. Empty: none fade. */
   private spot = new Set<string>();
-  private layers: Layers = { labels: true, grid: true, symbols: true };
+  private layers: Layers = { labels: true, grid: true, symbols: true, notes: true };
   /** How much of the canvas's right side the room card covers. */
   private cover = 0;
   /** How much of its top the tools cover and of its bottom a panel (the walk's): rooms are
@@ -301,6 +335,8 @@ export class Scene {
   private pointer: [number, number] | null = null;
   /** The tool on the map, if one is on. */
   private tool: MapTool | null = null;
+  /** The layer drawn with the map (the builder's notes), if there is one. */
+  private layer: MapLayer | null = null;
   /** The wires drawn, the map they are drawn on, and whether they are every room's (fainter). */
   private wires: Wire[] = [];
   private wireMap = 0;
@@ -567,6 +603,13 @@ export class Scene {
       if (this.hovered) this.setHover(null, 0, 0);
     }
     this.canvas.dataset.tool = t?.cursor ?? '';
+    this.draw();
+  }
+
+  /** The layer drawn with the map (or none). */
+  setLayer(l: MapLayer | null): void {
+    this.layer = l;
+    if (this.hovered?.note) this.hovered = null;
     this.draw();
   }
 
@@ -941,6 +984,9 @@ export class Scene {
     const l = this.layout;
     if (!l) return null;
     const z = this.cam.z;
+    // the layer drawn with the map: its marks sit on and beside rooms
+    const note = this.tool ? null : (this.layer?.hit?.(px, py) ?? null);
+    if (note !== null) return { room: null, stub: null, note };
     // Build mode: the join marks, then the free cells around the selected room
     if (this.building && !this.tool && z >= GHOSTS) {
       const ghosts = this.ghosts();
@@ -1174,6 +1220,7 @@ export class Scene {
       if (hit?.ghost) this.on.build(hit.ghost);
       else if (hit?.stub) this.on.follow(hit.stub);
       else if (hit?.wire) this.on.wire?.(hit.wire);
+      else if (hit?.note !== undefined) this.on.note?.(hit.note);
       else this.on.pick(hit?.room ?? null);
     };
     add(cv, 'pointerup', (e) => end(e, false));
@@ -1240,7 +1287,7 @@ export class Scene {
   private setHover(hit: Hit | null, x: number, y: number) {
     const was = this.hovered;
     this.hovered = hit;
-    if (was?.room !== hit?.room || was?.stub !== hit?.stub || was?.wire !== hit?.wire || was?.ghost?.dir !== hit?.ghost?.dir) this.draw();
+    if (was?.room !== hit?.room || was?.stub !== hit?.stub || was?.wire !== hit?.wire || was?.ghost?.dir !== hit?.ghost?.dir || was?.note !== hit?.note) this.draw();
     // in Build mode a room can be picked up and carried
     this.canvas.style.cursor = !hit || this.tool ? '' : this.building && hit.room && !hit.stub && !hit.ghost ? 'grab' : 'pointer';
     this.on.hover(hit, x, y);
@@ -1363,6 +1410,7 @@ export class Scene {
     const rad = Math.min(7, 5 * z);
     const lw = Math.max(1, 2.2 * Math.min(z, 1.5));
     const symbols = this.layers.symbols;
+    const pen: Pen = { ctx, pal: P, W, H, z, cell: S * z, half, rad, lw, inView, layout: l, at: (n) => l.at.get(n), sx: (gx) => this.sx(gx), sy: (gy) => this.sy(gy) };
 
     // dots between the cells
     if (this.layers.grid && z >= 0.45) {
@@ -1397,6 +1445,9 @@ export class Scene {
         ctx.globalAlpha = 1;
       }
     }
+
+    // the layer drawn with the map, under it (the regions of the builder's notes)
+    this.layer?.back?.(pen);
 
     // exits between neighbours
     const xy = (r: MapRoom): [number, number] => {
@@ -1532,7 +1583,6 @@ export class Scene {
     }
 
     // a tool's marks over the rooms (the rooms picked)
-    const pen: Pen = { ctx, pal: P, W, H, z, cell: S * z, half, rad, lw, inView };
     this.tool?.under?.(pen);
 
     // marks on rooms, and the chips at the stubs' ends
@@ -1667,7 +1717,7 @@ export class Scene {
     }
 
     // the selected room: a ring and its name
-    let pill: [number, number, number, number] | null = null;
+    let pill: Box | null = null;
     const sel = this.selected !== null && this.selected !== carry?.room ? this.by.get(this.selected) : undefined;
     if (sel && inView(sel.room)) {
       const p = l.at.get(sel.room)!;
@@ -1717,10 +1767,13 @@ export class Scene {
       ctx.globalAlpha = 1;
     }
 
+    // the layer drawn with the map, over it (the builder's notes), clear of the selected room's name
+    const placed: Box[] = pill ? [pill] : [];
+    this.layer?.front?.(pen, placed);
+
     // names: one per run of rooms that share one, more as you zoom in
     if (this.layers.labels && z >= 0.12) {
       const least = z < 0.32 ? 60 : z < 0.55 ? 18 : z < 1 ? 6 : z < 1.6 ? 3 : z < 2.6 ? 2 : 1;
-      const placed: [number, number, number, number][] = pill ? [pill] : [];
       // the selected room's pill already names it
       const near = sel ? l.at.get(sel.room) : undefined;
       const said = sel?.name.trim();
@@ -1739,7 +1792,7 @@ export class Scene {
         const y = this.sy(lb.y) - (z >= 1 ? half + 10 : 0);
         const w = ctx.measureText(lb.text).width + 8;
         const h = fs + 6;
-        const box: [number, number, number, number] = [x - w / 2, y - h / 2, w, h];
+        const box: Box = [x - w / 2, y - h / 2, w, h];
         if (placed.some((b) => box[0] < b[0] + b[2] && b[0] < box[0] + box[2] && box[1] < b[1] + b[3] && b[1] < box[1] + box[3])) continue;
         placed.push(box);
         ctx.lineWidth = 4.5;
@@ -2347,7 +2400,9 @@ export class Scene {
       this.miniCache = c;
     }
     mctx.drawImage(this.miniCache, 0, 0);
-    this.tool?.mini?.({ ctx: mctx, pal: P, s, ox, oy, dpr: this.dpr });
+    const mp: MiniPen = { ctx: mctx, pal: P, s, ox, oy, dpr: this.dpr, at: (n) => l.at.get(n) };
+    this.layer?.mini?.(mp);
+    this.tool?.mini?.(mp);
     // what the map shows now
     const [vx0, vy0] = this.toWorld(0, 0);
     const [vx1, vy1] = this.toWorld(this.W - this.cover, this.H);

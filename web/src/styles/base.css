@@ -202,7 +202,7 @@ input.switch:disabled { opacity: .5; cursor: default; }
 }
 @keyframes pop-in { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
 .menu-item {
-  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 7px 10px;
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; min-height: 36px; padding: 7px 10px;
   border-radius: 10px; border: 0; background: transparent; cursor: pointer; text-align: left;
   font: 700 13.5px/1.25 var(--font-ui); color: var(--ink); text-decoration: none; white-space: normal; box-shadow: none;
 }

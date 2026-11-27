@@ -47,4 +47,8 @@ export interface Host {
   colour(by: ColourBy): void;
   /** Opens the stamps holding a stamp saved from the map (by its id), to put down. */
   stamp(saved: string): void;
+  /** Selects a room and brings it into view, with its card. */
+  go(n: number): void;
+  /** A region of the builder's notes around these rooms, to name (the notes' code loads first). */
+  region(rooms: readonly number[]): void;
 }
