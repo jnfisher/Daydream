@@ -705,6 +705,8 @@ export interface StampRequest {
   links: { from: number; dir: number; to: number; one_way: boolean }[];
   overwrite: boolean;
   what: string;
+  /** Dug out of a room by hand (a corridor dragged out of it): the history says Dig, not Stamp. */
+  dug?: boolean;
 }
 
 export function request(map: number, brush: number, p: Placed, o: StampOptions, what: string): StampRequest {

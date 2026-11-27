@@ -570,8 +570,16 @@ fn a_stamp_puts_down_rooms_and_joins_them_only_through_free_slots() {
         ],
         overwrite: false,
         what: "a corridor".into(),
+        dug: false,
     };
     assert_eq!(s.label(), "Stamp a corridor: 2 rooms on map 1");
+    // dragged out of a room on the map, it is a dig
+    let dug = Stamp {
+        dug: true,
+        what: "a corridor east of 1/1".into(),
+        ..s.clone()
+    };
+    assert_eq!(dug.label(), "Dig a corridor east of 1/1: 2 rooms on map 1");
     let (plan, done) = stamp(&realm, Dos, &s).unwrap();
     assert_eq!(
         (done.rooms, done.exits, done.joined, done.left),

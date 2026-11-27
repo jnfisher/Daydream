@@ -6,10 +6,13 @@
 // Names are drawn once per run of rooms that share one, more of them as you zoom in.
 //
 // The camera holds still: new rooms from the server keep the view where it was. In Build mode
-// a room can be carried to a free cell; the page pins it there. A tool (a stamp held, the Select
+// a room can be carried to a free cell; the page pins it there. A free cell or a join mark beside
+// the selected room dragged out is a corridor that way, or a join onto the room it is let go
+// over (build.ts); with Shift, a click digs a line to the cell. A tool (a stamp held, the Select
 // tool) has the pointer first while it is on, and draws over the map; the tools' code loads with
 // their panels, the first time each is used.
 
+import { alongWay, lineTo, reachJoin, reachLine, type Reach } from './build';
 import { cellKey, OPPOSITE, STEP, type Layout, layOut, type Spot } from './layout';
 import { biomeOf, exitLook, iconPaths, palette, tintOf, type Biome, type ColourBy, type ExitLook, type IconName, type Palette, type Tint } from './look';
 import type { MapExit, MapRoom } from './model';
@@ -99,6 +102,10 @@ export interface SceneEvents {
   build(ghost: Ghost): void;
   /** Build mode: a room carried to a free cell. */
   move(room: number, x: number, y: number): void;
+  /** Build mode: a corridor or a join reached out of the selected room, to make. */
+  reach(r: Reach): void;
+  /** Build mode: what a reach being dragged out (or a Shift line) would make, as it changes (null: none). */
+  reaching(r: Reach | null): void;
 }
 
 /** How a tool draws on the map: the canvas, its colours, and how big things are at this zoom. */
@@ -167,7 +174,7 @@ interface Carry {
   free: boolean;
 }
 
-/** A press on the map: where it began, the camera then, whether it has moved the map, the room it may carry (Build mode), and the tool that has it. */
+/** A press on the map: where it began, the camera then, whether it has moved the map, the room it may carry or the handle it may drag out (Build mode), and the tool that has it. */
 interface Press {
   x: number;
   y: number;
@@ -175,6 +182,7 @@ interface Press {
   cy: number;
   moved: boolean;
   room: number | null;
+  ghost: Ghost | null;
   touch: boolean;
   at: number;
   tool: MapTool | null;
@@ -207,6 +215,14 @@ export class Scene {
   private pins: ReadonlyMap<number, Spot> = new Map();
   /** The room being carried to another cell. */
   private carry: Carry | null = null;
+  /** The way of a free cell or join mark being dragged out of the selected room, and what it would make. */
+  private reaching: number | null = null;
+  private reach: Reach | null = null;
+  /** Shift held down, and the line from the selected room to the cell under the pointer it would dig. */
+  private shift = false;
+  private shiftReach: Reach | null = null;
+  /** Where the pointer is over the canvas (null: off it). */
+  private pointer: [number, number] | null = null;
   /** The tool on the map, if one is on. */
   private tool: MapTool | null = null;
   /** Space held down: a drag pans the map, even with a tool on. */
@@ -282,6 +298,9 @@ export class Scene {
     this.carry = null;
     this.canvas.classList.remove('carrying');
     this.sortExits();
+    // a reach being dragged out goes on from the rooms as they are now
+    if (this.reaching !== null && this.pointer) this.reachTo(...this.pointer);
+    this.shiftLine();
   }
 
   /** Whether a room is being carried. */
@@ -295,6 +314,26 @@ export class Scene {
     this.carry = null;
     this.canvas.classList.remove('carrying');
     this.draw();
+  }
+
+  /** Whether a free cell or a join mark is being dragged out. */
+  get reachingOut(): boolean {
+    return this.reaching !== null;
+  }
+
+  /** Lets go of a free cell or join mark being dragged out, making nothing. */
+  dropReach(): void {
+    if (this.reaching === null) return;
+    this.reaching = null;
+    this.canvas.classList.remove('reaching');
+    this.setReach(null);
+  }
+
+  /** Shift held down (or let go): in Build mode a click digs a line to the cell under the pointer. */
+  setShift(down: boolean): void {
+    if (down === this.shift) return;
+    this.shift = down;
+    this.shiftLine();
   }
 
   setColour(by: ColourBy): void {
@@ -334,6 +373,8 @@ export class Scene {
 
   select(n: number | null): void {
     this.selected = n !== null && this.by.has(n) ? n : null;
+    if (this.reaching !== null && this.selected === null) this.dropReach();
+    this.shiftLine();
     this.draw();
   }
 
@@ -341,6 +382,8 @@ export class Scene {
   setBuild(on: boolean): void {
     this.building = on;
     if (!on && this.hovered?.ghost) this.hovered = null;
+    if (!on) this.dropReach();
+    this.shiftLine();
     this.draw();
   }
 
@@ -772,7 +815,7 @@ export class Scene {
       }
       const [x, y] = pos(e);
       this.land();
-      const press: Press = { x, y, cx: this.cam.x, cy: this.cam.y, moved: false, room: null, touch: e.pointerType === 'touch', at: performance.now(), tool: null };
+      const press: Press = { x, y, cx: this.cam.x, cy: this.cam.y, moved: false, room: null, ghost: null, touch: e.pointerType === 'touch', at: performance.now(), tool: null };
       drag = press;
       // a tool has the press first (with Space held down, or the middle button, a drag pans the map)
       const t = this.tool;
@@ -787,9 +830,11 @@ export class Scene {
       // Build mode: a room pressed on is carried, not the map (a finger holds it a moment first)
       const hit = this.building ? this.hitAt(x, y) : null;
       press.room = hit?.room && !hit.stub && !hit.ghost && e.button === 0 ? hit.room.room : null;
+      press.ghost = hit?.ghost && e.button === 0 ? hit.ghost : null;
     });
     add(cv, 'pointermove', (e) => {
       const [x, y] = pos(e);
+      this.pointer = [x, y];
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, [x, y]);
       if (pinch && pointers.size === 2) {
         // the fingers zoom, and move the map with them
@@ -814,11 +859,23 @@ export class Scene {
         this.carryTo(x, y);
         return;
       }
+      if (this.reaching !== null) {
+        this.reachTo(x, y);
+        return;
+      }
       if (drag) {
         const dx = x - drag.x;
         const dy = y - drag.y;
         if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 4) {
           drag.moved = true;
+          // a free cell or a join mark dragged out (a finger holds it a moment first): a corridor, or a join
+          if (drag.ghost && this.selected !== null && (!drag.touch || performance.now() - drag.at > 350)) {
+            this.reaching = drag.ghost.dir;
+            cv.classList.add('reaching');
+            this.setHover(null, x, y);
+            this.reachTo(x, y);
+            return;
+          }
           if (drag.room !== null && (!drag.touch || performance.now() - drag.at > 350)) {
             this.carry = { room: drag.room, px: x, py: y, x: 0, y: 0, free: false };
             cv.classList.add('carrying');
@@ -836,7 +893,11 @@ export class Scene {
         }
         return;
       }
-      if (e.pointerType === 'mouse') this.setHover(this.hitAt(x, y), x, y);
+      if (e.pointerType !== 'mouse') return;
+      // Shift: the line a click would dig
+      this.shift = e.shiftKey;
+      if (this.shiftLine()) this.setHover(null, x, y);
+      else this.setHover(this.hitAt(x, y), x, y);
     });
     const end = (e: PointerEvent, cancelled: boolean) => {
       pointers.delete(e.pointerId);
@@ -849,6 +910,12 @@ export class Scene {
       cv.classList.remove('panning');
       if (d?.tool) {
         d.tool.up?.(...pos(e), e, cancelled);
+        return;
+      }
+      if (this.reaching !== null) {
+        const r = this.reach;
+        this.dropReach();
+        if (!cancelled && r) this.on.reach(r);
         return;
       }
       const c = this.carry;
@@ -870,6 +937,11 @@ export class Scene {
         if (!this.panKey && e.button === 0) this.tool.click?.(x, y, e);
         return;
       }
+      // Shift: a line dug to the cell
+      if (e.shiftKey && this.shiftReach) {
+        this.on.reach(this.shiftReach);
+        return;
+      }
       const hit = this.hitAt(x, y);
       if (hit?.ghost) this.on.build(hit.ghost);
       else if (hit?.stub) this.on.follow(hit.stub);
@@ -879,6 +951,8 @@ export class Scene {
     add(cv, 'pointercancel', (e) => end(e, true));
     add(cv, 'pointerleave', (e) => {
       if (drag) return;
+      this.pointer = null;
+      this.shiftLine();
       this.setHover(null, ...pos(e));
       this.tool?.leave?.();
     });
@@ -939,6 +1013,55 @@ export class Scene {
     // in Build mode a room can be picked up and carried
     this.canvas.style.cursor = !hit || this.tool ? '' : this.building && hit.room && !hit.stub && !hit.ghost ? 'grab' : 'pointer';
     this.on.hover(hit, x, y);
+  }
+
+  /**
+   * A free cell or join mark dragged out to (px, py): a room let go over off its way is joined
+   * that way; else a corridor as far along its way as the pointer has gone (none short of the
+   * first cell).
+   */
+  private reachTo(px: number, py: number) {
+    const l = this.layout;
+    const from = this.selected;
+    const dir = this.reaching;
+    const p = from === null ? undefined : l?.at.get(from);
+    if (!l || from === null || dir === null || !p) return this.dropReach();
+    const [wx, wy] = this.toWorld(px, py);
+    const [cx, cy] = [Math.floor(wx / S), Math.floor(wy / S)];
+    const k = alongWay(dir, cx - p.x, cy - p.y);
+    const [sx, sy] = STEP[dir] ?? [0, 0];
+    const there = l.cell.get(cellKey(cx, cy));
+    const onWay = cx === p.x + sx * k && cy === p.y + sy * k;
+    this.setReach(there !== undefined && there !== from && !onWay ? reachJoin(this.by, from, dir, there) : k >= 1 ? reachLine(this.by, l, from, dir, k) : null);
+  }
+
+  private setReach(r: Reach | null) {
+    const had = this.reach;
+    this.reach = r;
+    if (r || had) {
+      this.draw();
+      this.on.reaching(r);
+    }
+  }
+
+  /** Shift held down in Build mode: the line from the selected room to the cell under the pointer, as a click would dig it. Answers whether there is one. */
+  private shiftLine(): boolean {
+    const l = this.layout;
+    const from = this.selected;
+    const p = from === null ? undefined : l?.at.get(from);
+    let r: Reach | null = null;
+    if (this.shift && this.building && !this.tool && !this.carry && this.reaching === null && this.cam.z >= GHOSTS && l && from !== null && p && this.pointer) {
+      const [wx, wy] = this.toWorld(...this.pointer);
+      const way = lineTo(Math.floor(wx / S) - p.x, Math.floor(wy / S) - p.y);
+      if (way) r = reachLine(this.by, l, from, way.dir, way.count);
+    }
+    const had = this.shiftReach;
+    this.shiftReach = r;
+    if (r || had) {
+      this.draw();
+      if (this.reaching === null) this.on.reaching(r);
+    }
+    return !!r;
   }
 
   /** The room being carried is held over (px, py): the cell under it, and whether it is free. */
@@ -1135,8 +1258,10 @@ export class Scene {
     ctx.globalAlpha = 1;
 
     // Build mode: free cells to dig into around the selected room, and marks to join the rooms
-    // drawn next to it
-    if (this.building && !this.tool && z >= GHOSTS && !carry) {
+    // drawn next to it (a corridor dragged out of one, or a Shift line, in their place)
+    const reach = this.reach ?? this.shiftReach;
+    if (reach) this.drawReach(reach, half, rad);
+    else if (this.building && !this.tool && z >= GHOSTS && !carry) {
       for (const g of this.ghosts()) {
         const hot = this.hovered?.ghost?.dir === g.dir;
         if (g.to === null) {
@@ -1390,6 +1515,107 @@ export class Scene {
     this.tool?.over?.(pen);
 
     this.drawMini();
+  }
+
+  /** A corridor or join reached out of the selected room: its new rooms dashed with their numbers, the rooms it joins lit, and where it stops short. */
+  private drawReach(r: Reach, half: number, rad: number) {
+    const { ctx } = this;
+    const P = this.pal;
+    const l = this.layout;
+    const p = l?.at.get(r.from);
+    if (!l || !p) return;
+    const [dx, dy] = STEP[r.dir] ?? [0, 0];
+    const box = (x: number, y: number, grow = 0) => {
+      ctx.beginPath();
+      ctx.roundRect(x - half - grow, y - half - grow, (half + grow) * 2, (half + grow) * 2, rad + grow);
+    };
+    ctx.save();
+    ctx.lineCap = 'round';
+    if (r.kind === 'join') {
+      const q = l.at.get(r.to);
+      if (!q) return ctx.restore();
+      const [bx, by] = [this.sx(q.x), this.sy(q.y)];
+      ctx.strokeStyle = P.sel;
+      ctx.lineWidth = 2.4;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(this.sx(p.x) + dx * half, this.sy(p.y) + dy * half);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      box(bx, by, 3);
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    // the ways: from one room's side to the next's, faint where they are there already, dashed where one-way
+    let [x0, y0] = [this.sx(p.x), this.sy(p.y)];
+    r.links.forEach((k, i) => {
+      const c = r.cells[i]!;
+      const [x1, y1] = [this.sx(c.x), this.sy(c.y)];
+      ctx.strokeStyle = P.sel;
+      ctx.globalAlpha = k.out ? 1 : 0.5;
+      ctx.lineWidth = k.out ? 2.6 : 1.6;
+      ctx.setLineDash(k.out && k.back === 'taken' ? [5, 3] : []);
+      ctx.beginPath();
+      ctx.moveTo(x0 + dx * half, y0 + dy * half);
+      ctx.lineTo(x1 - dx * half, y1 - dy * half);
+      ctx.stroke();
+      [x0, y0] = [x1, y1];
+    });
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    const numbers = half >= 12;
+    if (numbers) {
+      ctx.font = `700 ${Math.min(11, half * 0.62)}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+    }
+    r.cells.forEach((c, i) => {
+      const [x, y] = [this.sx(c.x), this.sy(c.y)];
+      if (c.made) {
+        // a new room: dashed, faintly filled, with its number
+        ctx.fillStyle = P.sel;
+        ctx.globalAlpha = 0.18;
+        box(x, y);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = P.sel;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (numbers) {
+          ctx.fillStyle = P.ink;
+          ctx.fillText(String(c.room), x, y + 0.5);
+        }
+      } else if (r.links[i]?.out) {
+        // a room it joins lights up
+        box(x, y, 3);
+        ctx.strokeStyle = P.sel;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+    });
+    if (r.stop) {
+      // where it stops short: an exit that way to somewhere else
+      const [x, y] = [this.sx(r.stop.x), this.sy(r.stop.y)];
+      const s = Math.max(5, half * 0.45);
+      ctx.fillStyle = P.missing;
+      ctx.beginPath();
+      ctx.arc(x, y, s, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = P.badge;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x - s * 0.45, y - s * 0.45);
+      ctx.lineTo(x + s * 0.45, y + s * 0.45);
+      ctx.moveTo(x + s * 0.45, y - s * 0.45);
+      ctx.lineTo(x - s * 0.45, y + s * 0.45);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /** A room being carried: its cell left as an outline, the cell under it, and the room itself. */

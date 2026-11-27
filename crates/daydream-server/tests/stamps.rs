@@ -100,6 +100,36 @@ async fn a_stamp_is_one_step_and_leaves_the_exits_in_its_way() {
     }
 }
 
+/// A join dragged across the map answers its step, so the page can take the places it keeps
+/// back with it; a dry run makes none.
+#[tokio::test]
+async fn a_join_answers_its_step() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    empty_realm(dir);
+    for n in 1..=2 {
+        add(
+            dir,
+            "Rooms",
+            json!({"Map Number": 1, "Room Number": n, "Name": format!("Wood {n}")}),
+        )
+        .await;
+    }
+    let body = |dry_run: bool| json!({"map": 1, "room": 1, "dir": 2, "to_map": 1, "to_room": 2, "existing": true, "dry_run": dry_run});
+    let (status, out) = send(dir, "POST", "/api/map/dig", Some(body(true))).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["step"], json!(null), "{out}");
+    let (status, out) = send(dir, "POST", "/api/map/dig", Some(body(false))).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["step"], 3, "{out}");
+    let history = get(dir, "/api/history").await;
+    assert_eq!(history["steps"][0]["step"], 3, "{history}");
+    assert_eq!(
+        history["steps"][0]["label"], "Join 1/1 east to 1/2",
+        "{history}"
+    );
+}
+
 /// Fields set on the rooms picked on the map: those rooms alone, as one step.
 #[tokio::test]
 async fn a_set_on_picked_rooms_reaches_those_alone() {
