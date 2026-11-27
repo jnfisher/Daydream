@@ -1,5 +1,6 @@
 // The server's editor API (crates/daydream-server/src/tables.rs).
 
+import type { References } from './library/where';
 import type { Dig, MapAnswer, MapFile } from './world/model';
 
 export type Cell = number | string | null;
@@ -30,6 +31,11 @@ export interface Row {
   table: string;
   key: Cell[];
   values: Record<string, Cell>;
+  /**
+   * What it was when the world was last published (or read from its game): null when it is
+   * as it was then, `added` when it is new since, or the columns that changed, as they were.
+   */
+  published?: { added: true } | { was: Record<string, Cell> } | null;
 }
 
 export interface Report {
@@ -239,6 +245,9 @@ export const api = {
   rowsWith: (table: string, columns: string[]) =>
     call<{ rows: [Cell[], Cell, Cell[]][] }>('GET', `${t(table)}/rows?columns=${encodeURIComponent(columns.join(','))}`),
   row: (table: string, key: Cell[]) => call<Row>('GET', `${t(table)}/row${k(key)}`),
+  /** The rows of every table that name a record. */
+  references: (table: string, key: Cell[]) =>
+    call<References>('GET', `/api/references?table=${encodeURIComponent(table)}&key=${encodeURIComponent(JSON.stringify(key))}`),
   save: (table: string, key: Cell[], values: Record<string, Cell>) =>
     call<Report>('PUT', `${t(table)}/row${k(key)}`, { values }),
   insert: (table: string, values: Record<string, Cell>) =>

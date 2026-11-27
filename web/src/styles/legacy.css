@@ -1,4 +1,4 @@
-/* Today's pages (the record editors, Tools, Lists, the map, the game picker) inside the new
+/* Today's pages (Players' record editor, Tools, Lists, the old map) inside the new
    frame. They keep their markup; their old colour names map onto the tokens, so they follow
    the theme. Each page is replaced as the redesign reaches it. */
 :root {
@@ -10,10 +10,10 @@
   --accent-text: var(--on-pastel);
 }
 
-/* the record editors: a table's rows on the left, the record on the right */
-#library { display: flex; flex-direction: column; overflow: hidden; }
-#library > main { flex: 1; display: grid; grid-template-columns: minmax(14rem, 22rem) 1fr; min-height: 0; }
-#library aside { display: flex; flex-direction: column; border-right: 1px solid var(--line); min-height: 0; background: var(--surface); }
+/* Players' record editor: a table's rows on the left, the record on the right */
+#players { display: flex; flex-direction: column; overflow: hidden; }
+#players > main { flex: 1; display: grid; grid-template-columns: minmax(14rem, 22rem) 1fr; min-height: 0; }
+#players aside { display: flex; flex-direction: column; border-right: 1px solid var(--line); min-height: 0; background: var(--surface); }
 #filter { margin: .6rem .6rem .3rem; padding: .4rem .7rem; width: auto; border-radius: 999px; }
 #count { color: var(--ink-3); font-size: .8rem; font-weight: 700; padding: 0 .9rem .35rem; }
 #rows { list-style: none; margin: 0; padding: 0 .4rem .6rem; overflow: auto; flex: 1; }
@@ -45,8 +45,8 @@ table.grid th { text-align: left; font: 800 11px/1.2 var(--font-ui); letter-spac
 table.grid td { padding: .15rem .5rem; }
 table.grid td.n { color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) {
-  #library > main { grid-template-columns: 1fr; grid-template-rows: 36vh 1fr; }
-  #library aside { border-right: none; border-bottom: 1px solid var(--line); }
+  #players > main { grid-template-columns: 1fr; grid-template-rows: 36vh 1fr; }
+  #players aside { border-right: none; border-bottom: 1px solid var(--line); }
   .field, .field.wide { grid-template-columns: 1fr; }
   .label { text-align: left; }
 }

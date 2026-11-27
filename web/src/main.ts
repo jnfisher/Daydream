@@ -1,7 +1,7 @@
 // Daydream's web UI: the frame (the top bar, the rail of places, the Ctrl+K palette, the
-// inspector and the toasts) around the places. Home, the World map, Story, Worlds and Publish
-// are the frame's own; the record editors, Tools, Lists and the old map (#/map-classic) are
-// today's pages, shown inside it until the redesign reaches each one.
+// inspector and the toasts) around the places. Home, the World map, the Library, Story,
+// Worlds and Publish are the frame's own; Players' editor, Tools, Lists and the old map
+// (#/map-classic) are today's pages, shown inside it until the redesign reaches each one.
 
 import './styles/tokens.css';
 import './styles/base.css';
@@ -35,7 +35,7 @@ const $ = (id: string) => document.getElementById(id)!;
 const SECTION: Record<Place, string> = {
   home: 'home',
   library: 'library',
-  players: 'library',
+  players: 'players',
   world: 'world',
   story: 'story',
   workshop: 'workshop',
@@ -47,6 +47,7 @@ const SECTION: Record<Place, string> = {
 
 let theMap: ReturnType<typeof mapPage> | null = null;
 let world: { show: (rest: string[], fresh: boolean) => Promise<void> } | null = null;
+let library: { show: (r: Route) => Promise<boolean>; here: () => string; step: (by: number) => void } | null = null;
 let worlds: { load: (refresh?: boolean) => Promise<void> } | null = null;
 const made = new Set<string>();
 
@@ -101,15 +102,21 @@ async function route() {
     r = parse(left[r.place]!, app.tables);
   }
   const was = last;
-  if (r.place === 'library' || r.place === 'players') {
-    if (!(await editor.showRoute(r))) {
+  if (r.place === 'library' && !library) {
+    // the Library's code loads the first time it is opened
+    const { default: Library } = await import('./library/Library.svelte');
+    library ??= mount(Library, { target: $('library') });
+  }
+  const records = r.place === 'library' ? library : r.place === 'players' ? { show: editor.showRoute, here: editor.here } : null;
+  if (records) {
+    if (!(await records.show(r))) {
       // unsaved edits kept: the address goes back to them
-      history.replaceState(null, '', editor.here());
+      history.replaceState(null, '', records.here());
       return;
     }
-    left[r.place] = editor.here();
+    left[r.place as 'library' | 'players'] = records.here();
   }
-  const want = r.place === 'library' || r.place === 'players' ? editor.here() : canonical(r);
+  const want = records ? records.here() : canonical(r);
   if (location.hash !== want) history.replaceState(null, '', want);
   last = r;
   app.route = r;
@@ -211,7 +218,7 @@ function keys(e: KeyboardEvent) {
   }
   if ((e.key === '[' || e.key === ']') && (app.route.place === 'library' || app.route.place === 'players')) {
     e.preventDefault();
-    editor.step(e.key === '[' ? -1 : 1);
+    (app.route.place === 'library' ? library : editor)?.step(e.key === '[' ? -1 : 1);
   }
 }
 

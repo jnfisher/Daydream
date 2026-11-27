@@ -101,10 +101,11 @@ export function realmChanged(): void {
   window.dispatchEvent(new CustomEvent('dd:realm'));
 }
 
-/** Asked before anything replaces what the editor holds; false keeps it. Set by the editor. */
-let guard: () => boolean = () => true;
-export const setGuard = (g: () => boolean) => (guard = g);
-export const mayLeave = () => guard();
+/** Each asked before anything replaces what an editor holds (the Library's card, Players');
+ *  any false keeps it. */
+const guards: (() => boolean)[] = [];
+export const addGuard = (g: () => boolean) => void guards.push(g);
+export const mayLeave = () => guards.every((g) => g());
 
 // ---- undo and redo -------------------------------------------------------------------
 

@@ -181,6 +181,18 @@ out by its exits again.
 | `B` | Build mode: the arrows and `U` `D` dig, join or walk; digits first for a line, `.` again, Enter to name the room, Esc when done |
 | Shift+arrows | In Build mode, move the room a cell (or drag it) |
 
+**The Library** has the world's records a table at a time: the list (found by name or
+number, narrowed by chips such as Weapons or Map 3, or **Changed** for what changed since
+publishing) and the open record's card. A card groups the fields by what they are for, with
+NMR's labels: an item's fight, what players see (its text as the game shows it), its
+abilities by name, who may use it, and where it is in the world (the shops that sell it, the
+monsters that drop or wield it, the rooms it lies in). A number that names a record shows it
+as a chip, which opens it beside the page, with a search to pick another by name. A number is
+drawn among its peers' (every 1H Sharp weapon) to read in context. A field changed since
+publishing shows what it was, struck through, and the header counts those changes and takes
+them back. **All fields** lays out every column as NMR's forms do, and **Copy** makes a new
+record from the open one, as NMR's Insert does. Players keep today's editor for now.
+
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
 sounds, which are off until you do. Licenses: `/notices.txt`.
