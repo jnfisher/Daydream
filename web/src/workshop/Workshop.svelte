@@ -66,6 +66,8 @@
   const loadPages = () => (pages ??= import('./pages'));
 
   let open = $state<{ group: Group; tool: Tool } | null>(null);
+  /** What follows the tool in its link: the record Renumber starts on (`items/868`). */
+  let sub = $state<string[]>([]);
   let q = $state('');
   let page = $state<HTMLDivElement | undefined>();
 
@@ -76,6 +78,7 @@
     const id = rest[0] ?? '';
     const hit = toolById(id);
     open = hit && !hit.tool.href && !hit.tool.later ? hit : null;
+    sub = open ? rest.slice(1) : [];
     if (open) return;
     const group = GROUPS.find((g) => g.id === (id === 'lists' ? 'find' : id));
     if (group) {
@@ -125,7 +128,7 @@
     </header>
 
     <section class="card body">
-      {#key t.id}
+      {#key `${t.id}/${sub.join('/')}`}
         {#if FIXES.has(t.id)}
           {@render lazy('Fixes', { id: t.id })}
         {:else if t.id === 'scale'}
@@ -140,8 +143,10 @@
           {@render lazy('Lists', { id: t.id })}
           {#if t.id === 'spawns'}
             <h3 class="sub">Move a group or index</h3>
-            {@render lazy('Legacy', { id: 'spawns' })}
+            {@render lazy('Indexes')}
           {/if}
+        {:else if t.id === 'renumber'}
+          {@render lazy('Renumber', { start: sub })}
         {:else if t.id === 'rooms'}
           <div class="callout info">
             <Lasso size={16} />
@@ -152,7 +157,7 @@
           </div>
           <div><a class="btn sticker" href="#/world"><MapIcon size={16} />Open the map</a></div>
           <h3 class="sub">Or a run of rooms by number</h3>
-          {@render lazy('Legacy', { id: 'rooms' })}
+          {@render lazy('RoomRun')}
         {:else}
           {@render lazy('Legacy', { id: t.id })}
         {/if}

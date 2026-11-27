@@ -7,9 +7,12 @@
 <svelte:options css="injected" />
 
 <script lang="ts">
+  import ArrowRightLeft from '@lucide/svelte/icons/arrow-right-left';
   import Copy from '@lucide/svelte/icons/copy';
+  import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import GitCompare from '@lucide/svelte/icons/git-compare';
   import History from '@lucide/svelte/icons/history';
+  import LinkIcon from '@lucide/svelte/icons/link';
   import MapIcon from '@lucide/svelte/icons/map';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
@@ -21,8 +24,9 @@
   import { exitParam, layoutFor, targetOf } from '../layouts';
   import { kindOf } from '../shell/kinds';
   import { read, write } from '../shell/prefs.svelte';
-  import { storyHref } from '../shell/routes';
+  import { recordHref, slug, storyHref } from '../shell/routes';
   import { app, takeBack } from '../shell/state.svelte';
+  import { toast } from '../shell/toasts.svelte';
   import CardSection from './CardSection.svelte';
   import { CARDS } from './cards';
   import Compare from './Compare.svelte';
@@ -116,6 +120,23 @@
 
   let deleting = $state(false);
   let comparing = $state(false);
+  let more = $state(false);
+
+  /** The tables NMR's Record Number Changer moves records of. */
+  const RENUMBERED = ['Items', 'Monsters', 'Spells', 'Shops', 'Classes', 'Races', 'Rooms', 'Messages', 'Textblocks'];
+  /** Renumber, on this record: a room by its map and number, a text block by its number. */
+  const renumberHref = $derived(
+    RENUMBERED.includes(table.name) && key.length ? `#/workshop/renumber/${slug(table.name)}/${(table.name === 'Textblocks' ? key.slice(0, 1) : key).join('/')}` : '',
+  );
+
+  function copyLink() {
+    more = false;
+    const link = `${location.origin}${location.pathname}${recordHref(table.name, key)}`;
+    navigator.clipboard?.writeText(link).then(
+      () => toast(`Copied the link to ${one} ${label}.`),
+      () => toast(`This browser would not copy it: ${link}`, { kind: 'error', ms: 12000 }),
+    ) ?? toast(`This browser would not copy it: ${link}`, { kind: 'error', ms: 12000 });
+  }
   const taken = (l: string) => rows.some((r) => r.label === l);
 
   // ---- what is wrong with it -------------------------------------------------------------
@@ -311,6 +332,23 @@
         {#if tells && key.length}
           <a class="btn sm" href={storyHref(table.name, key)} title="See where this {one} leads, as a map"><Workflow size={14} /> In Story</a>
         {/if}
+        <Popover.Root bind:open={more}>
+          <Popover.Trigger class="btn sm icon ghost" aria-label="More for {one} {label}" title="More"><Ellipsis size={15} /></Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content class="pop more-pop" sideOffset={6} align="end" collisionPadding={8}>
+              {#if renumberHref}
+                <a class="menu-item" href={renumberHref} onclick={() => (more = false)}>
+                  <ArrowRightLeft size={14} />
+                  <span>Renumber…<span class="sub">Every record and script that names it follows</span></span>
+                </a>
+              {/if}
+              <button type="button" class="menu-item" onclick={copyLink}>
+                <LinkIcon size={14} />
+                <span>Copy link<span class="sub">{recordHref(table.name, key)}</span></span>
+              </button>
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
         <Popover.Root bind:open={deleting}>
           <Popover.Trigger class="btn sm icon ghost danger" aria-label="Delete {one} {label}" title="Delete {one} {label}"><Trash2 size={15} /></Popover.Trigger>
           <Popover.Portal>
@@ -400,6 +438,9 @@
   :global(.was-pop) code { font: 12px var(--font-mono); background: var(--surface-2); padding: 1px 5px; border-radius: 6px; }
   :global(.was-pop) .go { display: flex; justify-content: flex-end; gap: 6px; }
   :global(.was-pop > .btn) { justify-self: start; }
+  :global(.more-pop) { width: min(300px, calc(100vw - 16px)); display: grid; gap: 2px; }
+  :global(.more-pop .menu-item .sub) { font-family: var(--font-mono); overflow-wrap: anywhere; }
+  :global(.more-pop a.menu-item .sub) { font-family: var(--font-ui); }
   @media (max-width: 760px) {
     .hero-in { gap: 12px; }
     .big { width: 48px; height: 48px; border-radius: 15px; }

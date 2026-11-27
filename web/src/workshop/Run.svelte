@@ -1,6 +1,7 @@
 <!--
   A Workshop run, previewed: read again as its settings change, it lists what would change,
-  record by record, before and after. Apply writes it as one step of the history, so the
+  record by record, before and after (over one table, or several, as a renumbering changes
+  every record that names what moves). Apply writes it as one step of the history, so the
   toast's Undo (or Ctrl+Z) takes it all back until you publish.
 -->
 <svelte:options css="injected" />
@@ -14,17 +15,18 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-exclamation-point';
   import type { Snippet } from 'svelte';
   import { toShown } from '../ansi';
-  import type { Cell, Plan, PlanChange } from '../api';
+  import type { Cell, Plan, PlanChange, Plans } from '../api';
   import RefChip from '../library/RefChip.svelte';
   import { kindOf } from '../shell/kinds';
   import { keyLabel } from '../shell/routes';
   import { sfx } from '../shell/prefs.svelte';
   import { realmChanged, undo } from '../shell/state.svelte';
   import { messageOf, toast } from '../shell/toasts.svelte';
+  import { textChange } from './moves';
 
   interface Props {
-    /** The run: previewed (`dry`), or written. */
-    run: (dry: boolean) => Promise<Plan>;
+    /** The run: previewed (`dry`), or written; over one table, or several. */
+    run: (dry: boolean) => Promise<Plan | Plans>;
     /** The settings as text: the preview is read again whenever they change. */
     key: string;
     /** Why it cannot run yet (a box left empty), when it cannot. */
@@ -36,15 +38,19 @@
     /** What the toast says once it has run, given the records it changed. */
     done: (records: number) => string;
     danger?: boolean;
-    /** What is listed in place of the changes, value by value. */
+    /** What is listed in place of the changes, value by value (a run over one table). */
     list?: Snippet<[Plan]>;
+    /** Once it has run: a form whose run cannot run twice (a renumbering) starts over. */
+    onapplied?: () => void;
+    /** The values are numbers that name records: shown as they are, with no thousands separator. */
+    plain?: boolean;
   }
 
-  let { run, key, blocked = '', verb = 'Apply to', changing = 'changing', done, danger = false, list }: Props = $props();
+  let { run, key, blocked = '', verb = 'Apply to', changing = 'changing', done, danger = false, list, onapplied, plain = false }: Props = $props();
 
   const FIRST = 60;
 
-  let plan = $state.raw<Plan | null>(null);
+  let plan = $state.raw<Plan | Plans | null>(null);
   /** The settings the preview shown was read for. */
   let read = $state('');
   let loading = $state(false);
@@ -97,22 +103,45 @@
     return () => clearTimeout(t);
   });
 
-  const k = $derived(kindOf(plan?.table));
+  /** Each table's plan, in the order they are written. */
+  const plans = $derived(!plan ? [] : 'tables' in plan ? plan.tables : [plan]);
+  /** The one plan of a run over one table, for what is listed in place of its changes. */
+  const single = $derived(plan && !('tables' in plan) ? plan : null);
+  const sum = (f: (p: Plan) => number) => plans.reduce((n, p) => n + f(p), 0);
+  const total = $derived(sum((p) => p.records));
+  const values = $derived(sum((p) => p.changed));
+  const listed = $derived(sum((p) => p.changes.length));
+  const unchanged = $derived(sum((p) => p.unchanged));
+  const skipped = $derived(sum((p) => p.skipped));
+  const notes = $derived(plans.flatMap((p) => p.notes));
+  /** The tables with records changing, for a run over several. */
+  const touched = $derived(plans.filter((p) => p.records > 0));
+  const k = $derived(kindOf(plans.length === 1 ? plans[0]!.table : null));
   const noun = (n: number) => (n === 1 ? k.one : k.many).toLowerCase();
   const fresh = $derived(!!plan && read === key && !loading);
 
   /** The changes, a record at a time. */
   const records = $derived.by(() => {
-    const out: { key: Cell[]; changes: PlanChange[] }[] = [];
-    for (const c of plan?.changes.slice(0, shown) ?? []) {
-      const last = out.at(-1);
-      if (last && keyLabel(last.key) === keyLabel(c.key)) last.changes.push(c);
-      else out.push({ key: c.key, changes: [c] });
+    const out: { table: string; key: Cell[]; changes: PlanChange[] }[] = [];
+    let left = shown;
+    for (const p of plans) {
+      for (const c of p.changes.slice(0, Math.max(0, left))) {
+        const last = out.at(-1);
+        if (last && last.table === p.table && keyLabel(last.key) === keyLabel(c.key)) last.changes.push(c);
+        else out.push({ table: p.table, key: c.key, changes: [c] });
+      }
+      left -= p.changes.length;
     }
     return out;
   });
 
-  const value = (v: Cell) => (typeof v === 'number' ? v.toLocaleString() : v === null ? '' : toShown(v.split('\0')[0]!));
+  const text = (v: Cell) => (typeof v === 'string' ? toShown(v.split('\0')[0]!) : null);
+  const value = (v: Cell) => (typeof v === 'number' ? (plain ? String(v) : v.toLocaleString()) : v === null ? '' : text(v)!);
+  /** A change's before and after as shown: a long text cut down to what differs. */
+  function shownChange(c: PlanChange): [string, string] {
+    const [b, a] = [text(c.before), text(c.after)];
+    return b !== null && a !== null ? textChange(b, a) : [value(c.before), value(c.after)];
+  }
 
   async function apply() {
     if (!plan || busy || !fresh) return;
@@ -121,11 +150,12 @@
       const r = await run(false);
       const step = r.step;
       sfx('tada');
-      const text = done(r.records);
+      const text = done('tables' in r ? r.tables.reduce((n, p) => n + p.records, 0) : r.records);
       toast(text, step != null ? { action: 'Undo', onAction: () => void undo(step) } : {});
       realmChanged();
       // after the world's change is told, which clears what an undo makes stale
       applied = { key, text };
+      onapplied?.();
     } catch (e) {
       sfx('nope');
       toast(messageOf(e), { kind: 'error' });
@@ -150,60 +180,69 @@
   {:else if error}
     <div class="callout bad"><TriangleAlert size={16} /><span>{error}</span></div>
   {:else if plan}
-    {#if plan.records}
+    {#if total && plans.length > 1}
       <div class="tiles">
-        <div><small>{plan.records === 1 ? k.one : k.many} {changing}</small><b>{plan.records.toLocaleString()}</b></div>
-        {#if !list}<div><small>Values</small><b>{plan.changed.toLocaleString()}</b></div>{/if}
-        {#if plan.unchanged}<div><small>Already so</small><b>{plan.unchanged.toLocaleString()}</b></div>{/if}
-        {#if plan.skipped}<div><small>Left out</small><b>{plan.skipped.toLocaleString()}</b></div>{/if}
+        {#each touched as p (p.table)}
+          {@const pk = kindOf(p.table)}
+          <div><small>{p.records === 1 ? pk.one : pk.many} {changing}</small><b>{p.records.toLocaleString()}</b></div>
+        {/each}
+      </div>
+    {:else if total}
+      <div class="tiles">
+        <div><small>{total === 1 ? k.one : k.many} {changing}</small><b>{total.toLocaleString()}</b></div>
+        {#if !list}<div><small>Values</small><b>{values.toLocaleString()}</b></div>{/if}
+        {#if unchanged}<div><small>Already so</small><b>{unchanged.toLocaleString()}</b></div>{/if}
+        {#if skipped}<div><small>Left out</small><b>{skipped.toLocaleString()}</b></div>{/if}
       </div>
     {:else}
       <p class="quiet good">
         <CircleCheck size={16} />
-        Nothing to change{plan.unchanged ? `: ${plan.unchanged.toLocaleString()} ${noun(plan.unchanged)} already so` : ''}{plan.skipped
-          ? `${plan.unchanged ? ',' : ':'} ${plan.skipped.toLocaleString()} left out`
+        Nothing to change{unchanged ? `: ${unchanged.toLocaleString()} ${noun(unchanged)} already so` : ''}{skipped
+          ? `${unchanged ? ',' : ':'} ${skipped.toLocaleString()} left out`
           : ''}.
       </p>
     {/if}
 
-    {#if plan.notes.length}
+    {#if notes.length}
       <div class="callout info notes">
         <Info size={16} />
         <div>
           <b>Worth a look, left as they are:</b>
-          <ul>{#each plan.notes.slice(0, 12) as n, i (i)}<li>{n}</li>{/each}</ul>
-          {#if plan.notes.length > 12}<span>and {(plan.notes.length - 12).toLocaleString()} more.</span>{/if}
+          <ul>{#each notes.slice(0, 12) as n, i (i)}<li>{n}</li>{/each}</ul>
+          {#if notes.length > 12}<span>and {(notes.length - 12).toLocaleString()} more.</span>{/if}
         </div>
       </div>
     {/if}
 
-    {#if list}
-      {@render list(plan)}
+    {#if list && single}
+      {@render list(single)}
     {:else if records.length}
       <div class="table-wrap">
         <table class="changes">
           <thead><tr><th>{k.one}</th><th>Field</th><th class="num">Before</th><th class="num">After</th></tr></thead>
           <tbody>
-            {#each records as r (keyLabel(r.key))}
+            {#each records as r (`${r.table}:${keyLabel(r.key)}`)}
               {#each r.changes as c, i (c.column)}
+                {@const [b, a] = shownChange(c)}
+                {@const long = typeof c.before === 'string' && (b.length > 24 || b.includes('\n'))}
                 <tr class:first={i === 0}>
-                  <td>{#if i === 0}<RefChip table={plan.table} key={r.key} compact />{/if}</td>
+                  <td>{#if i === 0}<RefChip table={r.table} key={r.key} compact />{/if}</td>
                   <td class="fname">{c.column === '(new)' ? 'New' : c.column === '(deleted)' ? 'Deleted' : c.column}</td>
-                  <td class="num old">{value(c.before)}</td>
-                  {#if c.column === '(deleted)'}<td class="num gone">gone</td>{:else}<td class="num new">{value(c.after)}</td>{/if}
+                  <td class="num old" class:txt={long}>{b}</td>
+                  {#if c.column === '(deleted)'}<td class="num gone">gone</td>{:else}<td class="num new" class:txt={long}>{a}</td>{/if}
                 </tr>
               {/each}
             {/each}
           </tbody>
         </table>
       </div>
-      {#if plan.changes.length > shown}
+      {#if listed > shown}
         <div class="more">
-          <span class="faint">{shown.toLocaleString()} of {plan.changed.toLocaleString()} values</span>
+          <span class="faint">{shown.toLocaleString()} of {values.toLocaleString()} values</span>
           <button type="button" class="btn sm" onclick={() => (shown += 200)}>Show more</button>
         </div>
-      {:else if plan.changed > plan.changes.length}
-        <p class="faint more">The first {plan.changes.length.toLocaleString()} of {plan.changed.toLocaleString()} values are listed.</p>
+      {:else if values > listed}
+        <p class="faint more">The first {listed.toLocaleString()} of {values.toLocaleString()} values are listed.</p>
       {/if}
     {/if}
   {:else if loading}
@@ -211,9 +250,9 @@
   {/if}
 
   <div class="go">
-    <button type="button" class="btn sticker {danger ? 'danger-go' : 'primary'}" disabled={!fresh || !plan?.records || busy} onclick={() => void apply()}>
+    <button type="button" class="btn sticker {danger ? 'danger-go' : 'primary'}" disabled={!fresh || !total || busy} onclick={() => void apply()}>
       {#if danger}<Trash size={16} />{:else}<Check size={16} />{/if}
-      {busy ? 'Writing…' : plan?.records && fresh ? `${verb} ${plan.records.toLocaleString()} ${noun(plan.records)}` : verb.replace(/ to$/, '')}
+      {busy ? 'Writing…' : total && fresh ? `${verb} ${total.toLocaleString()} ${noun(total)}` : verb.replace(/ to$/, '')}
     </button>
     <span class="faint">One step in Changes: Undo takes it all back until you publish.</span>
   </div>
@@ -244,6 +283,9 @@
   .fname { font-weight: 700; color: var(--ink-2); white-space: nowrap; }
   .num { text-align: right; font-family: var(--font-mono); white-space: nowrap; }
   .old { color: var(--ink-3); text-decoration: line-through; }
+  .old.txt { text-decoration: none; }
+  /* a text's change: the lines that differ, as they read */
+  .txt { text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 14ch; max-width: 46ch; font-size: 12px; }
   .new { color: var(--ok); font-weight: 800; }
   .gone { color: var(--bad); font-weight: 800; }
   .more { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 0; font-size: 12.5px; font-weight: 700; }

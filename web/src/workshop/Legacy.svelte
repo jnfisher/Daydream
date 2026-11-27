@@ -5,7 +5,7 @@
 <svelte:options css="injected" />
 
 <script lang="ts">
-  import { app, realmChanged } from '../shell/state.svelte';
+  import { realmChanged } from '../shell/state.svelte';
   import { messageOf } from '../shell/toasts.svelte';
 
   let { id }: { id: string } = $props();
@@ -22,7 +22,7 @@
     void import('../tools')
       .then(({ legacyTool }) => {
         if (gone) return;
-        const cards = legacyTool(tool, app.tables, realmChanged);
+        const cards = legacyTool(tool, realmChanged);
         count = cards.length;
         el.replaceChildren(...cards);
       })

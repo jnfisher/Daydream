@@ -11,7 +11,8 @@
 //! | `POST /api/map/dig` | a [`Dig`](daydream_nmr::map::Dig) (`count` digs a line of new rooms) and `dry_run`; as `modify` |
 //! | `POST /api/map/stamp` | a [`Stamp`](daydream_nmr::map::Stamp) and `dry_run`; as `modify`, with `stamp` (`{rooms, exits, joined, left}`) and the history's `step` |
 //! | `POST /api/map/set` | a [`Bulk`](daydream_nmr::map::Bulk) (`{map, rooms, values: [[column, value]], what}`) and `dry_run`; as `modify` |
-//! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber) and `dry_run`; `{dry_run, tables: [as modify, per table]}` |
+//! | `POST /api/tools/renumber` | a [`Renumber`](daydream_nmr::renumber::Renumber), `dry_run` and `label?`; `{dry_run, tables: [as modify, per table], step}` |
+//! | `POST /api/tools/monster-indexes` | `{changes: [`[`IndexChange`](daydream_nmr::presets::IndexChange)`], dry_run, label?}`: the monsters, then the rooms that spawn them; as `renumber` |
 //! | `POST /api/tools/write-dat` | `{wcc?, out?, backup, dry_run, force}`; `{files: [{stem, dest, action, records}], backup?}` |
 //!
 //! `options` is JSON: `tables` (names, or absent for all), `ranges` (`[{table, map?, from,
@@ -389,6 +390,8 @@ pub struct RenumberJson {
     run: daydream_nmr::renumber::Renumber,
     #[serde(default)]
     dry_run: bool,
+    #[serde(default)]
+    label: Option<String>,
 }
 
 /// One plan's answer, as `modify` gives it.
@@ -411,29 +414,78 @@ pub(crate) async fn renumber(
     State(s): State<Arc<AppState>>,
     Json(body): Json<RenumberJson>,
 ) -> Result<Json<Value>, ApiError> {
+    let label = label_or(body.label, || "Change record numbers".into());
+    run_plans(s, body.dry_run, label, move |realm, layout| {
+        daydream_nmr::renumber::plan(realm, &body.run, layout).map_err(|e| bad(e.to_string()))
+    })
+    .await
+}
+
+/// The body of a Monster Group/Index Changer run.
+#[derive(Debug, Deserialize)]
+pub struct IndexesJson {
+    changes: Vec<daydream_nmr::presets::IndexChange>,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// NMR's Monster Group/Index Changer: the monsters move to their new groups and indexes, then
+/// the rooms whose ranges spawn them, as NMR runs it, and as one step of the history.
+pub(crate) async fn monster_indexes(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<IndexesJson>,
+) -> Result<Json<Value>, ApiError> {
+    use daydream_nmr::presets::{IndexTable, Preset};
+    let label = label_or(body.label, || "Move monster groups and indexes".into());
+    run_plans(s, body.dry_run, label, move |realm, layout| {
+        [IndexTable::Monsters, IndexTable::Rooms]
+            .into_iter()
+            .map(|table| {
+                let fix = Preset::ChangeMonsterIndexes {
+                    table,
+                    changes: body.changes.clone(),
+                };
+                daydream_nmr::presets::plan(realm, &fix, layout).map_err(|e| bad(e.to_string()))
+            })
+            .collect()
+    })
+    .await
+}
+
+/// Plans a run over several tables, writes the plans in order unless `dry_run`, and answers
+/// with each one's changes and the one step of the history they make together.
+async fn run_plans(
+    s: Arc<AppState>,
+    dry_run: bool,
+    label: String,
+    plan: impl FnOnce(
+        &Realm,
+        daydream_types::records::LayoutSet,
+    ) -> Result<Vec<daydream_nmr::modify::Plan>, ApiError>
+    + Send
+    + 'static,
+) -> Result<Json<Value>, ApiError> {
     blocking(move || {
-        let (writing, dir) = s.lock_write(body.dry_run, "Change record numbers")?;
+        let (writing, dir) = s.lock_write(dry_run, &label)?;
         let realm = Realm::open(&dir)?;
         let layout = daydream_nmr::layout_of_realm(&realm);
-        let plans = daydream_nmr::renumber::plan(&realm, &body.run, layout)
-            .map_err(|e| bad(e.to_string()))?;
-        let reports: Vec<Option<Value>> = if body.dry_run {
-            vec![None; plans.len()]
-        } else {
-            daydream_nmr::renumber::apply(&realm, &plans, layout)
-                .map_err(|e| bad(e.to_string()))?
-                .iter()
-                .map(|r| Some(daydream_nmr::rows::report_json(r)))
-                .collect()
-        };
-        let tables: Vec<Value> = plans
-            .iter()
-            .zip(reports)
-            .map(|(p, r)| plan_json(p, body.dry_run, r))
-            .collect();
+        let plans = plan(&realm, layout)?;
+        let mut tables = Vec::with_capacity(plans.len());
+        for p in &plans {
+            let report = if dry_run {
+                None
+            } else {
+                let r = daydream_nmr::modify::apply(&realm, p, layout)
+                    .map_err(|e| bad(e.to_string()))?;
+                Some(daydream_nmr::rows::report_json(&r))
+            };
+            tables.push(plan_json(p, dry_run, report));
+        }
         let step = writing.finish();
         Ok(Json(
-            json!({ "dry_run": body.dry_run, "tables": tables, "step": step }),
+            json!({ "dry_run": dry_run, "tables": tables, "step": step }),
         ))
     })
     .await

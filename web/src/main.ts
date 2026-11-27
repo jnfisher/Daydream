@@ -72,7 +72,8 @@ function canonical(r: Route): string {
       if (r.rest[0] === 'classic') return ['#/map-classic', ...r.rest.slice(1)].join('/');
       return r.rest.length ? `#/world/${r.rest.join('/')}` : '#/world';
     case 'workshop':
-      return r.rest[0] ? `#/workshop/${encodeURIComponent(r.rest[0])}` : '#/workshop';
+      // a tool, and what it starts on (`#/workshop/renumber/items/868`)
+      return ['#/workshop', ...r.rest.map(encodeURIComponent)].join('/');
     case 'story':
       return ['#/story', ...r.rest.map(encodeURIComponent)].join('/');
     default:
