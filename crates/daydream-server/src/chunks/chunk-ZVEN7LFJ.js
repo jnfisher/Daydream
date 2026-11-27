@@ -1,0 +1,2 @@
+// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
+import{Ca as e,Da as o,Ga as t}from"./chunk-AWYRHKA7.js";var r={name:"workflow",size:24,node:[["rect",{width:"8",height:"8",x:"3",y:"3",rx:"2"}],["path",{d:"M7 11v4a2 2 0 0 0 2 2h4"}],["rect",{width:"8",height:"8",x:"13",y:"13",rx:"2"}]]},$=r.node,a=new Set(["$$slots","$$events","$$legacy"]);function p(n,s){let i=e(s,a);t(n,o(()=>i,{get icon(){return r}}))}export{p as a};

@@ -363,6 +363,59 @@ export interface HealthFix {
   step: number | null;
 }
 
+/** Where to look for an item's copies (NMR's Scan Rooms, Shops and Users). */
+export interface Scan {
+  rooms: boolean;
+  shops: boolean;
+  users: boolean;
+}
+
+/** One place an item is (`/api/reports/*`): a room's floor, hidden in a room, a shop's stock
+ * or a user's inventory, and how many are there. */
+export interface ItemPlace {
+  kind: 'room' | 'hidden' | 'shop' | 'user';
+  /** Map and room (`1/224`), a shop's number, or a user's ID. */
+  key: string;
+  name: string;
+  count: number;
+}
+
+/** A limited item, and where its copies are. */
+export interface LimitedItem {
+  number: number;
+  name: string;
+  limit: number;
+  places: ItemPlace[];
+  in_use: number;
+  over: boolean;
+}
+
+/** A control room, and the rooms on its map that name it. */
+export interface ControlRoom {
+  map: number;
+  room: number;
+  name: string;
+  rooms: number[];
+}
+
+/** A monster group and index, and its monsters (number, name), at most 15 as NMR keeps. */
+export interface GroupIndex {
+  group: number;
+  index: number;
+  monsters: [number, string][];
+}
+
+/** A room's permanent NPC. */
+export interface NpcRoom {
+  map: number;
+  room: number;
+  room_name: string;
+  monster: number;
+  monster_name: string;
+}
+
+const scanned = (s: Scan) => `rooms=${s.rooms}&shops=${s.shops}&users=${s.users}`;
+
 export interface Checks {
   checks: CheckInfo[];
   /** The findings the ask matched, of which `findings` is a page. */
@@ -425,6 +478,13 @@ export const api = {
   /** Puts a health check right as one step of the history. */
   healthFix: (check: HealthId, dryRun = false) => call<HealthFix>('POST', '/api/checks/health/fix', { check, dry_run: dryRun }, dryRun),
   /** Spelling leaves a word alone from now on (or, with `accept` false, checks it again). */
+  /** NMR's lists: every limited item and where its copies are. */
+  limitedItems: (scan: Scan) => call<{ items: LimitedItem[] }>('GET', `/api/reports/limited-items?${scanned(scan)}`),
+  /** Every place one item is. */
+  findItem: (item: number, scan: Scan) => call<{ item: number; places: ItemPlace[] }>('GET', `/api/reports/find-item?item=${item}&${scanned(scan)}`),
+  controlRooms: () => call<{ rooms: ControlRoom[] }>('GET', '/api/reports/control-rooms'),
+  monsterGroups: () => call<{ groups: GroupIndex[] }>('GET', '/api/reports/monster-groups'),
+  npcRooms: () => call<{ rooms: NpcRoom[] }>('GET', '/api/reports/npc-rooms'),
   acceptWord: (word: string, accept = true) => call<{ words: string[] }>('POST', '/api/checks/words', { word, accept }, true),
   save: (table: string, key: Cell[], values: Record<string, Cell>) =>
     call<Report>('PUT', `${t(table)}/row${k(key)}`, { values }),
