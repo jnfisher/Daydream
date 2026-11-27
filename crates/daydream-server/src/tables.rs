@@ -14,7 +14,7 @@
 //! | Route | Answer |
 //! |---|---|
 //! | `GET /api/tables` | every table: name, index columns, columns with type and size |
-//! | `GET /api/tables/{table}/rows?columns=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked |
+//! | `GET /api/tables/{table}/rows?columns=&nonzero=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked; with `nonzero`, only the rows where one of those columns holds something |
 //! | `GET /api/tables/{table}/row?key=[...]` | one row: `{key, values: {column: value}, published}` |
 //! | `GET /api/references?table=&key=[...]` | the rows that name a record: `{references: [{table, key, title, column, by}], more}` |
 //! | `GET /api/spawns?group=` | where a monster group spawns: `{group, monsters: [[number, name, index]], ranges: [{min, max, rooms, maps: [[map, rooms]], names: [[name, rooms]]}], idle}` |
@@ -101,10 +101,24 @@ pub(crate) async fn tables() -> Json<Value> {
     Json(json!({ "tables": tables }))
 }
 
-/// `?columns=`: more columns for each row of a row list, comma separated.
+/// `?columns=`: more columns for each row of a row list, comma separated. `?nonzero=`: only
+/// the rows where one of these columns (comma separated) holds a number other than 0 or some
+/// text, such as the rooms that have commands.
 #[derive(Debug, Default, Deserialize)]
 pub struct RowsQuery {
     columns: Option<String>,
+    nonzero: Option<String>,
+}
+
+/// Whether a value holds something: a number other than 0, or text before its NUL.
+fn holds(v: &daydream_nmr::Value) -> bool {
+    use daydream_nmr::Value as V;
+    match v {
+        V::Null => false,
+        V::Long(n) => *n != 0,
+        V::Double(d) => *d != 0.0,
+        V::Text(s) => !s.split('\0').next().unwrap_or("").is_empty(),
+    }
 }
 
 pub(crate) async fn rows(
@@ -118,20 +132,22 @@ pub(crate) async fn rows(
         let (_, rows) = rows::load(&realm, t)?;
         let index = index_columns(t);
         let title = rows::TITLE_COLUMNS.iter().find_map(|c| rows.position(c));
-        let more: Vec<usize> = q
-            .columns
-            .as_deref()
-            .unwrap_or("")
-            .split(',')
-            .filter(|c| !c.is_empty())
-            .map(|c| {
-                rows.position(c)
-                    .ok_or_else(|| bad(format!("{} has no column {c}", t.name)))
-            })
-            .collect::<Result<_, _>>()?;
+        let positions = |list: Option<&str>| {
+            list.unwrap_or("")
+                .split(',')
+                .filter(|c| !c.is_empty())
+                .map(|c| {
+                    rows.position(c)
+                        .ok_or_else(|| bad(format!("{} has no column {c}", t.name)))
+                })
+                .collect::<Result<Vec<usize>, _>>()
+        };
+        let more = positions(q.columns.as_deref())?;
+        let some = positions(q.nonzero.as_deref())?;
         let list: Vec<Value> = rows
             .rows
             .iter()
+            .filter(|r| some.is_empty() || some.iter().any(|&i| holds(&r[i])))
             .map(|r| {
                 let key: Vec<Value> = key_of_row(&rows, r, &index).iter().map(cell_json).collect();
                 let title = title.map(|i| title_json(&r[i]));

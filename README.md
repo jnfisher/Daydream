@@ -218,6 +218,17 @@ numbers; a room beside the rooms next to it), field by field under the card's he
 values that differ in yellow; a click copies one across, and any record of the table can be
 added. Players keep today's editor for now.
 
+**Story** lists the monsters that talk and the rooms with commands, found by name or number.
+One opens as a map of its story, with a link of its own (`#/story/monsters/381`,
+`#/story/rooms/6/1664`): the monster or room on the left, then a column for each step on, as
+the game runs it: the talk block and the topics players can ask about, the text each answer
+shows and the script it then runs, and the messages, items and rooms the script's steps name.
+Each arrow leaves by the row that takes it (a topic, a step) and comes in at what it reaches,
+its colour saying what it does: leads on, says, the way out when a test fails, or gives,
+takes, needs or moves. Hovering a node lights up what it connects to, and a click opens it
+beside the map. **In Story** on a text block's card, or on the card of a monster that talks or
+a room with commands, opens its story. NMR's Quest Organizer is below the lists, as it was.
+
 The paint palette in the top bar (or searching "theme") picks the theme: Daydream,
 Starlight, or whichever matches the system's light or dark. It also turns on the little
 sounds, which are off until you do. Licenses: `/notices.txt`.

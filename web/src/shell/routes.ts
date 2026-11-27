@@ -123,5 +123,22 @@ export function recordHref(table: string, key?: Cell[] | null): string {
 /** A table's spreadsheet grid. */
 export const gridHref = (table: string) => `${recordHref(table)}?grid`;
 
+/** The tables a story starts at: a monster's conversation, a room's commands, a text block. */
+export const STORY_TABLES = ['Monsters', 'Rooms', 'Textblocks'];
+
+/** The story that starts at a record: `#/story/monsters/381`. */
+export const storyHref = (table: string, key: Cell[]) => `#/story${recordHref(table, key).slice(1)}`;
+
+/** The record a story starts at, from what follows `#/story`; a text block's part may be left
+ * out. Null for none, or one no story starts at. */
+export function storyStart(rest: string[], tables: TableInfo[]): { table: string; key: Cell[] } | null {
+  const t = rest[0] ? tableOf(rest[0], tables) : undefined;
+  if (!t || !STORY_TABLES.includes(t.name)) return null;
+  const parts = rest.slice(1).map((p) => encodeURIComponent(p));
+  if (t.name === 'Textblocks' && parts.length === 1) parts.push('0');
+  const key = keyOf(t, parts);
+  return key ? { table: t.name, key } : null;
+}
+
 /** A key as people write it: `868`, `1/224`. */
 export const keyLabel = (key: Cell[]) => key.map((k) => String(k ?? '')).join('/');
