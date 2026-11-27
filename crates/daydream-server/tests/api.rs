@@ -987,6 +987,84 @@ async fn changes_are_listed_and_taken_back() {
 }
 
 #[tokio::test]
+async fn a_row_says_what_it_was_when_last_published() {
+    let dir = realm();
+    daydream_store::journal::reset(dir.path()).unwrap();
+    let uri = |k: serde_json::Value| format!("/api/tables/Races/row?key={}", key(k));
+    let (_, body) = get(dir.path(), &uri(serde_json::json!([1]))).await;
+    assert_eq!(body["published"], serde_json::Value::Null, "{body}");
+
+    let (status, report) = send(
+        dir.path(),
+        "PUT",
+        &uri(serde_json::json!([1])),
+        serde_json::json!({"values": {"Name": "Elf"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let (_, body) = get(dir.path(), &uri(serde_json::json!([1]))).await;
+    assert_eq!(body["values"]["Name"], "Elf");
+    assert_eq!(
+        body["published"],
+        serde_json::json!({"was": {"Name": "Human"}}),
+        "{body}"
+    );
+    // the other race is as it was
+    let (_, body) = get(dir.path(), &uri(serde_json::json!([2]))).await;
+    assert_eq!(body["published"], serde_json::Value::Null, "{body}");
+
+    let (status, report) = send(
+        dir.path(),
+        "POST",
+        "/api/tables/Races/row",
+        serde_json::json!({"values": {"Number": 3, "Name": "Gnome"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{report}");
+    let (_, body) = get(dir.path(), &uri(serde_json::json!([3]))).await;
+    assert_eq!(
+        body["published"],
+        serde_json::json!({"added": true}),
+        "{body}"
+    );
+
+    // saved back as it was: nothing to publish
+    send(
+        dir.path(),
+        "PUT",
+        &uri(serde_json::json!([1])),
+        serde_json::json!({"values": {"Name": "Human"}}),
+    )
+    .await;
+    let (_, body) = get(dir.path(), &uri(serde_json::json!([1]))).await;
+    assert_eq!(body["published"], serde_json::Value::Null, "{body}");
+
+    // what names a record: nothing in this realm names a race
+    let (status, body) = get(
+        dir.path(),
+        &format!(
+            "/api/references?table=Races&key={}",
+            key(serde_json::json!([1]))
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["references"], serde_json::json!([]));
+    assert_eq!(body["more"], false);
+    let (status, _) = get(
+        dir.path(),
+        &format!(
+            "/api/references?table=Races&key={}",
+            key(serde_json::json!([9]))
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = get(dir.path(), "/api/references?table=Races&key=nope").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn saves_are_undone_and_redone() {
     let dir = realm_with_update_file();
     let (_, body) = get(dir.path(), "/api/history").await;

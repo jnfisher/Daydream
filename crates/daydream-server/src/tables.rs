@@ -15,7 +15,8 @@
 //! |---|---|
 //! | `GET /api/tables` | every table: name, index columns, columns with type and size |
 //! | `GET /api/tables/{table}/rows?columns=` | every row's key and title (`Name`, `Line 1`, ...), and the values of `columns` (comma separated) when asked |
-//! | `GET /api/tables/{table}/row?key=[...]` | one row: `{key, values: {column: value}}` |
+//! | `GET /api/tables/{table}/row?key=[...]` | one row: `{key, values: {column: value}, published}` |
+//! | `GET /api/references?table=&key=[...]` | the rows that name a record: `{references: [{table, key, title, column, by}], more}` |
 //! | `PUT /api/tables/{table}/row?key=[...]` | `{values}` over the row; the import's report |
 //! | `POST /api/tables/{table}/row` | `{values}` as a new row; the import's report |
 //! | `DELETE /api/tables/{table}/row?key=[...]` | removes the row; the report |
@@ -23,14 +24,25 @@
 //! A key is a JSON array of the index columns' values, in the index's order. A `PUT` may
 //! not change the key (that would be a new record); a `POST` of a key the realm already
 //! has is refused.
+//!
+//! A row's `published` is what it was when the realm was last read from its game or written
+//! back into it (its last publish): `null` when it is as it was then (or the realm's changes
+//! are not known), `{added: true}` when it is new since, and `{was: {column: value}}` with the
+//! columns that changed since, as they were.
+//!
+//! The rows that name a record ([`daydream_nmr::refs`]) are those of every table: a column
+//! that holds its number, an exit's parameter, an exit into a room, a room that spawns a
+//! monster (with no `column`). `by` says how, for a person; at most
+//! [`daydream_nmr::refs::MAX`] come back, and `more` says whether there were more.
 
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
+use daydream_nmr::refs;
 use daydream_nmr::rows::{
-    self, Edit, RowError, cell_json, find_row, index_columns, key_of_row, record_table,
+    self, Edit, Published, RowError, cell_json, find_row, index_columns, key_of_row, record_table,
     report_json, title_json,
 };
 use daydream_store::Realm;
@@ -155,10 +167,75 @@ pub(crate) async fn row(
         let (_, rows) = rows::load(&realm, t)?;
         let row = find_row(&rows, &index_columns(t), &key)
             .ok_or_else(|| not_found(format!("{} {}", t.name, q.key)))?;
+        let published = match rows::published(&realm, t, &key)? {
+            Published::Same => Value::Null,
+            Published::Added => json!({ "added": true }),
+            Published::Was(was) => {
+                // the columns that look different: text up to its NUL, as the editors show it
+                let changed: Map<String, Value> = rows
+                    .columns
+                    .iter()
+                    .zip(row.iter().zip(&was))
+                    .filter(|(_, (now, then))| cell_json(now) != cell_json(then))
+                    .map(|(c, (_, then))| (c.clone(), cell_json(then)))
+                    .collect();
+                if changed.is_empty() {
+                    Value::Null
+                } else {
+                    json!({ "was": changed })
+                }
+            }
+        };
         Ok(Json(json!({
             "table": t.name,
             "key": key.iter().map(cell_json).collect::<Vec<_>>(),
             "values": rows::row_json(&rows, row),
+            "published": published,
+        })))
+    })
+    .await
+}
+
+/// `?table=&key=`.
+#[derive(Debug, Deserialize)]
+pub struct RecordQuery {
+    table: String,
+    key: String,
+}
+
+/// The rows of every table that name a record.
+pub(crate) async fn references(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<RecordQuery>,
+) -> Result<Json<Value>, ApiError> {
+    blocking(move || {
+        let t = record_table(&q.table)?;
+        let key = parse_key(t, &q.key)?;
+        let realm = Realm::open(&s.realm_dir()?)?;
+        let mut tables = refs::Tables::new(&realm);
+        if find_row(tables.rows(t)?, &index_columns(t), &key).is_none() {
+            return Err(not_found(format!("{} {}", t.name, q.key)));
+        }
+        let search: Vec<_> = rows::record_tables().collect();
+        let found = refs::pointing_at(&mut tables, &search, t, &key)?;
+        let list: Vec<Value> = found
+            .list
+            .iter()
+            .map(|r| {
+                json!({
+                    "table": r.table,
+                    "key": r.key.iter().map(cell_json).collect::<Vec<_>>(),
+                    "title": r.title.as_ref().map(title_json),
+                    "column": r.column,
+                    "by": r.by,
+                })
+            })
+            .collect();
+        Ok(Json(json!({
+            "table": t.name,
+            "key": key.iter().map(cell_json).collect::<Vec<_>>(),
+            "references": list,
+            "more": found.more,
         })))
     })
     .await

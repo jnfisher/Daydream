@@ -193,6 +193,27 @@ pub fn pending(realm_dir: &Path, journal: &str) -> Result<Pending, StoreError> {
     Ok(Pending { entries, mark })
 }
 
+/// The entries of `journal` for the records of one file, by id.
+pub fn entries_of(realm_dir: &Path, journal: &str, stem: &str) -> Result<Vec<Entry>, StoreError> {
+    let Some((p, conn)) = existing(realm_dir)? else {
+        return Ok(Vec::new());
+    };
+    let sql = sql_err(&p);
+    let mut stmt = conn
+        .prepare("SELECT id, before FROM journal_t WHERE journal = ?1 AND stem = ?2 ORDER BY id")
+        .map_err(&sql)?;
+    stmt.query_map(params![journal, stem], |r| {
+        Ok(Entry {
+            stem: stem.to_string(),
+            id: r.get(0)?,
+            before: r.get(1)?,
+        })
+    })
+    .map_err(&sql)?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(&sql)
+}
+
 /// How many entries `journal` holds, and the mark that clears just them ([`clear`]).
 pub fn count(realm_dir: &Path, journal: &str) -> Result<(usize, i64), StoreError> {
     let Some((p, conn)) = existing(realm_dir)? else {

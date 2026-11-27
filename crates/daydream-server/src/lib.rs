@@ -288,6 +288,7 @@ pub fn router_with(realm_dir: Option<&Path>, options: Options) -> Router {
         .route("/mcp", post(mcp::post).get(mcp::get))
         .route("/api/tables", get(tables::tables))
         .route("/api/tables/{table}/rows", get(tables::rows))
+        .route("/api/references", get(tables::references))
         .route(
             "/api/tables/{table}/row",
             get(tables::row)

@@ -324,8 +324,10 @@ of a room's items), and `get_map` takes a range of rooms and extra columns.
 `describe_table` explains each column: its choice list, the table it refers to, and notes on
 what the game does with it (an arena's Max Index is also its level cap), with the source in
 silvermere's engine; for Rooms it gives what each exit type's parameters mean.
-`find_references` lists every row that names a record. These come from
-`crates/daydream-nmr/src/fields.json`, which the web editors' choice lists use too.
+`find_references` lists every row that names a record, and `preview_edits` warns of what a
+batch would leave pointing at nothing: a value that names a record the realm does not have
+(the batch's own inserts and deletes counted), or rows still naming a record it deletes. These
+come from `crates/daydream-nmr/src/fields.json`, which the web editors' choice lists use too.
 
 ```sh
 claude mcp add daydream -- daydream mcp /path/to/realm      # Claude Code, over stdio

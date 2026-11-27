@@ -1,27 +1,16 @@
 //! What columns mean and what points where: `describe_table`'s notes, lists and exit
-//! parameters from [`daydream_nmr::fields`], and `find_references`.
+//! parameters from [`daydream_nmr::fields`], and `find_references` ([`daydream_nmr::refs`]).
 
 use std::collections::BTreeMap;
 
 use daydream_nmr::Value as Cell;
 use daydream_nmr::fields::{self, ColumnInfo};
-use daydream_nmr::rows;
 use daydream_nmr::schema::NmrTable;
+use daydream_nmr::{refs, rows};
 use daydream_store::Realm;
 use serde_json::{Map, Value, json};
 
 use crate::ToolError;
-
-/// The most references `find_references` lists.
-pub const MAX_REFS: usize = 500;
-
-fn num(v: &Cell) -> Option<i64> {
-    match v {
-        Cell::Long(n) => Some(i64::from(*n)),
-        Cell::Double(d) => Some(*d as i64),
-        _ => None,
-    }
-}
 
 /// `describe_table`'s answer for `t`: its columns with what each picks from, the notes once
 /// per column family, the lists used, and for Rooms what exit parameters mean.
@@ -122,161 +111,30 @@ fn add_info(v: &mut Value, info: &ColumnInfo) {
     }
 }
 
-/// One row that names the record asked about.
-fn reference(t: &NmrTable, all: &daydream_nmr::NmrRows, row: &[Cell], why: String) -> Value {
-    let index = rows::index_columns(t);
-    let key: Vec<Value> = rows::key_of_row(all, row, &index)
-        .iter()
-        .map(rows::cell_json)
-        .collect();
-    let title = rows::TITLE_COLUMNS
-        .iter()
-        .find_map(|c| all.position(c))
-        .map(|i| rows::title_json(&row[i]));
-    json!({ "table": t.name, "key": key, "title": title, "by": why })
+/// One row that names a record, as `find_references` lists it.
+pub fn reference_json(r: &refs::Reference) -> Value {
+    json!({
+        "table": r.table,
+        "key": r.key.iter().map(rows::cell_json).collect::<Vec<_>>(),
+        "title": r.title.as_ref().map(rows::title_json),
+        "by": r.by,
+    })
 }
 
-/// Every row of the tables `tables` that names `target`'s record `key`: columns that refer to
-/// its table, exit parameters, exits into a room, and the rooms that spawn a monster.
+/// Every row of the tables `tables` that names `target`'s record `key`
+/// ([`refs::pointing_at`]): columns that refer to its table, exit parameters, exits into a
+/// room, and the rooms that spawn a monster.
 pub fn find_references(
     realm: &Realm,
     tables: &[&'static NmrTable],
-    target: &NmrTable,
+    target: &'static NmrTable,
     key: &[Cell],
 ) -> Result<Value, ToolError> {
-    let (number, map) = if target.name == "Rooms" {
-        (key.get(1).and_then(num), key.first().and_then(num))
-    } else {
-        (key.first().and_then(num), None)
-    };
-    let number = number.ok_or_else(|| crate::bad("the key's number is not a number"))?;
-    let mut found = Vec::new();
-    let mut more = false;
-    let mut push = |v: Value| {
-        if found.len() < MAX_REFS {
-            found.push(v);
-        } else {
-            more = true;
-        }
-    };
-    for t in tables {
-        let (_, all) = rows::load(realm, t)?;
-        let at = |c: &str| all.position(c);
-        // columns that refer to the target's table
-        let cols: Vec<(usize, &str)> = all
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| {
-                fields::column(t.name, c).and_then(ColumnInfo::target) == Some(target.name)
-            })
-            .map(|(i, c)| (i, c.as_str()))
-            .collect();
-        let row_map = at("Map Number");
-        for row in &all.rows {
-            for &(i, c) in &cols {
-                if num(&row[i]) != Some(number) {
-                    continue;
-                }
-                // a room is on the referring room's map (an exit of type Map Change: on
-                // the map its Para1 names)
-                if let Some(m) = map {
-                    let mut on = row_map.and_then(|j| num(&row[j]));
-                    if t.name == "Rooms"
-                        && let Some(n) = c.strip_prefix("Exit ")
-                        && let (Some(ty), Some(p1)) =
-                            (at(&format!("Type {n}")), at(&format!("Para1 {n}")))
-                        && num(&row[ty]) == Some(8)
-                    {
-                        on = num(&row[p1]);
-                    }
-                    if on != Some(m) {
-                        continue;
-                    }
-                }
-                push(reference(t, &all, row, c.to_string()));
-            }
-            // exit parameters, by each exit's type
-            if t.name == "Rooms" {
-                for n in 0..10 {
-                    let Some(ty) = at(&format!("Type {n}")).and_then(|i| num(&row[i])) else {
-                        continue;
-                    };
-                    let Some(params) = fields::exit_params(ty) else {
-                        continue;
-                    };
-                    for (para, p) in params {
-                        if p.links.as_deref() == Some(target.name)
-                            && at(&format!("{para} {n}")).and_then(|i| num(&row[i])) == Some(number)
-                        {
-                            push(reference(
-                                t,
-                                &all,
-                                row,
-                                format!("{para} {n} ({}: {})", exit_name(ty), p.means),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        // the rooms that spawn a monster
-        if target.name == "Monsters" && t.name == "Rooms" {
-            spawning_rooms(realm, target, number, t, &all, &mut push)?;
-        }
-    }
+    let found = refs::pointing_at(&mut refs::Tables::new(realm), tables, target, key)?;
     Ok(json!({
         "table": target.name,
         "key": key.iter().map(rows::cell_json).collect::<Vec<_>>(),
-        "references": found,
-        "more": more,
+        "references": found.list.iter().map(reference_json).collect::<Vec<_>>(),
+        "more": found.more,
     }))
-}
-
-fn exit_name(ty: i64) -> &'static str {
-    fields::label("EXIT_TYPE", ty).unwrap_or("exit")
-}
-
-fn spawning_rooms(
-    realm: &Realm,
-    monsters: &NmrTable,
-    number: i64,
-    rooms_t: &NmrTable,
-    rooms: &daydream_nmr::NmrRows,
-    push: &mut impl FnMut(Value),
-) -> Result<(), ToolError> {
-    let (_, mons) = rows::load(realm, monsters)?;
-    let index = rows::index_columns(monsters);
-    let Some(mon) = rows::find_row(&mons, &index, &[Cell::Long(number as i32)]) else {
-        return Ok(());
-    };
-    let get = |c: &str| mons.position(c).and_then(|i| num(&mon[i]));
-    let (Some(group), Some(gen_index)) = (get("Group"), get("Index")) else {
-        return Ok(());
-    };
-    let at = |c: &str| rooms.position(c);
-    let (Some(ty), Some(lo), Some(hi), Some(regen)) = (
-        at("Mon Type"),
-        at("Min Index"),
-        at("Max Index"),
-        at("Max Regen"),
-    ) else {
-        return Ok(());
-    };
-    for row in &rooms.rows {
-        let v = |i: usize| num(&row[i]).unwrap_or(0);
-        if v(ty) == group
-            && v(regen) > 0
-            && (v(lo) == 0 || gen_index >= v(lo))
-            && (v(hi) == 0 || gen_index <= v(hi))
-        {
-            push(reference(
-                rooms_t,
-                rooms,
-                row,
-                format!("spawns it (Mon Type {group}, Index {gen_index} within Min/Max Index)"),
-            ));
-        }
-    }
-    Ok(())
 }
