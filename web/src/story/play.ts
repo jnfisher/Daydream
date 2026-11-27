@@ -12,7 +12,50 @@
 //
 // Pure: no DOM, so `node --test` runs its tests (play.test.ts).
 
-import { BACK, DIRS, exitsOf, GATE, HIDDEN, REMOTE, remoteOf, roomScreen, sameWords, shown, TEXT, workExit, type Exit, type Lines } from '../library/exits.ts';
+import {
+  ABILITY,
+  ACTION,
+  ALIGNMENT,
+  ARMED,
+  ARMED_THROWS,
+  BACK,
+  CAST,
+  CLASS,
+  DIRS,
+  DISARMED,
+  DISARMED_THROWS,
+  DOOR,
+  exitsOf,
+  FREE_MAPS,
+  GATE,
+  HIDDEN,
+  ITEM,
+  KEY,
+  LEVEL,
+  LOCKED,
+  MAP_CHANGE,
+  OPEN,
+  PASSABLE,
+  RACE,
+  REMOTE,
+  remoteOf,
+  roomScreen,
+  sameWords,
+  shown,
+  SHUT,
+  SPELL,
+  SPELL_TRAP,
+  TEXT,
+  TIMED,
+  TOLL,
+  TRAP,
+  TRAP_HIDDEN,
+  VISBLOCKED,
+  VISSEARCHED,
+  workExit,
+  type Exit,
+  type Lines,
+} from '../library/exits.ts';
 import { clauses, coinsOf, leadingInt32, MAX_PARTS, patternLines, SKILLS, TELEPORTS, wholeLines, wildcardMatch, type Clause } from '../library/script.ts';
 import { nodeId, type Cell, type Values } from './story.ts';
 
@@ -96,6 +139,29 @@ const END_OK: Step = { result: 'ok', on: false };
 const GREEN = '\x1b[0;32m';
 const YELLOW = '\x1b[1;33m';
 const WHITE = '\x1b[1;37m';
+const GREY = '\x1b[0;37m';
+const LTRED = '\x1b[1;31;40m';
+const NORMAL_TEXT = '\x1b[0;37;40m';
+/** What the game says when a way out is refused (silvermere-text's catalogue). */
+const NO_EXIT = 'There is no exit in that direction!';
+const NOT_PERMITTED = 'You are not permitted in that room!';
+/** The game's add-on packs, by the maps they bring (`ADDONS`). */
+const ADDONS: Record<number, string> = {
+  2: "Dragon's Teeth add-on",
+  3: 'The Cursed Ruins add-on',
+  4: 'MajorMud Guilds (not yet released)',
+  6: 'Terror from Below add-on',
+  8: 'Strangers in the Night add-on',
+  9: 'The Rising Dawn add-on',
+  12: 'The Sands of Time',
+  13: 'MajorMud Quests (not yet released)',
+  14: 'Unnamed (not yet released)',
+  15: 'A call to Arms ',
+  16: 'Savage Lands add-on',
+  17: 'Prophecy of Plague ',
+};
+/** The room type whose Max Index is the highest level let in (`ROOM_ARENA`). */
+const ARENA = 2;
 const LINES = ['Line 1', 'Line 2', 'Line 3'] as const;
 const COPPER: Record<string, number> = { runic: 1_000_000, platinum: 10_000, gold: 100, silver: 10, copper: 1 };
 /** How deep blocks may run each other before the chain is cut (silvermere's MAX_DEPTH). */
@@ -138,6 +204,26 @@ export function fmtMsg(fmt: string, args: string[]): string {
     else out += spec;
   }
   return out;
+}
+
+/** The game's words for walking and looking (silvermere's command table): each word with its
+ * shortest accepted abbreviation. North, south and west take only their letter or the whole
+ * word; LOOK takes any of its first letters. */
+const WALK_WORDS: [string, number, number | 'look'][] = [
+  ['N', 1, 0], ['NORTH', 5, 0], ['S', 1, 1], ['SOUTH', 5, 1], ['E', 1, 2], ['EAST', 3, 2], ['W', 1, 3], ['WEST', 4, 3],
+  ['NE', 2, 4], ['NORTHEAST', 6, 4], ['NW', 2, 5], ['NORTHWEST', 6, 5], ['SE', 2, 6], ['SOUTHEAST', 6, 6], ['SW', 2, 7], ['SOUTHWEST', 6, 7],
+  ['UP', 1, 8], ['D', 1, 9], ['DOWN', 3, 9], ['LOOK', 1, 'look'],
+];
+
+/** What a typed line is to the game before any exit's words or the room's commands: a walk
+ * (its direction, 0 to 9), a look at the room (LOOK alone), a look at something (`look at`),
+ * or neither (null). The first word decides, in any case. */
+export function walkWord(typed: string): number | 'look' | 'look at' | null {
+  const [first = '', ...rest] = typed.trim().split(/ +/);
+  const w = upper(first);
+  const hit = WALK_WORDS.find(([word, min]) => w.length >= min && word.startsWith(w));
+  if (!hit) return null;
+  return hit[2] === 'look' && rest.length ? 'look at' : hit[2];
 }
 
 export interface PlayOptions {
@@ -364,6 +450,337 @@ export class Play {
     return result;
   }
 
+  /**
+   * A player in a room walks `dir`, a direction typed or an arrow on the map, as the game's
+   * `move_user` does (silvermere-engine movement/move_user.rs, and `exit_gate` in exits.rs):
+   * the exit's type lets them through, refuses them with the game's words, or carries them
+   * through itself; then the room they reach is shown. 'ok' when they moved.
+   */
+  async go(map: number, room: number, dir: number): Promise<Result> {
+    const r = await this.get('Rooms', [map, room]);
+    if (!r) {
+      this.note(`There is no room ${room} on map ${map}.`, true);
+      return 'nothing';
+    }
+    this.touch('Rooms', [map, room]);
+    [this.me.map, this.me.room] = [map, room];
+    const e = this.exitsOf(map, room, r)[dir];
+    if (!e?.to) {
+      this.you(NO_EXIT);
+      return 'stop';
+    }
+    return this.within('Rooms', [map, room], `w${dir}`, () => this.gate(map, room, e));
+  }
+
+  /** The room as a player standing in it reads it, with its exits as play has left them. */
+  async look(map: number, room: number): Promise<Result> {
+    const r = await this.get('Rooms', [map, room]);
+    if (!r) {
+      this.note(`There is no room ${room} on map ${map}.`, true);
+      return 'nothing';
+    }
+    this.touch('Rooms', [map, room]);
+    [this.me.map, this.me.room] = [map, room];
+    this.you(await this.screen(map, room, r));
+    return 'ok';
+  }
+
+  /** The exit's check (`exit_gate`) for a player walking it, and the move. */
+  private async gate(map: number, room: number, e: Exit): Promise<Result> {
+    const me = this.me;
+    const way = DIRS[e.dir]!;
+    const at = `${map}/${room}/${e.dir}`;
+    const refuse = (said: string, why: string, fix?: Fix): Result => {
+      if (said) this.you(said);
+      this.note(why, true, fix);
+      return 'stop';
+    };
+    const tournament = (): Result | null =>
+      me.tournament ? refuse('You may not go through this exit during tournament play!', 'Tournament play is on, which closes this kind of exit.', { label: 'Turn tournament play off', apply: (p) => (p.tournament = false) }) : null;
+    switch (e.type) {
+      case SPELL:
+        return refuse(`${LTRED}You need to cast a spell to go that way!`, `A Spell exit lets through only a player its spell moves, or one following a party's leader; walking does not.`);
+      case KEY: {
+        const lock = wrap16(e.p2);
+        if (lock === OPEN) return this.pass(map, e);
+        const key = e.p1 ? await this.nameOf('Items', e.p1, 'item') : null;
+        return refuse(`${LTRED}There is a closed door in that direction!`, `The ${way} door is ${lock === LOCKED ? 'locked' : 'shut'}${key ? ` (${key} unlocks it)` : ''}; only bashing it gets a player through shut.`, { label: 'Open it', apply: (p) => (p.exits[`${at}/2`] = OPEN) });
+      }
+      case DOOR:
+      case GATE: {
+        const what = e.type === GATE ? 'gate' : 'door';
+        if (e.p1 !== SHUT && e.p1 !== LOCKED) return this.pass(map, e);
+        // (sic) shut is "Closed!", locked "closed!" (`gate_or_door`)
+        return refuse(`${LTRED}The ${what} is ${e.p1 === SHUT ? 'Closed' : 'closed'}!`, `The ${way} ${what} is ${e.p1 === SHUT ? `shut: OPEN ${way} opens it` : `locked: it is unlocked, then opened`}.`, { label: 'Open it', apply: (p) => (p.exits[at] = OPEN) });
+      }
+      case ITEM:
+        return this.itemExit(map, e);
+      case TOLL: {
+        const price = e.p1 * 100;
+        const gold = `${e.p1.toLocaleString('en-US')} gold ${e.p1 === 1 ? 'crown' : 'crowns'}`;
+        if (me.copper < price) {
+          const short = price - me.copper;
+          const n = wrap16(e.p1);
+          return refuse(`You do not have enough to cover the toll of ${n} gold ${e.p1 === 1 ? 'crown' : 'crowns'}.`, `The toll is ${coinsOf(price)} and you have ${coinsOf(me.copper)}.`, { label: `Add ${coinsOf(short)}`, apply: (p) => (p.copper += short) });
+        }
+        me.copper -= price;
+        this.you(`${NORMAL_TEXT}You just paid ${gold} in toll charges.`);
+        this.note(`You pay ${coinsOf(price)}, which gives away a player sneaking.`);
+        return this.pass(map, e);
+      }
+      case ACTION:
+        return e.p1 ? this.carried(map, e, e.p1) : this.pass(map, e);
+      case TEXT: {
+        const words = e.p1 ? await this.lines(e.p1) : null;
+        const w = words?.find((l) => l.trim());
+        return refuse(NO_EXIT, `A Text exit is walked by its words${w ? `, “${w.trim()}”` : ''}, not by a direction.`);
+      }
+      case TRAP:
+      case SPELL_TRAP: {
+        const st = wrap16(e.p2);
+        if (st === DISARMED || st === DISARMED_THROWS) return this.pass(map, e);
+        if (st === TRAP_HIDDEN) return refuse(NO_EXIT, `The ${way} trap is hidden: no exit shows that way, and walking into it finds none.`);
+        if (st !== ARMED && st !== ARMED_THROWS) {
+          this.note(`The ${way} trap is in state ${st}, which does nothing.`);
+          return 'stop';
+        }
+        return e.type === TRAP ? this.trap(map, e) : this.spellTrap(map, e);
+      }
+      case HIDDEN:
+        if (e.p1 & (PASSABLE | VISSEARCHED | VISBLOCKED)) return this.pass(map, e);
+        return refuse(NO_EXIT, `The ${way} way is hidden until it is found, by searching or by what opens it.`, { label: 'Find it', apply: (p) => (p.exits[at] = e.p1 | VISSEARCHED) });
+      case REMOTE:
+        return refuse(NO_EXIT, 'A Remote Action exit is worked by its words, not walked.');
+      case CLASS:
+      case RACE: {
+        const t = tournament();
+        if (t) return t;
+        const cls = e.type === CLASS;
+        const table = cls ? 'Classes' : 'Races';
+        const one = cls ? 'class' : 'race';
+        const mine = cls ? me.cls : me.race;
+        const barred = e.p1 ? mine !== e.p1 : e.p2 !== 0 && mine === e.p2;
+        if (!barred) return this.pass(map, e);
+        if (e.p1) {
+          const only = await this.nameOf(table, e.p1, one);
+          const want = e.p1;
+          return refuse('You may not go through this exit!', `Only a player of the ${one} ${only} may go ${way}.`, { label: `Be a ${only}`, apply: (p) => (cls ? (p.cls = want) : (p.race = want)) });
+        }
+        return refuse('You may not go through this exit!', `A player of the ${one} ${await this.nameOf(table, e.p2, one)} may not go ${way}.`);
+      }
+      case LEVEL: {
+        const t = tournament();
+        if (t) return t;
+        if (e.p1 && me.level < e.p1) {
+          const lv = e.p1;
+          return refuse('You have not progressed far enough to go through this exit!', `It lets in level ${lv} and up; you are level ${me.level}.`, { label: `Be level ${lv}`, apply: (p) => (p.level = lv) });
+        }
+        if (e.p2 && me.level > e.p2) {
+          const lv = e.p2;
+          return refuse('You have progressed too far to go through this exit!', `It lets in up to level ${lv}; you are level ${me.level}.`, { label: `Be level ${lv}`, apply: (p) => (p.level = lv) });
+        }
+        return this.pass(map, e);
+      }
+      case ALIGNMENT: {
+        const t = tournament();
+        if (t) return t;
+        const [min, max] = [wrap16(e.p1), wrap16(e.p2)];
+        if (me.evil < min) return refuse('You are too good to go through this exit!', `It lets in evil points ${min} to ${max}; you have ${me.evil}.`, { label: `Have ${min} evil points`, apply: (p) => (p.evil = min) });
+        if (me.evil > max) return refuse('You are too evil to go through this exit!', `It lets in evil points ${min} to ${max}; you have ${me.evil}.`, { label: `Have ${max} evil points`, apply: (p) => (p.evil = max) });
+        return this.pass(map, e);
+      }
+      case MAP_CHANGE: {
+        const into = e.p1;
+        if (!FREE_MAPS.includes(into) && !(await this.get('Rooms', [into, e.to]))) {
+          const addon = ADDONS[into] ?? 'appropriate addon (and upgrade to the latest MajorMUD Version - most likely not available yet)';
+          return refuse(`${GREY}Your sysop must purchase the ${WHITE}${addon}${GREY} before you may move through this exit.`, `Map ${into} has no room ${e.to}, and map ${into} is an add-on's: the game lets players through only when the room is in the world.`);
+        }
+        return this.pass(map, e, into);
+      }
+      case TIMED: {
+        if (wrap16(e.p3) === OPEN) return this.pass(map, e);
+        const m = e.p1 ? await this.lines(e.p1) : null;
+        const fix: Fix = { label: 'Open it', apply: (p) => (p.exits[`${at}/3`] = OPEN) };
+        if (m?.[2]) return refuse(fmtMsg(m[2], [way]), `The ${way} way is closed until its time comes round again.`, fix);
+        return refuse('You may not pass through that exit at this point in time.', `The ${way} way is closed until its time comes round again.`, fix);
+      }
+      case CAST:
+        return this.castExit(map, e);
+      case ABILITY: {
+        const v = me.abilities[e.p1];
+        if (e.p1 && v !== undefined && v >= e.p2 && v >= 0 && v >>> 0 <= e.p3 >>> 0) return this.pass(map, e);
+        const name = this.ability(e.p1);
+        const [lo, hi] = [e.p2, e.p3];
+        const m = e.p4 ? await this.lines(e.p4) : null;
+        if (m?.[0]) this.you(m[0]);
+        if (m?.[1]) this.shown.push({ to: 'room', text: fmtMsg(m[1], [me.name]) });
+        this.note(`It lets through a player with ${name} ${lo === hi ? lo : `${lo} to ${hi}`}${v === undefined ? '; you have none' : `; yours is ${v}`}.`, true, { label: `Have ${name} ${lo}`, apply: (p) => (p.abilities[e.p1] = lo) });
+        return 'stop';
+      }
+      default:
+        // Normal, and Ticket, User Count, Block Guard and Delay, which pass as ordinary exits
+        return this.pass(map, e);
+    }
+  }
+
+  /** A message's three lines, or null when the world has none. */
+  private async lines(n: number): Promise<Lines | null> {
+    const v = await this.get('Messages', [n]);
+    if (!v) return null;
+    this.touch('Messages', [n]);
+    return [text(v['Line 1']), text(v['Line 2']), text(v['Line 3'])];
+  }
+
+  /** Through the way the ordinary way (`user_allowed_in_room`, then `perform_move`): into the
+   * room it leads to, on `into` (a Map Change exit's map). */
+  private async pass(map: number, e: Exit, into = map): Promise<Result> {
+    const to = await this.arrive(e, into);
+    if (!to) return 'stop';
+    this.moveTo(into, e.to);
+    this.you(await this.screen(into, e.to, to));
+    await this.castAfter(e);
+    return 'ok';
+  }
+
+  /** Whether the player may go into the room: one the world has, and an arena they are not past. */
+  private async arrive(e: Exit, into: number): Promise<Values | null> {
+    const to = await this.get('Rooms', [into, e.to]);
+    if (!to) {
+      this.you(NOT_PERMITTED);
+      this.note(`There is no room ${e.to} on map ${into} for the ${DIRS[e.dir]} exit to lead to.`, true);
+      return null;
+    }
+    this.touch('Rooms', [into, e.to]);
+    if (num(to['Type']) === ARENA && this.me.level > wrap16(num(to['Max Index']))) {
+      const lv = wrap16(num(to['Max Index']));
+      this.you('You have progressed too far for this room.');
+      this.you(NOT_PERMITTED);
+      this.note(`${text(to['Name']) || `Room ${e.to}`} is an arena that lets in up to level ${lv}; you are level ${this.me.level}.`, true, { label: `Be level ${lv}`, apply: (p) => (p.level = lv) });
+      return null;
+    }
+    return to;
+  }
+
+  private moveTo(map: number, room: number) {
+    Object.assign(this.me, { map, room, floor: [], monsters: [] });
+  }
+
+  /** An exit that moves the player itself with a message (an Action exit): line 2 to the room
+   * they leave, line 3 to the room they reach, then line 1 to them and the room. */
+  private async carried(map: number, e: Exit, msg: number): Promise<Result> {
+    const m = await this.lines(msg);
+    if (!m) return this.pass(map, e);
+    const to = await this.arrive(e, map);
+    if (!to) return 'stop';
+    const who = GREEN + this.me.name;
+    const where = text(to['Name']) || `room ${e.to}`;
+    if (m[1]) this.shown.push({ to: 'room', text: YELLOW + fmtMsg(m[1], [who, '']) });
+    if (m[2]) this.shown.push({ to: 'there', where, text: YELLOW + fmtMsg(m[2], [who, '']) });
+    this.moveTo(map, e.to);
+    if (m[0]) this.you(GREEN + fmtMsg(m[0], ['']));
+    this.you(await this.screen(map, e.to, to));
+    return 'ok';
+  }
+
+  /** An Item exit: carrying its item moves the player through with its message, a use spent;
+   * else its refusal, or the game's. */
+  private async itemExit(map: number, e: Exit): Promise<Result> {
+    const way = DIRS[e.dir]!;
+    const name = e.p1 ? await this.nameOf('Items', e.p1, 'item') : 'no item';
+    if (!e.p1 || !this.me.items.includes(e.p1)) {
+      const m = e.p2 ? await this.lines(wrap16(e.p2)) : null;
+      if (m) {
+        if (m[0]) this.you(YELLOW + m[0]);
+        if (m[1]) this.shown.push({ to: 'room', text: YELLOW + fmtMsg(m[1], [GREEN + this.me.name]) });
+      } else this.you('You do not have the appropriate item to go that direction!');
+      const need = e.p1;
+      this.note(`Only a player carrying ${name} goes ${way}.`, true, need ? { label: `Carry ${name}`, apply: (p) => p.items.push(need) } : undefined);
+      return 'stop';
+    }
+    const to = await this.get('Rooms', [map, e.to]);
+    if (!to) {
+      this.you(NOT_PERMITTED);
+      this.note(`There is no room ${e.to} on map ${map} for the ${way} exit to lead to.`, true);
+      return 'stop';
+    }
+    this.touch('Rooms', [map, e.to]);
+    const m = e.p3 ? await this.lines(e.p3) : null;
+    const who = GREEN + this.me.name;
+    const where = text(to['Name']) || `room ${e.to}`;
+    if (m?.[1]) this.shown.push({ to: 'room', text: YELLOW + fmtMsg(m[1], [who, way]) });
+    if (m?.[2]) this.shown.push({ to: 'there', where, text: YELLOW + fmtMsg(m[2], [who, DIRS[BACK[e.dir]!] ?? '']) });
+    this.moveTo(map, e.to);
+    if (m?.[0]) this.you(GREEN + m[0]);
+    this.you(await this.screen(map, e.to, to));
+    this.note(`Your ${name} loses a use.`);
+    return 'ok';
+  }
+
+  /** A Trap exit springing: Para1 / 2 to Para1 + 1 damage, its message, and through it. */
+  private async trap(map: number, e: Exit): Promise<Result> {
+    const base = e.p1;
+    const lo = Math.trunc(base / 2);
+    const dmg = lo + this.dice(Math.max(1, base + 1 - lo));
+    const to = await this.get('Rooms', [map, e.to]);
+    if (!to) {
+      this.note(`There is no room ${e.to} on map ${map} for the trap to throw you into, so you stay.`, true);
+      return 'stop';
+    }
+    this.touch('Rooms', [map, e.to]);
+    const m = e.p3 ? await this.lines(e.p3) : null;
+    const who = GREEN + this.me.name;
+    const where = text(to['Name']) || `room ${e.to}`;
+    if (m?.[1]) this.shown.push({ to: 'room', text: YELLOW + fmtMsg(m[1], [who]) });
+    if (m?.[2]) this.shown.push({ to: 'there', where, text: YELLOW + fmtMsg(m[2], [who]) });
+    this.moveTo(map, e.to);
+    if (m?.[0]) this.you(GREEN + fmtMsg(m[0], [String(dmg)]));
+    this.note(`The trap springs: ${dmg} damage, rolled from ${lo} to ${base}.`, true);
+    // (sic) with no message the game shows no room
+    if (m) this.you(await this.screen(map, e.to, to));
+    return 'ok';
+  }
+
+  /** A Spell Trap exit springing: its message, its spell on the player, and through it. */
+  private async spellTrap(map: number, e: Exit): Promise<Result> {
+    const to = await this.get('Rooms', [map, e.to]);
+    const where = to ? text(to['Name']) || `room ${e.to}` : `room ${e.to}`;
+    const m = e.p4 ? await this.lines(e.p4) : null;
+    const who = GREEN + this.me.name;
+    if (m?.[1]) this.shown.push({ to: 'room', text: fmtMsg(m[1], [who]) });
+    if (m?.[2]) this.shown.push({ to: 'there', where, text: fmtMsg(m[2], [who]) });
+    if (m?.[0]) this.you(GREEN + fmtMsg(m[0], ['0']));
+    if (e.p1) this.note(`${await this.nameOf('Spells', e.p1, 'spell')} is cast on you.`);
+    if (!to) {
+      this.note(`There is no room ${e.to} on map ${map} for the trap to throw you into, so you stay.`, true);
+      return 'stop';
+    }
+    this.touch('Rooms', [map, e.to]);
+    this.moveTo(map, e.to);
+    this.you(await this.screen(map, e.to, to));
+    return 'ok';
+  }
+
+  /** A Cast exit: its spell on the player first, then its message's line 1 to them and line 2
+   * to the room, and on through (the spell after any try, `cast_epilogue`, follows the move). */
+  private async castExit(map: number, e: Exit): Promise<Result> {
+    if (!e.p1) return this.pass(map, e);
+    this.note(`${await this.nameOf('Spells', e.p1, 'spell')} is cast on you first; a player it fells, holds or stuns stays.`);
+    const m = e.p3 ? await this.lines(e.p3) : null;
+    if (m?.[0]) this.you(m[0]);
+    if (m?.[1]) this.shown.push({ to: 'room', text: fmtMsg(m[1], [this.me.name]) });
+    return this.pass(map, e);
+  }
+
+  /** After a Cast exit (`cast_epilogue`): its second spell, and its message's line 3 to the room
+   * the player is in now. */
+  private async castAfter(e: Exit) {
+    if (e.type !== CAST || !e.p1) return;
+    const after = wrap16(e.p2);
+    if (after) this.note(`${await this.nameOf('Spells', after, 'spell')} is cast on you after.`);
+    const m = e.p3 ? await this.lines(e.p3) : null;
+    if (m?.[2]) this.shown.push({ to: 'room', text: fmtMsg(m[2], [this.me.name]) });
+  }
+
   /** A room's exits as play has left them. */
   private exitsOf(map: number, room: number, r: Values): Exit[] {
     return exitsOf(this.asPlayed(map, room, r));
@@ -371,8 +788,8 @@ export class Play {
   /** A room's values, its exits as play has left them. */
   private asPlayed(map: number, room: number, r: Values): (c: string) => Cell | undefined {
     return (c) => {
-      const d = /^Para1 (\d)$/.exec(c)?.[1];
-      const changed = d === undefined ? undefined : this.me.exits[`${map}/${room}/${d}`];
+      const m = /^Para([1-4]) (\d)$/.exec(c);
+      const changed = m ? this.me.exits[`${map}/${room}/${m[2]}${m[1] === '1' ? '' : `/${m[1]}`}`] : undefined;
       return changed ?? r[c];
     };
   }

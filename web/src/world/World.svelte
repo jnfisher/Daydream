@@ -21,6 +21,11 @@
   colour), and its panel sets their name, light, monsters, control room or room type together,
   as one save. Its Paint puts light, monsters or a control room onto the rooms a drag goes over,
   a save for each stroke, with the map coloured by what it paints.
+
+  Walk (P) playtests from the selected room: the arrow keys take a pretend player through the
+  exits as the game would, its words for each room and each refusal in a panel, and the map
+  follows them, onto other maps too. A room clicked puts the player there; Esc goes back to
+  editing at the room reached.
 -->
 <!-- loaded when the World is first opened, so its styles travel with its code -->
 <svelte:options css="injected" />
@@ -32,6 +37,7 @@
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import Download from '@lucide/svelte/icons/download';
+  import Footprints from '@lucide/svelte/icons/footprints';
   import LayersIcon from '@lucide/svelte/icons/layers';
   import LocateFixed from '@lucide/svelte/icons/locate-fixed';
   import MapIcon from '@lucide/svelte/icons/map';
@@ -46,7 +52,8 @@
   import StampIcon from '@lucide/svelte/icons/stamp';
   import Upload from '@lucide/svelte/icons/upload';
   import X from '@lucide/svelte/icons/x';
-  import { api } from '../api';
+  import { api, type Cell } from '../api';
+  import type PlayPanel from '../story/PlayPanel.svelte';
   import { read, sfx, write } from '../shell/prefs.svelte';
   import { app, closeInspector, dropLocalStep, inspect, localStep, realmChanged, undo, type LocalStep } from '../shell/state.svelte';
   import { dismiss, messageOf, toast, toasts } from '../shell/toasts.svelte';
@@ -132,6 +139,15 @@
   let selector = $state.raw<Selector | null>(null);
   /** The Select tool is on. */
   let picking = $state(false);
+  /** Walk mode: a playtest from a room, in a panel whose code loads the first time. */
+  let walking = $state(false);
+  let WalkPanel = $state.raw<typeof PlayPanel | null>(null);
+  let walker = $state<ReturnType<typeof PlayPanel>>();
+  /** The room the walk started from. */
+  let walkStart = $state.raw<{ table: string; key: Cell[] } | null>(null);
+  /** How high the walk's panel is, and the tools along the top: the player's room is kept in view between them. */
+  let walkHigh = $state(0);
+  let toolsHigh = $state(0);
   /** A finger, not a mouse: a stamp is aimed with one tap and put down with another. */
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 
@@ -172,7 +188,7 @@
     let fitted = false;
     if (m !== map || fresh || stale || !scene?.layout) fitted = await load(m, m === map);
     // a map seen for the first time opens on the room asked for close enough to see it
-    if (Number.isFinite(n) && n !== selected?.room) choose(n, fitted ? 'close' : 'centre');
+    if (Number.isFinite(n) && n !== selected?.room) choose(n, fitted ? 'close' : 'centre', !walking);
     else if (Number.isFinite(n)) history.replaceState(null, '', `#/world/${map}/${n}`);
   }
 
@@ -281,7 +297,8 @@
   /** A line in the bar along the bottom (a toast on a small screen, unless `quiet`: then only for a screen reader). */
   function say(text: string, quiet = false) {
     live = text;
-    if (!roomy) {
+    // the walk's panel has the bar's place
+    if (!roomy || walking) {
       if (!quiet && !toasts.some((t) => t.text === text)) toast(text, { ms: 2600 });
       return;
     }
@@ -334,11 +351,12 @@
 
   function follow(s: Stub) {
     const e = s.exit;
-    if (s.sort === 'map') go(e.para1, e.to);
-    else if (s.sort === 'missing') {
+    if (s.sort === 'missing') {
       sfx('nope');
       say(`Map ${map} has no room ${e.to}.`);
-    } else choose(e.to, 'centre');
+    } else if (walking) walker?.put(s.sort === 'map' ? e.para1 : map, e.to);
+    else if (s.sort === 'map') go(e.para1, e.to);
+    else choose(e.to, 'centre');
   }
 
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -378,6 +396,7 @@
 
   function setBuilding(on: boolean) {
     if (on === building) return;
+    if (on && walking) stopWalking(false);
     building = on;
     countText = '';
     if (!on && naming) finishNaming(true);
@@ -824,6 +843,7 @@
       }
     }
     stamping = on;
+    if (on && walking) stopWalking(false);
     if (on && picking) await setPicking(false);
     if (on && !building) setBuilding(true);
     stamper?.opened(on);
@@ -849,11 +869,61 @@
       }
     }
     if (on && stamping) await setStamping(false);
+    if (on && walking) stopWalking(false);
     picking = on;
     tip = null;
     selector?.turn(on);
     sfx('toggle');
   }
+
+  /** Walk mode: a playtest from the selected room (or the start room), the map following the player. */
+  async function startWalking() {
+    if (walking || !scene?.layout) return;
+    const from = selected?.room ?? scene.start;
+    if (!WalkPanel) {
+      try {
+        WalkPanel = (await import('../story/PlayPanel.svelte')).default;
+      } catch (e) {
+        toast(messageOf(e), { kind: 'error' });
+        return;
+      }
+    }
+    if (building) setBuilding(false);
+    if (stamping) await setStamping(false);
+    if (picking) await setPicking(false);
+    // the room's card makes way for the map
+    if (cardOnMap()) closeInspector();
+    choose(from, 'keep', false);
+    walkStart = { table: 'Rooms', key: [map, from] };
+    walking = true;
+    tip = null;
+    sfx('toggle');
+  }
+
+  /** Walk mode ends at the room the player reached, its card open to edit it (unless another tool takes over). */
+  function stopWalking(withCard = true) {
+    if (!walking) return;
+    walking = false;
+    walkStart = null;
+    if (withCard && selected) choose(selected.room, 'keep', true);
+    canvas.focus({ preventScroll: true });
+    sfx('toggle');
+  }
+
+  /** Where the walk took the player: the map follows, to another map when they crossed to one. */
+  function walkedTo(m: number, n: number) {
+    if (m !== map) go(m, n);
+    else if (selected?.room !== n) choose(n, 'keep', false);
+  }
+
+  // the walk's panel along the bottom: the player's room is kept in view above it, under the tools
+  $effect(() => {
+    const [h, t] = walking ? [walkHigh, toolsHigh] : [0, 0];
+    untrack(() => {
+      scene?.setBand(t && t + 20, h && h + 24);
+      if (h && selected) scene?.keepInView(selected.room);
+    });
+  });
 
   /** The export's name: the world's, as a file name. */
   const fileStem = () => (app.current?.label ?? 'world').split('(')[0]!.trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'world';
@@ -1009,6 +1079,13 @@
 
   // ---- the keyboard ------------------------------------------------------------------
 
+  /** A direction key: the walk's player goes that way, Build mode digs, or the selection walks. */
+  function step(d: number) {
+    if (walking) walker?.walk(d);
+    else if (building) build(d, takeCount());
+    else walk(d);
+  }
+
   function onKey(e: KeyboardEvent) {
     if (!here() || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
     if (app.paletteOpen || document.querySelector('dialog[open], [role=dialog]')) return;
@@ -1024,6 +1101,7 @@
       if (scene?.carrying) scene.dropCarry();
       else if (scene?.reachingOut) scene.dropReach();
       else if (countText) countText = '';
+      else if (walking) stopWalking();
       else if (building) setBuilding(false);
       else if (focus) setFocus(false);
       return;
@@ -1045,8 +1123,7 @@
     }
     if (d !== undefined) {
       e.preventDefault();
-      if (building) build(d, takeCount());
-      else walk(d);
+      step(d);
       return;
     }
     const k = e.key.toLowerCase();
@@ -1055,8 +1132,9 @@
     else if (e.shiftKey && e.code === 'Digit2') {
       if (selected) scene?.frameRoom(selected.room);
     } else if (e.shiftKey) done = false;
-    else if (k === 'u') building ? build(8, takeCount()) : walk(8);
-    else if (k === 'd') building ? build(9, takeCount()) : walk(9);
+    else if (k === 'u') step(8);
+    else if (k === 'd') step(9);
+    else if (k === 'p') walking ? stopWalking() : void startWalking();
     else if (k === 'b') setBuilding(!building);
     else if (k === 's') void setStamping(!stamping);
     else if (k === 'v') void setPicking(!picking);
@@ -1064,7 +1142,7 @@
       if (lastMove) build(lastMove.dir, lastMove.count);
     } else if ((e.key === 'Enter' || e.key === 'F2') && building) {
       if (selected) void startNaming();
-    } else if (k === 'h' && scene) choose(scene.start, 'centre', !building);
+    } else if (k === 'h' && scene) walking ? walker?.put(map, scene.start) : choose(scene.start, 'centre', !building);
     else if (k === '+' || k === '=') scene?.zoomBy(1.4);
     else if (k === '-' || k === '_') scene?.zoomBy(1 / 1.4);
     else if (k === 'f') setFocus(!focus);
@@ -1091,6 +1169,11 @@
   onMount(() => {
     scene = new Scene(canvas, mini, {
       pick: (r) => {
+        // walking: a room clicked puts the player there
+        if (walking) {
+          if (r) walker?.put(map, r.room);
+          return;
+        }
         if (r) {
           choose(r.room);
           sfx('pop');
@@ -1181,7 +1264,7 @@
   </svg>
 {/snippet}
 
-<div class="world" class:focus class:narrow={!wideTop} style:--card="{card}px" style:--view="{viewWidth}px" bind:clientWidth={width}>
+<div class="world" class:focus class:walking class:narrow={!wideTop} style:--card="{card}px" style:--view="{viewWidth}px" bind:clientWidth={width}>
   <canvas
     bind:this={canvas}
     class="map"
@@ -1196,7 +1279,7 @@
     </div>
   {/if}
 
-  <div class="float tl">
+  <div class="float tl" bind:offsetHeight={toolsHigh}>
     {#if trail.length}
       {@const t = trail.at(-1)!}
       <button type="button" class="btn sm glass" onclick={back} title="Back to where you were">
@@ -1271,6 +1354,16 @@
       title={picking ? 'Done selecting (V)' : 'Select: pick rooms and set their fields together (V)'}
     >
       <SquareDashedMousePointer size={15} /><span>Select</span>{#if picking && selector?.picked.size}<b class="count tnum">{selector.picked.size.toLocaleString()}</b>{/if}
+    </button>
+    <button
+      type="button"
+      class="btn glass build-btn"
+      class:on={walking}
+      aria-pressed={walking}
+      onclick={() => (walking ? stopWalking() : void startWalking())}
+      title={walking ? 'Back to editing (P or Esc)' : 'Walk: playtest from the room with the arrow keys (P)'}
+    >
+      <Footprints size={15} /><span>Walk</span>
     </button>
     {#if pending}<span class="pill lilac">Saving…</span>{:else if loading}<span class="pill lilac">Reading map…</span>{/if}
   </div>
@@ -1402,7 +1495,11 @@
     <picker.PickBar {selector} onclose={() => void setPicking(false)} />
   {/if}
 
-  {#if roomy}
+  {#if walking && WalkPanel && walkStart}
+    <WalkPanel bind:this={walker} bind:high={walkHigh} start={walkStart} walking onclose={() => stopWalking()} onmove={walkedTo} />
+  {/if}
+
+  {#if roomy && !walking}
     <div class="float hint map-hint glass" aria-hidden="true">
       {#if note}
         {note}
@@ -1421,9 +1518,9 @@
       {:else if building}
         <b class="mode">Build</b><span class="kbd">←↑→↓</span> dig or join <span class="kbd">3</span><span class="kbd">→</span> a line <span class="kbd">Shift</span> click a line <span class="kbd">.</span> again <span class="kbd">Enter</span> name <span class="kbd">B</span> done
       {:else if selected}
-        <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down <span class="kbd">Shift 2</span> close up
+        <span class="kbd">←↑→↓</span> walk its exits <span class="kbd">U</span><span class="kbd">D</span> up and down <span class="kbd">P</span> playtest <span class="kbd">Shift 2</span> close up
       {:else}
-        Click a room for its card <span class="kbd">H</span> start room <span class="kbd">F</span> full screen
+        Click a room for its card <span class="kbd">H</span> start room <span class="kbd">P</span> playtest <span class="kbd">F</span> full screen
       {/if}
     </div>
   {/if}
@@ -1579,5 +1676,9 @@
   @media (max-width: 700px) {
     .overview { width: auto; }
     .mini { display: none; }
+  }
+  /* walking on a phone: the tools make way for the map (the walk's panel goes back to editing) */
+  @media (max-width: 760px) {
+    .walking .build-btn { display: none; }
   }
 </style>

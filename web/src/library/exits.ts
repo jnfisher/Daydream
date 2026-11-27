@@ -30,14 +30,14 @@ export const REMOTE = 12, CLASS = 13, RACE = 14, LEVEL = 15, TIMED = 16, TICKET 
 
 /** A Hidden exit's flags (`EXF_`): passable, found by searching, shown once found, shown
  * once its blocks are gone; and block 1 (each next block is the next bit, to block 10). */
-const PASSABLE = 0x1, NEEDSEARCH = 0x2, VISSEARCHED = 0x4, VISBLOCKED = 0x8, BLOCK1 = 0x10, BLOCKS = 0x3ff0;
+export const PASSABLE = 0x1, NEEDSEARCH = 0x2, VISSEARCHED = 0x4, VISBLOCKED = 0x8, BLOCK1 = 0x10, BLOCKS = 0x3ff0;
 /** The lock of a door, gate or key exit. */
-const [OPEN, SHUT, LOCKED] = [0, 1, 2];
+export const [OPEN, SHUT, LOCKED] = [0, 1, 2];
 /** A trap's state: armed, disarmed, hidden, and armed or disarmed with a failed disarm
  * throwing the player through. */
-const [ARMED, DISARMED, TRAP_HIDDEN, ARMED_THROWS, DISARMED_THROWS] = [0, 1, 2, 3, 4];
+export const [ARMED, DISARMED, TRAP_HIDDEN, ARMED_THROWS, DISARMED_THROWS] = [0, 1, 2, 3, 4];
 /** The maps a Map Change exit leads into without an add-on. */
-const FREE_MAPS = [1, 5, 7, 10, 11];
+export const FREE_MAPS = [1, 5, 7, 10, 11];
 /** The exit types nobody may be dragged through (`exit_allows_drag`). */
 const NO_DRAG = [SPELL, KEY, ITEM, TOLL, CLASS, RACE, LEVEL, ALIGNMENT];
 /** The exit types closed during tournament play. */
