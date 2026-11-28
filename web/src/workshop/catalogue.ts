@@ -119,10 +119,10 @@ export const GROUPS: Group[] = [
   {
     id: 'lab',
     title: 'Combat lab',
-    about: 'Later: built on the simulator MMUD Explorer has.',
+    about: 'Try a character against a monster before players do, with 1.11p’s own numbers.',
     tools: [
-      { id: 'fight', name: 'Fight it', about: 'Run a character against any monster, round by round.', was: ['Attack Simulator'], tone: 'pink', icon: 'swords', later: true },
-      { id: 'calc', name: 'Calculators', about: 'Experience to level and swings per round, beside the card you are editing.', was: ['Exp Calculator', 'Swing Calculator'], tone: 'pink', icon: 'calculator', later: true },
+      { id: 'fight', name: 'Fight it', about: 'A character made from your classes, races and items against any monster, round by round, with the odds over a thousand fights.', was: ['Attack Simulator'], tone: 'pink', icon: 'swords', words: 'combat simulator damage hit chance' },
+      { id: 'calc', name: 'Calculators', about: 'Experience to level, and swings a round: in Fight it, beside the fight.', was: ['Exp Calculator', 'Swing Calculator'], tone: 'pink', icon: 'calculator', href: '#/workshop/fight', words: 'experience level swings energy' },
     ],
   },
   {

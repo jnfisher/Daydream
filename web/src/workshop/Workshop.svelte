@@ -68,6 +68,9 @@
   let transfers: Promise<Transfers> | null = null;
   const loadPages = () => (pages ??= import('./pages'));
   const loadTransfers = () => (transfers ??= import('./transfers'));
+  // the Combat lab is a chunk of its own too
+  let lab: Promise<typeof import('../lab')> | null = null;
+  const loadLab = () => (lab ??= import('../lab'));
   const TRANSFERS: Record<string, keyof Transfers> = { nmr: 'ImportNmr', merge: 'MergeUsers', wcc: 'WriteWcc', silvermere: 'Silvermere', mme: 'MmeExport' };
 
   let open = $state<{ group: Group; tool: Tool } | null>(null);
@@ -167,6 +170,8 @@
           <div><a class="btn sticker" href="#/world"><MapIcon size={16} />Open the map</a></div>
           <h3 class="sub">Or a run of rooms by number</h3>
           {@render lazy('RoomRun')}
+        {:else if t.id === 'fight'}
+          {@render loaded(loadLab(), 'Lab', { start: sub })}
         {:else if TRANSFERS[t.id]}
           {@render loaded(loadTransfers(), TRANSFERS[t.id]!)}
         {/if}

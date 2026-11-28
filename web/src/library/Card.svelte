@@ -16,6 +16,7 @@
   import MapIcon from '@lucide/svelte/icons/map';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
+  import Swords from '@lucide/svelte/icons/swords';
   import Workflow from '@lucide/svelte/icons/workflow';
   import { Popover } from 'bits-ui';
   import { tick } from 'svelte';
@@ -331,6 +332,9 @@
         {/if}
         {#if tells && key.length}
           <a class="btn sm" href={storyHref(table.name, key)} title="See where this {one} leads, as a map"><Workflow size={14} /> In Story</a>
+        {/if}
+        {#if table.name === 'Monsters' && key.length}
+          <a class="btn sm" href="#/workshop/fight/{key[0]}" title="Fight it with a character in the Combat lab"><Swords size={14} /> Fight it</a>
         {/if}
         <Popover.Root bind:open={more}>
           <Popover.Trigger class="btn sm icon ghost" aria-label="More for {one} {label}" title="More"><Ellipsis size={15} /></Popover.Trigger>

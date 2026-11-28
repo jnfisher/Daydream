@@ -330,7 +330,7 @@
       </div>
       <div class="row">
         <button type="button" class="btn sm" onclick={() => (seed = Math.floor(Math.random() * 2 ** 31))}><Dices size={14} /> Roll another round</button>
-        <span class="faint small">The attack each blow uses and how many its energy buys are the game's. Hits and misses are drawn at random here: in the game they depend on who it fights.</span>
+        <span class="faint small">The attack each blow uses and how many its energy buys are the game's. Hits and misses are drawn at random here: in the game they depend on who it fights, which the <a href="#/workshop/fight/{num(draft.get('Number'))}">Combat lab</a> plays.</span>
       </div>
     </div>
   {/if}
