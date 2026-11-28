@@ -273,6 +273,18 @@ pub fn silvermere_bin() -> Option<std::path::PathBuf> {
 /// Starts `bin serve` on `url` and waits until it listens for telnet, or panics with its
 /// output when it exits first or takes over a minute. `set` overrides config keys.
 pub fn serve(bin: &Path, url: &str, set: &[&str]) -> (Serving, tempfile::TempDir) {
+    let (s, d, _) = serve_admin(bin, url, set, None);
+    (s, d)
+}
+
+/// [`serve`] with `token` as its admin token (every scope, `SILVERMERE_ADMIN_TOKEN`), and
+/// where its admin API listens.
+pub fn serve_admin(
+    bin: &Path,
+    url: &str,
+    set: &[&str],
+    token: Option<&str>,
+) -> (Serving, tempfile::TempDir, Option<String>) {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
     let data = tempfile::tempdir().unwrap();
@@ -293,6 +305,9 @@ pub fn serve(bin: &Path, url: &str, set: &[&str]) -> (Serving, tempfile::TempDir
         .stderr(Stdio::piped());
     for s in set {
         cmd.args(["--set", s]);
+    }
+    if let Some(t) = token {
+        cmd.env("SILVERMERE_ADMIN_TOKEN", t);
     }
     let mut child = cmd
         .spawn()
@@ -318,7 +333,19 @@ pub fn serve(bin: &Path, url: &str, set: &[&str]) -> (Serving, tempfile::TempDir
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         match rx.recv_timeout(left) {
-            Ok(line) if line.contains("telnet listening") => return (serving, data),
+            Ok(line) if line.contains("telnet listening") => {
+                // the admin API's line comes next
+                let mut admin = None;
+                while let Ok(line) = rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                    if let Some(a) = line.split("admin listening on ").nth(1) {
+                        admin = Some(a.trim().to_string());
+                        break;
+                    }
+                }
+                // keep reading, so silvermere never blocks on a full pipe
+                std::thread::spawn(move || while rx.recv().is_ok() {});
+                return (serving, data, admin);
+            }
             Ok(line) => seen.push(line),
             Err(e) => panic!(
                 "silvermere did not start ({e:?}):\n{}",
@@ -326,4 +353,36 @@ pub fn serve(bin: &Path, url: &str, set: &[&str]) -> (Serving, tempfile::TempDir
             ),
         }
     }
+}
+
+/// One HTTP/1.1 call to silvermere's admin API at `addr`: the status and the JSON body.
+pub fn admin_call(
+    addr: &str,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> (u16, serde_json::Value) {
+    use std::io::{Read, Write};
+    let body = body.unwrap_or("");
+    let mut s = std::net::TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .unwrap();
+    write!(
+        s,
+        "{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut raw = String::new();
+    s.read_to_string(&mut raw).unwrap();
+    let status = raw.split(' ').nth(1).unwrap().parse().unwrap();
+    let text = raw.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+    // a chunked body: the JSON is the line between the sizes
+    let json = serde_json::from_str(text).unwrap_or_else(|_| {
+        text.lines()
+            .find_map(|l| serde_json::from_str(l).ok())
+            .unwrap_or(serde_json::Value::Null)
+    });
+    (status, json)
 }

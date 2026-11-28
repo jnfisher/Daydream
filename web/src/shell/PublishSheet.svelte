@@ -62,6 +62,10 @@
         return `Starting ${game} again`;
       case 'stop':
         return `Waiting for ${game} to stop`;
+      case 'hold':
+        return `${game} holds its saves`;
+      case 'reload':
+        return `${game} takes the new world`;
       case 'backup':
         return 'Backing up';
       case 'write':

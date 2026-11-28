@@ -327,7 +327,8 @@ export interface PublishStep {
   cancel?: boolean;
 }
 
-export type PublishWayId = 'update' | 'now';
+/** `live`: into a running silvermere, its saves held for a moment (no downtime). */
+export type PublishWayId = 'update' | 'now' | 'live';
 
 /** A way of publishing into the open world's game (`/api/publish`). */
 export interface PublishWay {
@@ -407,6 +408,8 @@ export interface GameControl {
   token_text?: string;
   players?: Player[] | null;
   planned?: { at: string; in_secs: number } | null;
+  /** It takes a publish while it runs (`/v1/world-hold`, silvermere 1.0.5 and later). */
+  holds?: boolean;
   /** What starts it again, when Daydream found it. */
   start?: { kind: 'systemd-user' | 'systemd' | 'launchd' | 'process'; command: string; can: boolean } | null;
   /** A publish starts it again. */

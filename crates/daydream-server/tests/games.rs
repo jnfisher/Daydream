@@ -984,7 +984,7 @@ async fn silvermere_is_published_and_started_again() {
     let src = tmp.path().join("src");
     daydream_store::realm::convert_dir(&vir, &src).unwrap();
     let install = tmp.path().join("games").join("silvermere");
-    let (token, admin_port) = silvermere_install(&bin, &install);
+    let (token, admin_port, telnet_port) = silvermere_install(&bin, &install);
     let url = daydream_silvermere::database_url(
         &install.join("data/silvermere.db").display().to_string(),
     );
@@ -1017,13 +1017,13 @@ async fn silvermere_is_published_and_started_again() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    publish_with_silvermere_running(&app, &bin, &install, &token, admin_port).await;
+    publish_with_silvermere_running(&app, &bin, &install, &token, admin_port, telnet_port).await;
 }
 
 /// A silvermere installation at `install`, as a sysop sets one up: `silvermere.toml` with an
 /// admin API on a free port and an admin token for Daydream, which `silvermere admin token
-/// new` made. The token, and the admin API's port.
-fn silvermere_install(bin: &Path, install: &Path) -> (String, u16) {
+/// new` made. The token, the admin API's port and the telnet port.
+fn silvermere_install(bin: &Path, install: &Path) -> (String, u16, u16) {
     std::fs::create_dir_all(install.join("data")).unwrap();
     let made = std::process::Command::new(bin)
         .current_dir(install)
@@ -1046,20 +1046,23 @@ fn silvermere_install(bin: &Path, install: &Path) -> (String, u16) {
     let block = &out[out
         .find("[[admin.tokens]]")
         .expect("the [[admin.tokens]] block")..];
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let free = || {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    };
+    let (port, telnet) = (free(), free());
     std::fs::write(
         install.join("silvermere.toml"),
         format!(
-            "[server]\ntelnet_bind = \"127.0.0.1:0\"\nadmin_bind = \"127.0.0.1:{port}\"\n\
+            "[server]\ntelnet_bind = \"127.0.0.1:{telnet}\"\nadmin_bind = \"127.0.0.1:{port}\"\n\
              web_bind = \"\"\n\n{block}"
         ),
     )
     .unwrap();
-    (token, port)
+    (token, port, telnet)
 }
 
 /// Whether silvermere's admin API at `port` answers.
@@ -1100,13 +1103,15 @@ impl Drop for Silvermere {
 /// With the silvermere game at `install` open in `app` and stopped: starts it in its folder
 /// as a sysop would, gives Daydream the admin token and lets it start silvermere again, then
 /// edits an item and publishes, and checks every step went through and silvermere answers
-/// again.
+/// again. A silvermere that takes a publish while it runs (1.0.5 and later) is first
+/// published into that way, with a telnet connection open that must stay open.
 async fn publish_with_silvermere_running(
     app: &axum::Router,
     bin: &Path,
     install: &Path,
     token: &str,
     admin_port: u16,
+    telnet_port: u16,
 ) {
     let log = std::fs::File::create(install.join("serve.log")).unwrap();
     let first = std::process::Command::new(bin)
@@ -1163,19 +1168,52 @@ async fn publish_with_silvermere_running(
     let (_, rows) = call(app, "GET", "/api/tables/Items/rows", None, None).await;
     let key = rows["rows"][0][0].clone();
     let uri = format!("/api/tables/Items/row?key={}", url_escape(&key.to_string()));
-    let (status, saved) = call(
-        app,
-        "PUT",
-        &uri,
-        Some(json!({"values": {"Name": "published sword"}})),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{saved}");
+    let edit = |name: &'static str| {
+        let uri = uri.clone();
+        async move {
+            let (status, saved) = call(
+                app,
+                "PUT",
+                &uri,
+                Some(json!({"values": {"Name": name}})),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{saved}");
+        }
+    };
+    edit("published sword").await;
+    let way_steps = |plan: &Value, id: &str| -> Vec<String> {
+        plan["ways"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["id"] == id)
+            .unwrap_or_else(|| panic!("no way {id}: {plan}"))["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let (_, plan) = call(app, "GET", "/api/publish", None, None).await;
+    if plan["control"]["holds"] == true {
+        assert_eq!(plan["way"], "live", "{plan}");
+        assert_eq!(
+            way_steps(&plan, "live"),
+            ["check", "hold", "backup", "write", "reload"],
+            "{plan}"
+        );
+        publish_live(app, install, telnet_port).await;
+        edit("published again").await;
+    } else {
+        eprintln!("this silvermere takes no publish while it runs (before 1.0.5)");
+    }
 
     let (_, plan) = call(app, "GET", "/api/publish", None, None).await;
     assert_eq!(
-        steps(&plan),
+        way_steps(&plan, "now"),
         ["check", "warn", "stop", "backup", "write", "start"],
         "{plan}"
     );
@@ -1220,6 +1258,76 @@ async fn publish_with_silvermere_running(
     let (_, changes) = call(app, "GET", "/api/changes", None, None).await;
     assert_eq!(changes["changes"], json!([]), "{changes}");
     drop(running);
+}
+
+/// Publishes into the running silvermere at `install` with a telnet connection open to it
+/// on `telnet_port`: the publish holds silvermere's saves, writes and reloads, silvermere
+/// is the same process throughout, and the connection stays open.
+async fn publish_live(app: &axum::Router, install: &Path, telnet_port: u16) {
+    use std::io::Read;
+    let lock = install.join("data/silvermere.db.lock");
+    let pid = || std::fs::read_to_string(&lock).unwrap_or_default();
+    let before = pid();
+    let mut telnet = std::net::TcpStream::connect(("127.0.0.1", telnet_port)).unwrap();
+    telnet
+        .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    // the greeting
+    let _ = telnet.read(&mut buf);
+
+    let (status, job) = call(
+        app,
+        "POST",
+        "/api/publish",
+        Some(json!({"way": "live"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    let started = std::time::Instant::now();
+    let job = loop {
+        let (_, job) = call(app, "GET", "/api/publish/job", None, None).await;
+        if job["state"] != "running" {
+            break job;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(120),
+            "the publish did not end: {job}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    assert_eq!(job["state"], "done", "{job}");
+    for step in job["steps"].as_array().unwrap() {
+        assert_eq!(step["state"], "done", "{job}");
+    }
+    assert!(
+        job["result"]
+            .as_str()
+            .unwrap()
+            .contains("nobody was disconnected"),
+        "{job}"
+    );
+    assert_eq!(pid(), before, "silvermere was not restarted");
+    // still connected: a read times out rather than finding the end
+    loop {
+        match telnet.read(&mut buf) {
+            Ok(0) => panic!("silvermere closed the connection during the publish: {job}"),
+            Ok(_) => continue,
+            Err(e) => {
+                assert!(
+                    matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ),
+                    "{e}"
+                );
+                break;
+            }
+        }
+    }
+    let (_, changes) = call(app, "GET", "/api/changes", None, None).await;
+    assert_eq!(changes["changes"], json!([]), "{changes}");
 }
 
 /// `text` made safe for a query string.

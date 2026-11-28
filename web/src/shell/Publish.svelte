@@ -76,6 +76,7 @@
         : `Daydream writes your changes into the game's files while ${plan.name} is stopped. It waits while you stop it, and carries on by itself.`;
     }
     if (db) return `${plan.name} writes its .db files as it runs, so you edit a copy while it plays. To publish, Daydream waits while you stop it, then writes each change onto the game's record as play left it.`;
+    if (way?.id === 'live') return 'silvermere keeps running: it holds its saves for a moment while Daydream writes its world from your working copy, then takes the new world in. Nobody is disconnected, and what play changed stays as it is.';
     if (warns) return 'silvermere warns its players and closes, Daydream writes its world from your working copy, and what play changed stays as it is.';
     return 'Daydream waits while silvermere stops, then writes its world from your working copy, keeping what play changed.';
   });

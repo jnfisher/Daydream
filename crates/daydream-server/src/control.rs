@@ -285,12 +285,23 @@ impl Admin {
     }
 
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, AdminError> {
+        self.call_within(method, path, body, Duration::from_secs(8))
+    }
+
+    /// [`Self::call`], waiting up to `within` for the answer.
+    fn call_within(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        within: Duration,
+    ) -> Result<Value, AdminError> {
         // silvermere listens on this machine: never through a proxy
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .proxy(None)
             .timeout_connect(Some(Duration::from_secs(2)))
-            .timeout_global(Some(Duration::from_secs(8)))
+            .timeout_global(Some(within))
             .build()
             .into();
         let url = format!("{}{path}", self.base);
@@ -372,6 +383,54 @@ impl Admin {
             "/v1/shutdown",
             Some(&json!({ "in_secs": in_secs, "message": message })),
         )
+    }
+
+    /// Whether this silvermere can hold its writes for a publish while it runs
+    /// (`/v1/world-hold`, silvermere 1.0.5 and later; `read`): an older one has no route.
+    pub fn holds(&self) -> Result<bool, AdminError> {
+        match self.call("GET", "/v1/world-hold", None) {
+            Ok(_) => Ok(true),
+            Err(AdminError::Refused(404 | 405, _)) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Holds silvermere's own writes for `secs` at most (`admin`); the hold's id. It answers
+    /// once everything silvermere had queued is written.
+    pub fn hold(&self, secs: u64) -> Result<String, AdminError> {
+        let v = self.call_within(
+            "POST",
+            "/v1/world-hold",
+            Some(&json!({ "secs": secs })),
+            Duration::from_secs(40),
+        )?;
+        v["hold"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| AdminError::Refused(200, "no hold id in the answer".into()))
+    }
+
+    /// Has silvermere reload its world, then ends the hold `id` (`admin`): the reload's
+    /// answer, `{"reloaded": {...}, "ms": t}`.
+    pub fn reload_held(&self, id: &str) -> Result<Value, AdminError> {
+        self.call_within(
+            "POST",
+            &format!("/v1/world-hold/{id}/reload"),
+            None,
+            Duration::from_secs(60),
+        )
+    }
+
+    /// Has silvermere take one of its own backups now (`admin`): `{"file": ..., ...}`, or
+    /// `backup_unavailable` when it takes none.
+    pub fn backup(&self) -> Result<Value, AdminError> {
+        self.call_within("POST", "/v1/backup", None, Duration::from_secs(120))
+    }
+
+    /// Ends the hold `id` with no reload (`admin`).
+    pub fn end_hold(&self, id: &str) -> Result<(), AdminError> {
+        self.call("DELETE", &format!("/v1/world-hold/{id}"), None)
+            .map(drop)
     }
 
     /// Calls off a planned shutdown (`admin`), telling the players; whether one was.
@@ -980,6 +1039,9 @@ pub struct Live {
     pub players: Option<Vec<Value>>,
     /// A shutdown planned already.
     pub planned: Option<Value>,
+    /// It can hold its writes while a publish writes its world, so it need not stop
+    /// (`/v1/world-hold`).
+    pub holds: bool,
     pub starter: Option<Starter>,
     /// Whether a publish starts it again.
     pub autostart: bool,
@@ -1010,6 +1072,7 @@ impl Live {
             },
             players: None,
             planned: None,
+            holds: false,
             starter: None,
             autostart: false,
         };
@@ -1021,6 +1084,7 @@ impl Live {
                         live.token = Token::Ok;
                         live.players = Some(players);
                         live.planned = admin.planned().ok().flatten();
+                        live.holds = admin.holds().unwrap_or(false);
                     }
                     Err(AdminError::Unauthorized) => live.token = Token::Unknown,
                     Err(AdminError::Forbidden) => live.token = Token::NoRead,
@@ -1042,6 +1106,11 @@ impl Live {
         self.admin
             .as_ref()
             .filter(|_| self.running.is_some() && self.answers && self.token.usable())
+    }
+
+    /// The admin API, when a publish can go in with silvermere running (`/v1/world-hold`).
+    pub fn holder(&self) -> Option<&Admin> {
+        self.stopper().filter(|_| self.holds)
     }
 
     /// Why Daydream cannot warn the players and stop silvermere now, while it may be
@@ -1130,6 +1199,7 @@ impl Live {
             "token_text": self.token_text(),
             "players": players,
             "planned": self.planned,
+            "holds": self.holds,
             "start": self.starter.as_ref().map(|s| json!({
                 "kind": s.kind(),
                 "command": s.command(),
@@ -1341,6 +1411,7 @@ mod tests {
             token,
             players: None,
             planned: None,
+            holds: false,
             starter: None,
             autostart: false,
         };
