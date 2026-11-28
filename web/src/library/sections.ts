@@ -46,7 +46,7 @@ export interface Section {
    * text block does, what players can type in a room, how the game reads a message). Its
    * fields and grid still say which columns it shows.
    */
-  custom?: 'attacks' | 'wired' | 'spawns' | 'script' | 'typed' | 'reads';
+  custom?: 'attacks' | 'wired' | 'spawns' | 'script' | 'typed' | 'reads' | PlayerPart;
   /** Two of its numbers drawn against its peers' (a weapon's Max Hit against its Speed). Both
    * must be among the list's columns. */
   scatter?: { x: string; y: string; xLabel?: string; yLabel?: string; note?: string };
@@ -55,6 +55,10 @@ export interface Section {
   /** Closed until opened. */
   folded?: boolean;
 }
+
+/** The Players place's own parts (players/parts.ts): where a user stands, their gang and bank
+ * books (or a bank book's owner), and a gang's members. */
+export type PlayerPart = 'whereabouts' | 'accounts' | 'members';
 
 /** A number a picker offers, by name. */
 export interface Choice {

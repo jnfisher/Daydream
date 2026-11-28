@@ -1,2 +1,0 @@
-// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
-import{Da as e,Ea as o,Ha as r}from"./chunk-M3NWVWO6.js";var t={name:"circle-exclamation-point",size:24,node:[["circle",{cx:"12",cy:"12",r:"10"}],["line",{x1:"12",x2:"12",y1:"8",y2:"12"}],["line",{x1:"12",x2:"12.01",y1:"16",y2:"16"}]],aliases:["alert-circle","circle-alert"]},_=t.node,l=new Set(["$$slots","$$events","$$legacy"]);function a(c,i){let n=e(i,l);r(c,o(()=>n,{get icon(){return t}}))}export{a};

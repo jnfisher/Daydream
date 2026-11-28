@@ -58,9 +58,14 @@
 
   // the parts only some records need come in the first time one is shown
   let parts = $state<typeof import('./parts') | null>(null);
+  // the Players place's own come in a chunk of their own
+  let mine = $state<typeof import('../players/parts') | null>(null);
+  const PLAYER_PARTS: (Section['custom'] & string)[] = ['whereabouts', 'accounts', 'members'];
+  const player = $derived(!!section.custom && PLAYER_PARTS.includes(section.custom));
   const scatter = $derived(open && section.scatter && peerRows.length ? section.scatter : null);
   $effect(() => {
-    if ((section.custom || scatter) && !parts) void import('./parts').then((m) => (parts = m));
+    if (player && !mine) void import('../players/parts').then((m) => (mine = m));
+    else if (((section.custom && !player) || scatter) && !parts) void import('./parts').then((m) => (parts = m));
   });
 
   const fields = $derived((section.fields ?? []).filter((f) => draft.has(f.col)));
@@ -85,7 +90,17 @@
       <span class="hint">{section.hint}</span>
     {/if}
   </header>
-  {#if open && section.custom}
+  {#if open && player}
+    {#if !mine}
+      <p class="faint">Getting it ready…</p>
+    {:else if section.custom === 'whereabouts'}
+      <mine.Whereabouts {draft} />
+    {:else if section.custom === 'accounts'}
+      <mine.Accounts {draft} {table} {rowKey} {version} />
+    {:else}
+      <mine.Members {draft} {rowKey} {version} />
+    {/if}
+  {:else if open && section.custom}
     {#if !parts}
       <p class="faint">Getting it ready…</p>
     {:else if section.custom === 'attacks'}

@@ -1,0 +1,2 @@
+// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
+import{Ea as o,Fa as e,Ia as t}from"./chunk-K52DVCBG.js";var p={name:"upload",size:24,node:[["path",{d:"M12 3v12"}],["path",{d:"m17 8-5-5-5 5"}],["path",{d:"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"}]]},l=p.node,d=new Set(["$$slots","$$events","$$legacy"]);function r(a,n){let s=o(n,d);t(a,e(()=>s,{get icon(){return p}}))}export{r as a};
