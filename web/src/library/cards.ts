@@ -20,6 +20,7 @@ import {
   type Options,
 } from '../layouts';
 import { monsterProblems, type Lines } from './combat';
+import { nameOf } from './names.svelte';
 import type { Problem } from './problems';
 import type { FieldSpec, Section } from './sections';
 
@@ -547,6 +548,226 @@ const TEXTBLOCKS: CardDef = {
   ],
 };
 
+// ---- the Players place's: users, gangs and bank books ----------------------------------
+
+/** A race's or class's name, by number, once the names are read. */
+const named = (table: string, v: Cell) => (num(v) ? nameOf(table, [num(v)]) || '' : '');
+/** What a user is, in a few words: `level 12 Half-Elf Warrior`. */
+const whatUser = (get: Get) => [`level ${num(get('Level'))}`, named('Races', get('Race')), named('Classes', get('Class'))].filter(Boolean).join(' ');
+/** What a user carries, in copper: a silver is 10, a gold 100, a platinum 10,000, a runic 1,000,000. */
+export const COIN_VALUE: [string, number][] = [['Runic', 1_000_000], ['Platinum', 10_000], ['Gold', 100], ['Silver', 10], ['Copper', 1]];
+export const coinsOf = (get: Get) => COIN_VALUE.reduce((n, [c, v]) => n + num(get(c)) * v, 0);
+const gangOf = (get: Get) => String(get('Gang') ?? '').trim();
+/** Level bands for the list's chips. */
+const BANDS: [string, number, number][] = [['Level 1–9', 1, 9], ['10–24', 10, 24], ['25–49', 25, 49], ['50+', 50, Infinity]];
+
+const USERS: CardDef = {
+  listCols: ['Race', 'Class', 'Level', 'Gang', 'Map Number', 'Room Number', 'Max HP', 'Max Mana', 'Lives', 'Runic', 'Platinum', 'Gold', 'Silver', 'Copper', 'Last Name'],
+  summary: (get) => [whatUser(get), gangOf(get)].filter(Boolean).join(' · '),
+  filters: (rows) => {
+    const out: Filter[] = BANDS.filter(([, lo, hi]) => rows.some((r) => num(r.get('Level')) >= lo && num(r.get('Level')) <= hi)).map(([l, lo, hi]) => ({
+      label: l,
+      test: (get: Get) => num(get('Level')) >= lo && num(get('Level')) <= hi,
+    }));
+    if (rows.some((r) => gangOf(r.get))) out.push({ label: 'In a gang', test: (get) => !!gangOf(get) });
+    // a chip for each class played, when there are only a few
+    const classes = [...new Set(rows.map((r) => num(r.get('Class'))))].filter(Boolean).sort((a, b) => a - b);
+    if (classes.length > 1 && classes.length <= 6)
+      for (const c of classes) out.push({ label: nameOf('Classes', [c]) || `Class ${c}`, test: (get) => num(get('Class')) === c });
+    return out;
+  },
+  peers: {
+    same: (mine, other) => num(other('Class')) === num(mine('Class')),
+    says: (mine) => `every ${named('Classes', mine('Class')) || 'user of the class'}`,
+  },
+  measures: ['Level', 'Max HP', 'Max Mana'],
+  tags: (get) => [`Level ${num(get('Level'))}`, named('Races', get('Race')), named('Classes', get('Class')), num(get('Lives')) === 0 ? 'No lives left' : ''],
+  problems: (get) => {
+    const out: Problem[] = [];
+    for (const [cur, max, what] of [['HP', 'Max HP', 'HP'], ['Mana', 'Max Mana', 'Mana'], ['Energy', 'Max Energy', 'Energy']] as const) {
+      if (num(get(cur)) > num(get(max)) && num(get(max)) > 0)
+        out.push({ level: 'warn', text: `${what} is ${fmt(get(cur))}, over its most (${fmt(get(max))}): the game brings it down on the next tick.`, cols: [cur], fix: { label: `Make it ${fmt(get(max))}`, set: { [cur]: String(num(get(max))) } } });
+    }
+    const gang = gangOf(get);
+    if (gang && nameOf('Gangs', [gang]) === null)
+      out.push({ level: 'warn', text: `Gang names ${gang}, which this world has no gang for.`, cols: ['Gang'], fix: { label: 'Take it out', set: { Gang: '' } } });
+    return out;
+  },
+  sections: [
+    {
+      id: 'who',
+      title: 'The character',
+      fields: [
+        F('First Name'),
+        F('Last Name'),
+        F('Title'),
+        F('Race'),
+        F('Class'),
+        F('Level', { strip: true }),
+        F('Exp Billions', 'Exp (billions)', { note: 'a billion each' }),
+        F('Exp'),
+        F('Lives'),
+        F('CP', 'CP to spend'),
+        F('Total CP'),
+        F('Evil Points'),
+      ],
+    },
+    {
+      id: 'stats',
+      title: 'Stats',
+      hint: 'base is what was rolled and trained; current, with what they wear',
+      matrix: {
+        headers: ['Base', 'Current'],
+        rows: [
+          { label: 'Strength', cols: ['Base STR', 'STR'] },
+          { label: 'Intellect', cols: ['Base INT', 'INT'] },
+          { label: 'Willpower', cols: ['Base WIL', 'WIL'] },
+          { label: 'Agility', cols: ['Base AGL', 'AGL'] },
+          { label: 'Health', cols: ['Base HEA', 'HEA'] },
+          { label: 'Charm', cols: ['Base CHM', 'CHM'] },
+        ],
+      },
+    },
+    {
+      id: 'body',
+      title: 'Health and mana',
+      fields: [
+        F('Max HP', { strip: true }),
+        F('HP', 'Current HP'),
+        F('HP Rolls', { note: 'rolled at each level' }),
+        F('HP Bonus'),
+        F('Max Mana', { strip: true }),
+        F('Mana', 'Current Mana'),
+        F('Mana Bonus'),
+        F('Max Energy'),
+        F('Energy'),
+        F('Max MR', 'Max M.R.'),
+        F('MR', 'M.R.'),
+        F('Poison', 'Poison flag'),
+      ],
+    },
+    {
+      id: 'skills',
+      title: 'Skills',
+      fields: [F('Perception'), F('Stealth'), F('Martial Arts'), F('Thievery'), F('Spellcasting'), F('Traps'), F('Disarm'), F('Picklocks'), F('Tracking')],
+    },
+    {
+      id: 'carrying',
+      title: 'Carrying',
+      fields: [F('Weapon', 'Weapon (readied)'), F('Max Weight', 'Max Enc.'), F('Weight', 'Current Enc.')],
+      grid: grid('Users', {
+        columns: [
+          { template: 'Item #', label: 'Item' },
+          { template: 'Item # Uses', label: 'Uses' },
+        ],
+        from: 0,
+        to: 99,
+      }),
+    },
+    {
+      id: 'worn',
+      title: 'Wearing',
+      grid: grid('Users', {
+        columns: [
+          { template: 'Worn #', label: 'Item' },
+          { template: 'Worn # Uses', label: 'Uses' },
+        ],
+        from: 0,
+        to: 19,
+      }),
+    },
+    {
+      id: 'keys',
+      title: 'Keys',
+      grid: grid('Users', {
+        columns: [
+          { template: 'Key #', label: 'Key' },
+          { template: 'Key # Uses', label: 'Uses' },
+        ],
+        from: 0,
+        to: 49,
+      }),
+    },
+    { id: 'spellbook', title: 'Spellbook', grid: grid('Users', { columns: [{ template: 'Spellbook #', label: 'Spell' }], from: 0, to: 99 }) },
+    {
+      id: 'cast',
+      title: 'Spells on them',
+      hint: 'what is cast on them now',
+      grid: grid('Users', {
+        columns: [
+          { template: 'Spell Cast #', label: 'Spell' },
+          { template: 'Spell Cast # Value', label: 'Value' },
+          { template: 'Spell Cast # Rounds', label: 'Rounds Left' },
+        ],
+        from: 0,
+        to: 9,
+      }),
+    },
+    {
+      id: 'abilities',
+      title: 'Abilities',
+      grid: { columns: [{ template: 'Ability #', label: 'Ability', pick: { abilities: true } }, { template: 'Ability # Value', label: 'Value' }], from: 0, to: 29 },
+    },
+    {
+      id: 'here',
+      title: 'Where they are',
+      side: true,
+      custom: 'whereabouts',
+      fields: [F('Map Number', 'Current Map'), F('Room Number', 'Current Room')],
+      grid: { columns: [{ template: 'Trail # Map', label: 'Map' }, { template: 'Trail # Room', label: 'Room' }], from: 0, to: 19 },
+    },
+    {
+      id: 'coins',
+      title: 'Coins',
+      side: true,
+      fields: [F('Runic'), F('Platinum'), F('Gold'), F('Silver'), F('Copper')],
+    },
+    {
+      id: 'account',
+      title: 'Gang and bank',
+      side: true,
+      custom: 'accounts',
+      fields: [F('Gang')],
+    },
+    {
+      id: 'login',
+      title: 'Account',
+      side: true,
+      folded: true,
+      fields: [F('Broadcast Channel', 'BC Channel'), F('Suicide Password'), F('Edited', { note: 'set when a sysop edits them' })],
+    },
+  ],
+};
+
+const GANGS: CardDef = {
+  listCols: ['Leader', 'Members', 'Base Exp'],
+  summary: (get) => `${num(get('Members'))} member${num(get('Members')) === 1 ? '' : 's'} · led by ${String(get('Leader') ?? '').trim() || 'no one'}`,
+  tags: (get) => [`${num(get('Members'))} member${num(get('Members')) === 1 ? '' : 's'}`],
+  sections: [
+    {
+      id: 'gang',
+      title: 'The gang',
+      fields: [F('Display Name'), F('Leader', { note: 'their BBS name' }), F('Members', { note: 'as the game counts them' }), F('Date Created')],
+    },
+    { id: 'exp', title: 'Experience', fields: [F('Base Exp'), F('Roll Over Exp'), F('Times Rolled')] },
+    { id: 'members', title: 'Who is in it', side: true, custom: 'members' },
+  ],
+};
+
+const BANKBOOKS: CardDef = {
+  listCols: ['Amount', 'Loan'],
+  summary: (get) => `${fmt(get('Amount'))} copper${num(get('Loan')) ? ` · owes ${fmt(get('Loan'))}` : ''}`,
+  sections: [
+    {
+      id: 'book',
+      title: 'The account',
+      hint: 'amounts in copper',
+      fields: [F('Amount', 'Balance'), F('Loan', 'Owed')],
+    },
+    { id: 'who', title: 'Whose it is', side: true, custom: 'accounts' },
+  ],
+};
+
 export const CARDS: Record<string, CardDef> = {
   Items: ITEMS,
   Monsters: MONSTERS,
@@ -557,6 +778,9 @@ export const CARDS: Record<string, CardDef> = {
   Races: RACES,
   Messages: MESSAGES,
   Textblocks: TEXTBLOCKS,
+  Users: USERS,
+  Gangs: GANGS,
+  BankBooks: BANKBOOKS,
 };
 
 // fields pick as fields.json says, unless a card says otherwise

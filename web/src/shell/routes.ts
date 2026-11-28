@@ -43,7 +43,7 @@ const PLACES: Record<string, Place> = {
 export function parse(hash: string, tables: TableInfo[]): Route {
   const [path = '', query = ''] = hash.split('?');
   const r = parsePath(path, tables);
-  return r.place === 'library' && !r.key && r.table && query.split('&').includes('grid') ? { ...r, view: 'grid' } : r;
+  return (r.place === 'library' || r.place === 'players') && !r.key && r.table && query.split('&').includes('grid') ? { ...r, view: 'grid' } : r;
 }
 
 function parsePath(hash: string, tables: TableInfo[]): Route {

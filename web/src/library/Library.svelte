@@ -3,8 +3,9 @@
   or number, narrowed by chips, what changed since publishing dotted), the open record's card
   on the right (Card.svelte), or the whole table as a spreadsheet grid (Grid.svelte). The frame routes here with `show`, and `[` and `]` step through
   the list as NMR's arrows do. On a phone the card is the page and the list a sheet at its
-  foot, which steps through the records and rises to find one. Users, gangs and bank books
-  are the Players place's.
+  foot, which steps through the records and rises to find one. The Players place is a second
+  one of these, over users, gangs and bank books (`place`), its Users list opening on who
+  plays (players/Roster.svelte).
 -->
 <svelte:options css="injected" />
 
@@ -31,14 +32,18 @@
   import { found, keyLabel, listRow, nextKey, type ListRow } from './list';
   import NewRecord from './NewRecord.svelte';
 
+  let { place = 'library' }: { place?: 'library' | 'players' } = $props();
+  const players = $derived(place === 'players');
+  /** Its tables, in NMR's menu order (the Players place's: users, gangs, bank books). */
+  const ORDER = $derived(players ? ['Users', 'Gangs', 'BankBooks'] : TABLE_ORDER);
+
   /** The chip that shows only what changed since publishing. */
   const CHANGED = 'Changed';
 
-  /** The Library's tables, in NMR's menu order. */
   const tables = $derived(
     app.tables
-      .filter((t) => !PLAYER_TABLES.includes(t.name))
-      .sort((a, b) => (TABLE_ORDER.indexOf(a.name) + 1 || 99) - (TABLE_ORDER.indexOf(b.name) + 1 || 99)),
+      .filter((t) => PLAYER_TABLES.includes(t.name) === players)
+      .sort((a, b) => (ORDER.indexOf(a.name) + 1 || 99) - (ORDER.indexOf(b.name) + 1 || 99)),
   );
 
   let table = $state.raw<TableInfo | null>(null);
@@ -73,6 +78,11 @@
   $effect(() => {
     if (grid && !Grid) void import('./Grid.svelte').then((m) => (Grid = m.default));
   });
+  // the Players place opens on who plays: its code loads the first time it is shown
+  let Roster = $state<typeof import('../players/Roster.svelte').default | null>(null);
+  $effect(() => {
+    if (players && !Roster) void import('../players/Roster.svelte').then((m) => (Roster = m.default));
+  });
   /** Our own writes: the list need not be read again for them. */
   let writing = false;
   /** Something else wrote: the list is read again when next shown. */
@@ -86,8 +96,9 @@
   const many = $derived(k.many.toLowerCase());
   const numeric = $derived(table ? table.key.map((c) => table!.columns.find((x) => x.name === c)?.type !== 'text') : []);
   const open = $derived(key ? keyLabel(key) : '');
-  /** A table keyed by a word (an action): the word is its name in the list. */
-  const worded = $derived(numeric.length === 1 && !numeric[0]);
+  /** A table keyed by a word (an action): the word is its name in the list. (A user or gang
+   * is listed by its name, its BBS or key name beside it.) */
+  const worded = $derived(numeric.length === 1 && !numeric[0] && !def?.summary);
 
   const filters = $derived(def?.filters && rows.length ? def.filters(rows) : []);
   const changed = $derived(new Set((app.changes?.changes ?? []).filter((c) => c.nmr === table?.name && c.key).map((c) => keyLabel(c.key!))));
@@ -249,7 +260,7 @@
   }
 
   /** The link of what the Library shows now. */
-  export const here = (): string => (!table ? '#/library' : grid ? gridHref(table.name) : recordHref(table.name, key));
+  export const here = (): string => (!table ? `#/${place}` : grid ? gridHref(table.name) : recordHref(table.name, key));
 
   /** The previous (-1) or next (1) record in the list, as NMR's arrows step. */
   export function step(by: number): void {
@@ -364,6 +375,8 @@
    */
   async function ownMessage(e: Event) {
     const { table: tn, key: k, number } = (e as CustomEvent<{ table: string; key?: Cell[]; number: number }>).detail;
+    // the Library and Players each listen: the one shown answers
+    if (app.route.place !== place) return;
     if (!k?.length || !(number > 0)) return;
     const open = table?.name === tn && draft?.row && keyLabel(draft.row.key) === keyLabel(k);
     if (open && draft?.dirty && !(await save())) return;
@@ -396,7 +409,7 @@
         browsing = false;
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's' && app.route.place === 'library' && draft) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's' && app.route.place === place && draft) {
         e.preventDefault();
         void save();
       }
@@ -407,7 +420,7 @@
     // an undo or a take-back changed records under the Library: read them again
     const realm = () => {
       if (!table) return;
-      if (app.route.place !== 'library') {
+      if (app.route.place !== place) {
         stale = true;
         return;
       }
@@ -564,6 +577,8 @@
       </div>
     {:else if table && key}
       <p class="pad faint">Reading {one} {open}…</p>
+    {:else if table?.name === 'Users' && !grid}
+      {#if Roster}<Roster {rows} {reading} />{:else}<p class="pad faint">Gathering the players…</p>{/if}
     {:else if table}
       <div class="empty">
         <Mascot mood="dream" size={84} />
@@ -614,7 +629,7 @@
   .li .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .li i.nm { font-weight: 700; }
   .li .sum { font-size: 11.5px; color: var(--ink-3); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .li .n { font: 600 11px var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .li .n { font: 600 11px var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lib-main { overflow: auto; min-width: 0; min-height: 0; }
   .pad { padding: 14px; margin: 0; }
   .bad { color: var(--bad); font-weight: 700; }

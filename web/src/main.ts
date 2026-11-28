@@ -1,14 +1,13 @@
 // Daydream's web UI: the frame (the top bar, the rail of places, the Ctrl+K palette, the
-// inspector and the toasts) around the places. Home, the World map, the Library, Story, the
-// Workshop, Worlds and Publish are the frame's own; Players' editor and the old map
-// (#/map-classic) are today's pages, shown inside it until the redesign reaches each one.
+// inspector and the toasts) around the places. Home, the World map, the Library, Story,
+// Players, the Workshop, Worlds and Publish are the frame's own; the old map (#/map-classic)
+// is today's page, shown inside it.
 
 import './styles/tokens.css';
 import './styles/base.css';
 import './styles/legacy.css';
 import { mount } from 'svelte';
 import { api } from './api';
-import * as editor from './editor';
 import { games } from './games';
 import { mapPage } from './map';
 import Home from './shell/Home.svelte';
@@ -44,7 +43,10 @@ const SECTION: Record<Place, string> = {
 
 let theMap: ReturnType<typeof mapPage> | null = null;
 let world: { show: (rest: string[], fresh: boolean) => Promise<void> } | null = null;
-let library: { show: (r: Route) => Promise<boolean>; here: () => string; step: (by: number) => void } | null = null;
+type Records = { show: (r: Route) => Promise<boolean>; here: () => string; step: (by: number) => void };
+let library: Records | null = null;
+/** The Players place: the Library's list and cards over users, gangs and bank books. */
+let players: Records | null = null;
 let worlds: { load: (refresh?: boolean) => Promise<void> } | null = null;
 let story: { show: (rest: string[]) => void } | null = null;
 let workshop: { show: (rest: string[]) => void } | null = null;
@@ -94,12 +96,13 @@ async function route() {
     r = parse(left[r.place]!, app.tables);
   }
   const was = last;
-  if (r.place === 'library' && !library) {
-    // the Library's code loads the first time it is opened
+  if ((r.place === 'library' && !library) || (r.place === 'players' && !players)) {
+    // the Library's code loads the first time it (or Players) is opened
     const { default: Library } = await import('./library/Library.svelte');
-    library ??= mount(Library, { target: $('library') });
+    if (r.place === 'library') library ??= mount(Library, { target: $('library') });
+    else players ??= mount(Library, { target: $('players'), props: { place: 'players' } });
   }
-  const records = r.place === 'library' ? library : r.place === 'players' ? { show: editor.showRoute, here: editor.here } : null;
+  const records = r.place === 'library' ? library : r.place === 'players' ? players : null;
   if (records) {
     if (!(await records.show(r))) {
       // unsaved edits kept: the address goes back to them
@@ -220,7 +223,7 @@ function keys(e: KeyboardEvent) {
   }
   if ((e.key === '[' || e.key === ']') && (app.route.place === 'library' || app.route.place === 'players')) {
     e.preventDefault();
-    (app.route.place === 'library' ? library : editor)?.step(e.key === '[' ? -1 : 1);
+    (app.route.place === 'library' ? library : players)?.step(e.key === '[' ? -1 : 1);
   }
 }
 
@@ -242,7 +245,6 @@ async function start() {
     app.current = listing.current;
     if (listing.current) {
       app.tables = await api.tables();
-      editor.start(app.tables);
       loadRecent();
       void refreshNow();
       void refreshStatus();

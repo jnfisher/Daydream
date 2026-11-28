@@ -352,7 +352,22 @@ or a blank placeholder message players would read. **Compare** puts the record b
 three most like it (a weapon among its weapon type and a monster among its group, by their
 numbers; a room beside the rooms next to it), field by field under the card's headings, the
 values that differ in yellow; a click copies one across, and any record of the table can be
-added. Players keep today's editor for now.
+added.
+
+**Players** is the Library over users, gangs and bank books: the same list, cards, grid and
+undo. It opens on who plays the world: how many users, gangs and bank books, who is in the
+game now (on silvermere), the highest levels, the classes and races played, the gangs by size,
+who carries the most coin and who has no lives left. Users are listed by name, their BBS name
+beside it, and narrowed by level, gang or (when only a few are played) class. A user's card
+groups their character, stats (base and current), health and mana, skills, what they carry,
+wear and keep on their key ring, their spellbook and the spells on them, where they stand
+(the room by name, **On the map**, and their trail), coins, their gang (and whether they lead
+it) and their bank books; a gang's card lists who is in it, its leader crowned, and fixes a
+member count the users don't agree with. NMR's user tools are in a user's ⋯ menu: **Revive**,
+**Paste stats**, **Paste inventory**, **Paste spellbook**, **Import** and **Export** a
+character, and **Copy to another BBS name**. The pastes and the import fill the card, to be
+saved as any edit; Revive and Copy write at once, and Undo takes them back. An item's card
+already says who carries or wears it, under where it is in the world.
 
 **Story** lists the monsters that talk and the rooms players type in (an exit's words, the
 room's commands), found by name or number. One opens as a map of its story, with a link of its
