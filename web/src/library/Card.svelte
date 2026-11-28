@@ -2,7 +2,8 @@
   A record's card: who it is (its kind, number and name, the words for what it is, and what
   changed since the world was last published), then its fields grouped by what they are for
   (cards.ts), or NMR's own tabs ("All fields"). Save, Discard, copy it to a new record or
-  delete it: the Library (Library.svelte) does the writing.
+  delete it: the Library (Library.svelte) does the writing. A user's card has NMR's user tools
+  in its ⋯ menu (players/UserTools.svelte).
 -->
 <svelte:options css="injected" />
 
@@ -16,6 +17,7 @@
   import MapIcon from '@lucide/svelte/icons/map';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Undo2 from '@lucide/svelte/icons/undo-2';
+  import UserCog from '@lucide/svelte/icons/user-cog';
   import Workflow from '@lucide/svelte/icons/workflow';
   import { Popover } from 'bits-ui';
   import { tick } from 'svelte';
@@ -38,6 +40,7 @@
   import Problems from './Problems.svelte';
   import { linesOf } from './records.svelte';
   import { complete, fromLayout, type Section } from './sections';
+  import type { UserTool } from '../players/users';
 
   let {
     draft,
@@ -117,6 +120,29 @@
       `${one} ${label}`,
     );
   }
+
+  // NMR's user tools: their code loads the first time one is picked
+  const user = $derived(table.name === 'Users');
+  let tool = $state<UserTool | null>(null);
+  let Tools = $state<typeof import('../players/UserTools.svelte').default | null>(null);
+  function useTool(t: UserTool) {
+    more = false;
+    if (Tools) tool = t;
+    else void import('../players/UserTools.svelte').then((m) => {
+      Tools = m.default;
+      tool = t;
+    });
+  }
+  const USER_TOOLS: [UserTool, string, string][] = [
+    ['revive', 'Revive…', 'HP and mana to full; lives, spells and where they stand as you choose'],
+    ['stats', 'Paste stats…', 'A capture of the stat output, into the card'],
+    ['items', 'Paste inventory…', 'Items, keys, worn and coins, from a capture of i'],
+    ['spells', 'Paste spellbook…', 'From a capture of spells'],
+    ['import', 'Import a character…', "NMR's character text, into the card"],
+    ['export', 'Export the character', "As NMR's character text"],
+    ['copy', 'Copy to another BBS name…', 'NMR’s Copy User'],
+  ];
+  const userMap = $derived(user ? [Number(draft.get('Map Number')) || 0, Number(draft.get('Room Number')) || 0] : [0, 0]);
 
   let deleting = $state(false);
   let comparing = $state(false);
@@ -310,6 +336,7 @@
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
+        {#if !user}
         <NewRecord
           {table}
           offer={() => nextKey(table.name, numeric, rows, key)}
@@ -321,6 +348,7 @@
         >
           <Copy size={14} /> Copy
         </NewRecord>
+        {/if}
         {#if numeric.every(Boolean) && rows.length > 1 && table.name !== 'Textblocks'}
           <button type="button" class="btn sm" onclick={() => (comparing = true)} title="Put this {one} beside the most like it, the differences marked">
             <GitCompare size={14} /> Compare
@@ -328,6 +356,8 @@
         {/if}
         {#if table.name === 'Rooms'}
           <a class="btn sm" href="#/world/{key[0]}/{key[1]}" title="Open the map at this room"><MapIcon size={14} /> On the map</a>
+        {:else if user && userMap[0]! > 0 && userMap[1]! > 0}
+          <a class="btn sm" href="#/world/{userMap[0]}/{userMap[1]}" title="Open the map at the room they stand in"><MapIcon size={14} /> On the map</a>
         {/if}
         {#if tells && key.length}
           <a class="btn sm" href={storyHref(table.name, key)} title="See where this {one} leads, as a map"><Workflow size={14} /> In Story</a>
@@ -336,6 +366,14 @@
           <Popover.Trigger class="btn sm icon ghost" aria-label="More for {one} {label}" title="More"><Ellipsis size={15} /></Popover.Trigger>
           <Popover.Portal>
             <Popover.Content class="pop more-pop" sideOffset={6} align="end" collisionPadding={8}>
+              {#if user}
+                {#each USER_TOOLS as [t, label, sub] (t)}
+                  <button type="button" class="menu-item" onclick={() => useTool(t)}>
+                    <UserCog size={14} />
+                    <span>{label}<span class="sub">{sub}</span></span>
+                  </button>
+                {/each}
+              {/if}
               {#if renumberHref}
                 <a class="menu-item" href={renumberHref} onclick={() => (more = false)}>
                   <ArrowRightLeft size={14} />
@@ -378,6 +416,9 @@
     {/if}
   </header>
 
+  {#if Tools && user}
+    <Tools bind:tool {draft} {table} />
+  {/if}
   {#if comparing}
     <Compare bind:open={comparing} {draft} {table} {rows} sections={checked} {def} />
   {/if}

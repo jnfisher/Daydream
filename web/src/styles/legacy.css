@@ -1,4 +1,4 @@
-/* Today's pages (Players' record editor, the Quest Organizer, the old map) inside the new
+/* Today's pages (the Quest Organizer, the old map) inside the new
    frame. They keep their markup; their old colour names map onto the tokens, so they follow
    the theme. Each page is replaced as the redesign reaches it. */
 :root {
@@ -10,54 +10,23 @@
   --accent-text: var(--on-pastel);
 }
 
-/* Players' record editor: a table's rows on the left, the record on the right */
-#players { display: flex; flex-direction: column; overflow: hidden; }
-#players > main { flex: 1; display: grid; grid-template-columns: minmax(14rem, 22rem) 1fr; min-height: 0; }
-#players aside { display: flex; flex-direction: column; border-right: 1px solid var(--line); min-height: 0; background: var(--surface); }
-#filter { margin: .6rem .6rem .3rem; padding: .4rem .7rem; width: auto; border-radius: 999px; }
-#count { color: var(--ink-3); font-size: .8rem; font-weight: 700; padding: 0 .9rem .35rem; }
-#rows { list-style: none; margin: 0; padding: 0 .4rem .6rem; overflow: auto; flex: 1; }
-#rows li { padding: .2rem .5rem; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 8px; font-weight: 600; }
-#rows li:hover { background: var(--surface-2); }
-#rows li.selected { background: var(--select); color: var(--ink); box-shadow: inset 3px 0 0 var(--lilac); }
-#rows .key { display: inline-block; min-width: 3.5em; color: var(--ink-3); font: 600 12px var(--font-mono); font-variant-numeric: tabular-nums; }
-#editor { overflow: auto; padding: 1rem clamp(.9rem, 2vw, 1.6rem) 3rem; min-width: 0; }
-#editor h2 { font-size: 1.35rem; margin: 0 0 .6rem; }
+/* The old record editor's rules, which the old map, the Quest Organizer and a few of the new places' classes (.tabs,
+   .fields, .field, .empty) still pick up */
 .empty { color: var(--ink-2); }
 .toolbar { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; margin-bottom: .9rem; }
-#dirty { color: var(--warn); font-size: .85rem; font-weight: 800; margin-left: .5rem; }
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); margin-bottom: .9rem; width: fit-content; max-width: 100%; }
 .tabs button { min-height: 28px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2); box-shadow: none; }
 .tabs button.active { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line-2), 0 1px 0 var(--line-2); }
 .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .4rem 1.25rem; }
 .field { display: grid; grid-template-columns: 9.5rem 1fr; align-items: center; gap: .5rem; }
 .field.wide { grid-column: 1 / -1; grid-template-columns: 9.5rem 1fr; }
-.label { color: var(--ink-2); text-align: right; font-size: .85rem; font-weight: 800; }
-.control { display: flex; align-items: center; gap: .4rem; min-width: 0; }
-.control > :is(input, select, textarea) { width: 100%; }
 textarea { font-family: var(--font-mono); font-size: 13px; }
 input.number { width: 7rem; flex: none; font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
 input:disabled { opacity: .7; }
 .changed { background: var(--changed) !important; border-color: var(--butter) !important; }
-.pick-name { color: var(--ink-2); font-size: .85rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-table.grid { border-collapse: collapse; }
-table.grid th { text-align: left; font: 800 11px/1.2 var(--font-ui); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
-table.grid td { padding: .15rem .5rem; }
-table.grid td.n { color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) {
-  #players > main { grid-template-columns: 1fr; grid-template-rows: 36vh 1fr; }
-  #players aside { border-right: none; border-bottom: 1px solid var(--line); }
   .field, .field.wide { grid-template-columns: 1fr; }
-  .label { text-align: left; }
 }
-.matrix, .fields + table.grid { margin-top: .75rem; }
-.tab-body { overflow-x: auto; }
-table.grid select { width: auto; min-width: 8rem; }
-table.grid input.number { width: 5.5rem; }
-table.grid .pick-name { max-width: 14rem; }
-table.grid.across .control { flex-direction: column; align-items: flex-start; gap: 0; }
-table.grid.across .pick-name { max-width: 9rem; }
-.preview-label { color: var(--muted); font-size: .85rem; margin: 1rem 0 .25rem; }
 pre.terminal { background: var(--term-bg); color: var(--term-fg); font: 14px/1.25 var(--font-mono); padding: .7rem .9rem; margin: 0; width: max-content; min-width: min(100%, 82ch); max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: var(--r); border: var(--stroke) solid var(--term-frame); }
 .tool { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1rem 1.15rem 1.15rem; }
 .tool h2 { font-size: 1.15rem; margin: 0 0 .3rem; }
@@ -117,23 +86,6 @@ pre.terminal { background: var(--term-bg); color: var(--term-fg); font: 14px/1.2
 .map-pad button.has-exit { border-color: var(--accent); color: var(--accent); }
 .map-build-form .num { width: 5rem; }
 .map-build-form label { margin-right: .75rem; }
-
-/* NMR's Paste Character */
-dialog.paste-dialog { border: var(--stroke) solid var(--outline); border-radius: 20px; background: var(--surface); color: var(--ink); box-shadow: 0 5px 0 var(--shadow), var(--float); padding: 1.1rem 1.25rem; }
-dialog.paste-dialog::backdrop { background: color-mix(in srgb, var(--ink) 26%, transparent); backdrop-filter: blur(3px); }
-.paste-dialog textarea {
-  width: min(70ch, 80vw);
-}
-.import-boxes {
-  display: grid;
-  grid-template-columns: repeat(2, auto);
-  gap: 0.25rem 1.5rem;
-  margin-top: 0.5rem;
-}
-.paste-dialog label.choose {
-  display: block;
-  margin: 0.25rem 0;
-}
 
 /* the sign-in page (/login), when Daydream runs with an access token */
 main.login { display: block; max-width: 24rem; margin: 15vh auto 0; padding: 1.5rem; background: var(--surface); border: var(--stroke) solid var(--outline); border-radius: 20px; box-shadow: 0 5px 0 var(--shadow), var(--float); }

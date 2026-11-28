@@ -1,2 +1,0 @@
-// Built from web/src by `npm run build` in web/. Do not edit. Licenses: /notices.txt
-import{Da as e,Ea as c,Ha as o}from"./chunk-M3NWVWO6.js";var r={name:"circle-check",size:24,node:[["circle",{cx:"12",cy:"12",r:"10"}],["path",{d:"m16 9-5.5 5.5L8 12"}]],aliases:["check-circle-2"]},d=r.node,i=new Set(["$$slots","$$events","$$legacy"]);function t(s,p){let n=e(p,i);o(s,c(()=>n,{get icon(){return r}}))}export{t as a};
