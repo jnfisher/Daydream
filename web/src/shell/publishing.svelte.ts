@@ -2,6 +2,7 @@
 // last finished. The job runs on the server; this asks how it goes until it ends, wherever the
 // person is in the app, so the top bar's Publish button and the Publish page agree.
 
+import CirclePause from '@lucide/svelte/icons/circle-pause';
 import Clock from '@lucide/svelte/icons/clock';
 import Database from '@lucide/svelte/icons/database';
 import FileText from '@lucide/svelte/icons/file-text';
@@ -10,6 +11,7 @@ import HeartPulse from '@lucide/svelte/icons/heart-pulse';
 import Megaphone from '@lucide/svelte/icons/megaphone';
 import Play from '@lucide/svelte/icons/play';
 import Power from '@lucide/svelte/icons/power';
+import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 import { api, type PublishJob, type PublishPlan, type PublishStep, type PublishWarn, type PublishWayId } from '../api';
 import { sfx } from './prefs.svelte';
 import { app, refreshNow, refreshStatus } from './state.svelte';
@@ -54,6 +56,10 @@ export function stepIcon(step: PublishStep, way: PublishWayId): typeof Power {
       return way === 'update' ? FileText : Database;
     case 'start':
       return Play;
+    case 'hold':
+      return CirclePause;
+    case 'reload':
+      return RefreshCw;
     default:
       return Clock;
   }

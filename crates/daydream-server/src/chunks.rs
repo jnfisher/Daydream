@@ -14,7 +14,7 @@ pub(crate) fn get(name: &str) -> Option<&'static str> {
         "ShowMenu-FBPAMCWM.js" => include_str!("chunks/ShowMenu-FBPAMCWM.js"),
         "Story-VTCAZBOK.js" => include_str!("chunks/Story-VTCAZBOK.js"),
         "UserTools-LKUMXF4U.js" => include_str!("chunks/UserTools-LKUMXF4U.js"),
-        "Workshop-JXVLJTQG.js" => include_str!("chunks/Workshop-JXVLJTQG.js"),
+        "Workshop-44THKPKE.js" => include_str!("chunks/Workshop-44THKPKE.js"),
         "World-6QWHUMUF.js" => include_str!("chunks/World-6QWHUMUF.js"),
         "WorldView-64SBWAZI.js" => include_str!("chunks/WorldView-64SBWAZI.js"),
         "chunk-2DCTWDA5.js" => include_str!("chunks/chunk-2DCTWDA5.js"),

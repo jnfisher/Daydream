@@ -8,7 +8,8 @@
 //! | Worldgroup, The Major BBS (`WCC*.DAT`) | `update`: at the next start | check, back up, write the update file, live at the next start or cleanup |
 //! | | `now`: with the game stopped | check, stop the game (Daydream waits), back up, write, start it again |
 //! | MBBSEmu (`WCC*.db`) | `now`: with the game stopped | check, stop it (Daydream waits), back up, write its `.db` files, start it again |
-//! | silvermere | `now` | check, warn the players (with an admin token), stop silvermere (Daydream waits for its writer lock), back up, write, start it again |
+//! | silvermere | `live`: while it runs (silvermere 1.0.5+, an admin token) | check, hold silvermere's saves, back up, write, silvermere reloads its world and saves again |
+//! | | `now` | check, warn the players (with an admin token), stop silvermere (Daydream waits for its writer lock), back up, write, start it again |
 //!
 //! A realm folder with no game, edited where it is, has nothing to publish.
 //!
@@ -31,6 +32,13 @@
 //! silvermere again the way it was started, then waits until it answers. Without a token
 //! the sysop stops it, and Daydream still starts it again. A silvermere that was not running
 //! stays stopped. One publish runs at a time, in the background, and the page follows it.
+//!
+//! A silvermere that can hold its writes (`/v1/world-hold`, 1.0.5 and later) needs no stop
+//! at all: Daydream has it hold its saves (play goes on; what it changes waits a moment in
+//! its queue), writes the world under that hold, and has it reload the world, which ends
+//! the hold. Nobody is disconnected, and what play changes (items in play, kills, stock, a
+//! gang shop's slots) stays as the running game has it. That is the first way offered
+//! whenever it can be taken.
 //!
 //! | Route | Answer |
 //! |---|---|
@@ -181,9 +189,13 @@ impl Engine {
         }
     }
 
-    fn ways(&self) -> &'static [Way] {
+    /// The ways into the game; `live`: silvermere as it is now.
+    fn ways(&self, live: Option<&Live>) -> &'static [Way] {
         match self {
             Self::Wcc { .. } => &[Way::Update, Way::Now],
+            Self::Silvermere { .. } if live.is_some_and(|l| l.holder().is_some()) => {
+                &[Way::Live, Way::Now]
+            }
             Self::Db { .. } | Self::Silvermere { .. } => &[Way::Now],
             Self::InPlace => &[],
         }
@@ -206,6 +218,8 @@ pub enum Way {
     Update,
     /// Into the game's files, with the game stopped.
     Now,
+    /// Into silvermere's database while it runs, its writes held: no downtime.
+    Live,
 }
 
 /// One step, as the page lists it and the job runs it.
@@ -348,6 +362,36 @@ fn steps(engine: &Engine, way: Way, update: bool, live: Option<&Live>) -> Vec<St
                 "start",
                 format!("Start {name} again"),
                 "Start it the way you usually do.",
+            ),
+        ],
+        (Engine::Silvermere { url }, Way::Live) => vec![
+            check,
+            step(
+                "hold",
+                "Hold silvermere's saves",
+                "silvermere writes what it has queued, then holds its saves: the players play \
+                 on, and what they change waits a moment to be saved.",
+            ),
+            step(
+                "backup",
+                "Back up",
+                if daydream_silvermere::sqlite_path(url).is_some() {
+                    "The database is copied, as it is now, to a daydream-backup folder beside it."
+                } else {
+                    "silvermere takes one of its own backups, when it is set up to."
+                },
+            ),
+            step(
+                "write",
+                "Write the world",
+                "The world's tables are written from the working copy. Players, what lies on \
+                 the floors and the rest of what play changed stay as they are.",
+            ),
+            step(
+                "reload",
+                "silvermere takes the new world",
+                "silvermere reads its world again between two moves, with nobody disconnected, \
+                 and saves what waited.",
             ),
         ],
         (Engine::Silvermere { url }, _) => {
@@ -594,6 +638,16 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
                      publishing waits for you to stop it.",
                     engine.name()
                 ),
+                (_, Some(l)) if l.holder().is_some() => match l.players.as_ref().map(Vec::len) {
+                    Some(0) | None => "silvermere is running: publishing goes in while it runs, \
+                                       with no stop."
+                        .into(),
+                    Some(k) => format!(
+                        "silvermere is running, with {k} player{} in the game: publishing goes \
+                         in while it runs, and nobody is disconnected.",
+                        if k == 1 { "" } else { "s" }
+                    ),
+                },
                 (_, Some(l)) if l.stopper().is_some() => match l.players.as_ref().map(Vec::len) {
                     Some(0) => "silvermere is running, with nobody in the game: publishing \
                                 stops it at once."
@@ -694,10 +748,10 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
     let blocked = empty || checks.iter().any(|c| c["level"] == "block");
     let update = has_update(&realm);
     let mut ways = Vec::new();
-    for &way in engine.ways() {
+    for &way in engine.ways(live.as_ref()) {
         let (why, not_carried) = match way {
             Way::Update => update_blocked(&realm, &engine)?,
-            Way::Now => (None, Vec::new()),
+            Way::Now | Way::Live => (None, Vec::new()),
         };
         let (title, summary, button) = match way {
             Way::Update => (
@@ -709,6 +763,14 @@ fn plan(s: &AppState) -> Result<Plan, ApiError> {
                     engine.update_file()
                 ),
                 "Hold to write the update file".to_string(),
+            ),
+            Way::Live => (
+                "Now, while it runs".to_string(),
+                "silvermere keeps running and nobody is disconnected. It holds its saves for a \
+                 moment while Daydream writes its world from your working copy, then takes the \
+                 new world in. What play changed stays as it is."
+                    .to_string(),
+                "Hold to publish".to_string(),
             ),
             Way::Now => (
                 format!("Now, with {} stopped", engine.name()),
@@ -1258,6 +1320,15 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
     );
     job.set("check", "done");
 
+    if ctx.way == Way::Live {
+        let Engine::Silvermere { url } = &ctx.engine else {
+            return Err(Stop::Failed(
+                "only silvermere takes a publish while it runs".into(),
+            ));
+        };
+        return publish_live(s, job, ctx, url);
+    }
+
     // stop: silvermere stops when asked to; the other games wait for the sysop
     let mut ran = false;
     if ctx.way == Way::Now {
@@ -1282,7 +1353,7 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
             job.set("backup", "running");
             let files: Vec<PathBuf> = match ctx.way {
                 Way::Update => file_in(dir, upd).into_iter().collect(),
-                Way::Now => {
+                Way::Now | Way::Live => {
                     let dry = WriteOptions {
                         dry_run: true,
                         ..WriteOptions::default()
@@ -1318,7 +1389,7 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
                 Way::Update => vec![daydream_store::dat::write_update_file(
                     &realm, dir, &options,
                 )?],
-                Way::Now => daydream_store::dat::write_dat(&realm, dir, &options)?,
+                Way::Now | Way::Live => daydream_store::dat::write_dat(&realm, dir, &options)?,
             };
             for w in &written {
                 if let Some(line) = written_line(w) {
@@ -1338,7 +1409,7 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
                          nightly cleanup."
                     )
                 }
-                Way::Now => {
+                Way::Now | Way::Live => {
                     job.set("start", "yours");
                     format!(
                         "Your changes are in the game's files. Start {} again when you are ready.",
@@ -1389,6 +1460,155 @@ fn run_steps(s: &AppState, job: &Job, ctx: &Ctx) -> Result<String, Stop> {
             if skipped == 1 { "" } else { "s" }
         )
     })
+}
+
+/// How long silvermere holds its saves for a publish at most: it ends sooner, once the
+/// world is written and reloaded.
+const HOLD_SECS: u64 = 180;
+
+/// silvermere's world published while it runs: its saves held, backed up, written, and
+/// reloaded, which ends the hold. A failure after the hold ends it with no reload, so
+/// silvermere plays on with the world it had.
+fn publish_live(s: &AppState, job: &Job, ctx: &Ctx, url: &str) -> Result<String, Stop> {
+    let admin = ctx
+        .live
+        .as_ref()
+        .and_then(Live::holder)
+        .cloned()
+        .ok_or_else(|| {
+            Stop::Failed(
+                "silvermere cannot take a publish while it runs just now: publish with it \
+                 stopped instead"
+                    .into(),
+            )
+        })?;
+    let (_writing, _) = s.lock_write(true, "Publish")?;
+    let realm = s.same_realm(ctx)?;
+
+    // Postgres: silvermere's own backup, before its saves are held
+    let sqlite = daydream_silvermere::sqlite_path(url).map(PathBuf::from);
+    let mut pg_backup = None;
+    if sqlite.is_none() {
+        pg_backup = Some(admin.backup());
+    }
+
+    job.set("hold", "running");
+    let t0 = Instant::now();
+    let hold = admin
+        .hold(HOLD_SECS)
+        .map_err(|e| Stop::Failed(format!("silvermere did not hold its saves: {e}")))?;
+    job.log(
+        "hold",
+        format!(
+            "silvermere wrote what it had queued in {:.1} s, and holds its saves now.",
+            t0.elapsed().as_secs_f64()
+        ),
+    );
+    job.set("hold", "done");
+
+    let written = (|| -> Result<Vec<daydream_silvermere::TableReport>, Stop> {
+        job.set("backup", "running");
+        match (&sqlite, pg_backup.take()) {
+            (Some(p), _) => {
+                let dir = backup_dir(p.parent().unwrap_or(Path::new(".")));
+                std::fs::create_dir_all(&dir)
+                    .map_err(|e| Stop::Failed(format!("backing up into {}: {e}", dir.display())))?;
+                let dest = dir.join(p.file_name().unwrap_or_default());
+                daydream_silvermere::block_on(daydream_silvermere::backup_sqlite(url, &dest))?;
+                job.log("backup", format!("Copied to {}.", dest.display()));
+                job.set("backup", "done");
+            }
+            (None, Some(Ok(v))) => {
+                job.log(
+                    "backup",
+                    format!(
+                        "silvermere backed itself up to {}.",
+                        v["file"].as_str().unwrap_or("its backups folder")
+                    ),
+                );
+                job.set("backup", "done");
+            }
+            (None, Some(Err(e))) => {
+                job.log(
+                    "backup",
+                    format!("PostgreSQL: not copied ({e}). Back it up your usual way."),
+                );
+                job.set("backup", "skipped");
+            }
+            (None, None) => job.set("backup", "skipped"),
+        }
+        job.set("write", "running");
+        Ok(daydream_silvermere::block_on(
+            daydream_silvermere::export_held(
+                &realm,
+                url,
+                &daydream_silvermere::ExportOptions::default(),
+            ),
+        )?)
+    })();
+    let tables = match written {
+        Ok(t) => t,
+        Err(e) => {
+            // silvermere plays on with the world it had, and saves again
+            if let Err(end) = admin.end_hold(&hold) {
+                tracing::warn!("ending silvermere's hold after a failed publish: {end}");
+            }
+            return Err(e);
+        }
+    };
+    let rows: usize = tables.iter().map(|t| t.updated + t.inserted).sum();
+    job.log(
+        "write",
+        format!(
+            "{} tables written from the working copy, {rows} rows.",
+            tables.len()
+        ),
+    );
+    for t in tables.iter().filter(|t| t.inserted + t.deleted > 0) {
+        job.log(
+            "write",
+            format!("{}: {} new, {} removed", t.table, t.inserted, t.deleted),
+        );
+    }
+    // silvermere's database holds the working copy's world: its changes count from here
+    daydream_store::journal::establish(&ctx.realm_dir, &[])?;
+    job.set("write", "done");
+
+    job.set("reload", "running");
+    match admin.reload_held(&hold) {
+        Ok(v) => {
+            job.log(
+                "reload",
+                format!(
+                    "silvermere read its world again in {} ms ({} rooms), and saves again. \
+                     The hold lasted {:.1} s.",
+                    v["ms"].as_u64().unwrap_or(0),
+                    v["reloaded"]["rooms"].as_u64().unwrap_or(0),
+                    t0.elapsed().as_secs_f64()
+                ),
+            );
+            job.set("reload", "done");
+            Ok(
+                "Your changes are in silvermere's world, and it took them in while it ran: \
+                nobody was disconnected."
+                    .into(),
+            )
+        }
+        Err(e) => {
+            // the hold ends with the reload, whatever it answered; once more to be sure
+            let _ = admin.end_hold(&hold);
+            job.log(
+                "reload",
+                format!("silvermere did not reload its world: {e}"),
+            );
+            job.set("reload", "failed");
+            Ok(format!(
+                "Your changes are in silvermere's database, but it did not take them in while \
+                 it ran ({e}). It plays on with the world it had: they go live at its next \
+                 start, or ask it to reload."
+            ))
+        }
+    }
 }
 
 /// A game's `.db` files backed up, and the working copy's edits written into them.

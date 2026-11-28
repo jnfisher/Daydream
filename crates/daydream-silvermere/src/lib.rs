@@ -3,12 +3,16 @@
 //! silvermere (a Rust MajorMUD 1.11p server by the same author) keeps its world in SQLite or
 //! PostgreSQL, in a normalised schema. This crate moves a Daydream realm's world into that
 //! database ([`export`]) and back ([`import`]), straight in the database and not through
-//! silvermere's API, while silvermere is stopped:
+//! silvermere's API, while silvermere is stopped, or while it runs with its writes held
+//! ([`export_held`]):
 //!
 //! - **The writer lock.** silvermere's `serve` holds a single-writer guard for as long as it
 //!   runs: an exclusive lock on `<database>.lock` beside a SQLite file, or a PostgreSQL
 //!   advisory lock. Both directions take the same guard first and refuse while it is held, so
 //!   Daydream never writes under a running server or reads a world it is still changing.
+//!   The one exception is [`export_held`]: silvermere 1.0.5 and later hold their own writes
+//!   for an editor (`POST /v1/world-hold`), and that hold stands in for the guard while it
+//!   lasts; the caller takes it, writes, and has silvermere reload the world.
 //! - **The schema.** silvermere 1.0.1's migrations are copied here ([`db`]); an empty
 //!   database is given them, and a database with migrations Daydream does not know (a newer
 //!   silvermere) is refused rather than guessed at.
@@ -55,6 +59,9 @@ pub enum Error {
     /// silvermere is running on the database (or something else holds its writer lock).
     #[error("silvermere is running on {url}: {holder}. Stop it first")]
     Running { url: String, holder: String },
+    /// [`export_held`] on a database no silvermere is running on: there is no hold.
+    #[error("silvermere is not running on {0}: there are no writes to hold")]
+    NotRunning(String),
     /// The database has no silvermere schema, or one Daydream does not know.
     #[error("{url}: {reason}")]
     Schema { url: String, reason: String },
@@ -149,10 +156,11 @@ pub fn sqlite_path(url: &str) -> Option<&str> {
     (!rest.is_empty() && !rest.contains(":memory:")).then_some(rest)
 }
 
-/// silvermere's database, opened with its writer guard held.
+/// silvermere's database, opened with its writer guard held, or under a hold of
+/// silvermere's writes (no guard of Daydream's own).
 struct Opened {
     db: Db,
-    _guard: WriterGuard,
+    _guard: Option<WriterGuard>,
 }
 
 /// Takes the writer guard of `url` and opens the database, giving an empty one silvermere's
@@ -172,7 +180,10 @@ async fn open(url: &str, create: bool) -> Result<Opened> {
     };
     let db = Db::connect(url).await?;
     check_schema(&db, &shown, create).await?;
-    Ok(Opened { db, _guard: guard })
+    Ok(Opened {
+        db,
+        _guard: Some(guard),
+    })
 }
 
 /// The migrations Daydream knows.
@@ -277,6 +288,53 @@ pub async fn export(realm: &Realm, url: &str, opts: &ExportOptions) -> Result<Ve
     }
     let opened = open(url, !opts.dry_run).await?;
     export_tables(realm, &opened.db, opts).await
+}
+
+/// [`export`] into the database of a silvermere that is running, with its writes held
+/// (`POST /v1/world-hold`, which the caller has taken): its writer guard is silvermere's,
+/// and the hold keeps silvermere's own writes out of the way while this one writes. The
+/// caller then has silvermere reload the world and end the hold. Refused when nobody holds
+/// the guard, since then there is no hold either (use [`export`]).
+pub async fn export_held(
+    realm: &Realm,
+    url: &str,
+    opts: &ExportOptions,
+) -> Result<Vec<TableReport>> {
+    let shown = redact_url(url);
+    Dialect::from_url(url)?;
+    if let Some(p) = sqlite_path(url)
+        && !Path::new(p).exists()
+    {
+        return Err(Error::NoDatabase(p.to_string()));
+    }
+    match WriterGuard::try_acquire(url).await? {
+        TryAcquire::Taken(g) => {
+            g.release().await;
+            return Err(Error::NotRunning(shown));
+        }
+        TryAcquire::Held(_) => {}
+    }
+    let db = Db::connect(url).await?;
+    check_schema(&db, &shown, false).await?;
+    export_tables(realm, &db, opts).await
+}
+
+/// Copies silvermere's SQLite database at `url` to the new file `dest` in one consistent
+/// read (`VACUUM INTO`), with or without silvermere running on it.
+pub async fn backup_sqlite(url: &str, dest: &Path) -> Result<()> {
+    if sqlite_path(url).is_none() {
+        return Err(Error::Record(format!(
+            "{}: not a SQLite file",
+            redact_url(url)
+        )));
+    }
+    let db = Db::connect(url).await?;
+    let to = dest.to_string_lossy().replace('\'', "''");
+    sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{to}'")))
+        .execute(&db.pool())
+        .await?;
+    db.close().await;
+    Ok(())
 }
 
 /// The export into an open database.
